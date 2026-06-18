@@ -1,0 +1,8 @@
+build/
+script/
+tools/
+docs/
+logs/
+run/
+.vscode/
+data/
