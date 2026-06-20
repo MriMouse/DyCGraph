@@ -51,6 +51,28 @@ DEFINE_int32(coop_home_feedback_min_success_per_mille,
              1, "Disable cpu_home for the rest of a batch when first-round CPU proposal success is below this per-mille threshold and no GPU->CPU boundary appears; <=0 disables this feedback gate");
 DEFINE_bool(coop_home_skip_gpu_sources,
             false, "Experimental cpu_home owner-skip path: when true, GPU skips CPU_HOME sources and CPU proposals are merged; default false keeps cpu_home diagnostic/correctness-safe");
+DEFINE_bool(coop_home_diagnostic_launch,
+            false, "Run the cooperative delta launch for cpu_home diagnostics even when owner-skip is disabled; default false keeps safe cpu_home on the exact GPU-only convergence path");
+DEFINE_bool(coop_overlap_probe,
+            false, "Run a read-only CPU overlap probe during GPU convergence sync; default false");
+DEFINE_int32(coop_overlap_probe_max_sources,
+             512, "Maximum batch-touched sources scanned by the CPU overlap probe per convergence round");
+DEFINE_int32(coop_overlap_probe_edge_budget,
+             200000, "Maximum host PMA edges read by the CPU overlap probe per convergence round");
+DEFINE_bool(coop_packet_dry_run,
+            false, "Run a bounded CPU SSSP proposal packet dry-run during GPU convergence; default false");
+DEFINE_bool(coop_packet_diagnostic_merge,
+            false, "Diagnostic only: merge CPU packet proposals through the GPU merge kernel without GPU source skip; requires coop_packet_dry_run");
+DEFINE_bool(coop_packet_production_merge,
+            false, "Experimental production candidate: merge CPU packet proposals without pre/post dst probes and without GPU source skip; default false");
+DEFINE_bool(coop_packet_overlap_merge,
+            false, "Experimental Phase 10A candidate: generate/compress CPU packet while GPU delta runs, then merge still-valid proposals after the GPU barrier without GPU source skip");
+DEFINE_string(coop_packet_source_policy,
+              "batch_touched", "CPU packet source policy: batch_touched/active_frontier");
+DEFINE_int32(coop_packet_max_sources,
+             256, "Maximum sources used by the CPU packet dry-run per convergence round");
+DEFINE_int32(coop_packet_edge_budget,
+             200000, "Maximum host PMA edges read by the CPU packet dry-run per convergence round");
 DEFINE_bool(sssp_print_checksum,
             false, "Print final SSSP distance and parent checksums");
 DECLARE_int32(top_ranks);

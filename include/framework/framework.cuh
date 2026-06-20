@@ -72,6 +72,17 @@ DECLARE_int32(coop_home_min_injected_sources);
 DECLARE_int32(coop_home_min_injected_edges);
 DECLARE_int32(coop_home_feedback_min_success_per_mille);
 DECLARE_bool(coop_home_skip_gpu_sources);
+DECLARE_bool(coop_home_diagnostic_launch);
+DECLARE_bool(coop_overlap_probe);
+DECLARE_int32(coop_overlap_probe_max_sources);
+DECLARE_int32(coop_overlap_probe_edge_budget);
+DECLARE_bool(coop_packet_dry_run);
+DECLARE_bool(coop_packet_diagnostic_merge);
+DECLARE_bool(coop_packet_production_merge);
+DECLARE_bool(coop_packet_overlap_merge);
+DECLARE_string(coop_packet_source_policy);
+DECLARE_int32(coop_packet_max_sources);
+DECLARE_int32(coop_packet_edge_budget);
 
 namespace sepgraph {
     namespace engine {
@@ -252,6 +263,63 @@ namespace sepgraph {
                 owner_epoch[candidates[i].src] = epoch;
             }
         }
+
+        struct CoopOverlapProbeStats {
+            uint64_t candidate_sources = 0;
+            uint64_t selected_sources = 0;
+            uint64_t cached_sources = 0;
+            uint64_t non_cached_sources = 0;
+            uint64_t edge_visits = 0;
+            uint64_t edge_budget = 0;
+            uint64_t host_pma_read_bytes = 0;
+            uint64_t structural_proposals = 0;
+            uint64_t dst_checksum = 0;
+            double cpu_wall_ms = 0.0;
+        };
+
+        struct CoopPacketDryRunStats {
+            uint64_t candidate_sources = 0;
+            uint64_t selected_sources = 0;
+            uint64_t source_state_snapshots = 0;
+            uint64_t reachable_sources = 0;
+            uint64_t active_sources = 0;
+            uint64_t edge_visits = 0;
+            uint64_t edge_budget = 0;
+            uint64_t generated_proposals = 0;
+            uint64_t compressed_proposals = 0;
+            uint64_t compressed_unique_dst = 0;
+            uint64_t estimated_success_before_gpu = 0;
+            uint64_t estimated_success_after_gpu = 0;
+            uint64_t pre_after_success_gap = 0;
+            uint64_t dst_ge32_count = 0;
+            uint64_t dst_ge32_sum = 0;
+            uint64_t dst_ge128_count = 0;
+            uint64_t dst_ge128_sum = 0;
+            uint64_t dst_ge512_count = 0;
+            uint64_t dst_ge512_sum = 0;
+            uint64_t dst_ge1024_count = 0;
+            uint64_t dst_ge1024_sum = 0;
+            uint64_t expected_avoided_gpu_edges = 0;
+            uint64_t cached_sources = 0;
+            uint64_t non_cached_sources = 0;
+            uint64_t host_pma_read_bytes = 0;
+            uint64_t state_snapshot_bytes = 0;
+            uint64_t dst_state_probe_bytes = 0;
+            uint64_t pre_dst_state_probe_bytes = 0;
+            uint64_t post_dst_state_probe_bytes = 0;
+            uint64_t diagnostic_merge_success = 0;
+            uint64_t diagnostic_merge_h2d_bytes = 0;
+            uint64_t proposal_checksum = 0;
+            double source_state_snapshot_ms = 0.0;
+            double cpu_wall_ms = 0.0;
+            double proposal_compress_ms = 0.0;
+            double dst_state_probe_ms = 0.0;
+            double pre_dst_state_probe_ms = 0.0;
+            double post_dst_state_probe_ms = 0.0;
+            double diagnostic_merge_h2d_ms = 0.0;
+            double diagnostic_merge_kernel_ms = 0.0;
+            double diagnostic_merge_wall_ms = 0.0;
+        };
 
         struct CoopRoundStats {
             uint64_t active_vertices = 0;
@@ -3359,7 +3427,8 @@ namespace sepgraph {
                 local_begin.first += load_update.m_batch_size[NumOfSnapShots].first;
                 m_vcsr_dev_graph_allocator->ReloadAllocator();
                 if (GetCoopMode() == CoopExecMode::HYBRID &&
-                    GetCoopSplitMode() == CoopSplitMode::CPU_HOME) {
+                    GetCoopSplitMode() == CoopSplitMode::CPU_HOME &&
+                    (FLAGS_coop_home_skip_gpu_sources || FLAGS_coop_home_diagnostic_launch)) {
                     CoopRoundStats init_skip_stats;
                     m_coop_cpu_home_batch_enabled = true;
                     PromoteBatchTouchedCpuHomeSources(&init_skip_stats);
@@ -3730,6 +3799,827 @@ namespace sepgraph {
 
             }
 
+            void RunCpuOverlapProbeDryRun(CoopOverlapProbeStats &probe) {
+                Stopwatch sw_probe(true);
+                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
+                std::vector<index_t> touched = m_coop_batch_touched_sources;
+                std::sort(touched.begin(), touched.end());
+                touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+
+                probe.candidate_sources = touched.size();
+                probe.edge_budget = static_cast<uint64_t>(std::max(FLAGS_coop_overlap_probe_edge_budget, 0));
+                const uint64_t max_sources =
+                    static_cast<uint64_t>(std::max(FLAGS_coop_overlap_probe_max_sources, 0));
+                uint64_t checksum = 1469598103934665603ull;
+
+                for (const index_t src : touched) {
+                    if (max_sources > 0 && probe.selected_sources >= max_sources) {
+                        break;
+                    }
+                    if (probe.edge_budget > 0 && probe.edge_visits >= probe.edge_budget) {
+                        break;
+                    }
+                    if (src >= host_pma.nnodes) {
+                        continue;
+                    }
+
+                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
+                    if (degree == 0) {
+                        continue;
+                    }
+                    if (FLAGS_coop_cpu_min_degree > 0 &&
+                        degree < static_cast<uint64_t>(FLAGS_coop_cpu_min_degree)) {
+                        continue;
+                    }
+
+                    probe.selected_sources++;
+                    if (host_pma.vertices_[src].cache) {
+                        probe.cached_sources++;
+                    } else {
+                        probe.non_cached_sources++;
+                    }
+
+                    const uint64_t edge_start = host_pma.sync_vertices_[src].index;
+                    uint64_t edges_to_read = degree;
+                    if (probe.edge_budget > 0) {
+                        edges_to_read = std::min(edges_to_read, probe.edge_budget - probe.edge_visits);
+                    }
+                    for (uint64_t edge_offset = 0; edge_offset < edges_to_read; edge_offset++) {
+                        const index_t dst = host_pma.edges_[edge_start + edge_offset];
+                        checksum ^= static_cast<uint64_t>(src) + 0x9e3779b97f4a7c15ull +
+                                    (static_cast<uint64_t>(dst) << 6) + (checksum >> 2);
+                    }
+                    probe.edge_visits += edges_to_read;
+                    probe.structural_proposals += edges_to_read;
+                }
+
+                probe.dst_checksum = checksum;
+                probe.host_pma_read_bytes =
+                    probe.edge_visits * sizeof(index_t) +
+                    probe.selected_sources *
+                        (sizeof(host_pma.sync_vertices_[0]) + sizeof(host_pma.vertices_[0]));
+                sw_probe.stop();
+                probe.cpu_wall_ms = sw_probe.ms();
+            }
+
+            void LaunchGpuDeltaAndSync(AlgoVariant *algo_variant,
+                                       double &gpu_launch_submit_ms,
+                                       double &gpu_sync_wait_ms,
+                                       uint32_t &gpu_kernel_launches) {
+                auto &app_inst = *m_app_inst;
+                GraphDatum &graph_datum = *m_graph_datum;
+                bool zcflag = true;
+                m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
+                uint64_t seg_sedge_csr;
+                index_t seg_snode, seg_enode;
+                index_t stream_id;
+                gpu_kernel_launches = 0;
+
+                m_groute_context->segment_ct = FLAGS_SEGMENT;
+
+                Stopwatch sw_launch(true);
+                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
+                    seg_snode = m_groute_context->seg_snode[seg_idx];
+                    seg_enode = m_groute_context->seg_enode[seg_idx];
+                    seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];
+                    stream_id = seg_idx % FLAGS_n_stream;
+
+                    const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
+                    if (algo_variant[seg_idx] == AlgoVariant::Zero_Copy) {
+                        m_vcsr_dev_graph_allocator->SwitchZC();
+                        zcflag = true;
+                        RunSyncPushDDB_Delta(app_inst,
+                                             seg_snode,
+                                             seg_enode,
+                                             seg_sedge_csr,
+                                             seg_idx,
+                                             zcflag,
+                                             vcsr_graph,
+                                             graph_datum,
+                                             m_engine_options,
+                                             stream[stream_id]);
+                        gpu_kernel_launches++;
+                    }
+                }
+                sw_launch.stop();
+                gpu_launch_submit_ms = sw_launch.ms();
+
+                Stopwatch sw_sync(true);
+                for (index_t stream_idx = 0; stream_idx < FLAGS_n_stream; stream_idx++) {
+                    stream[stream_idx].Sync();
+                }
+                sw_sync.stop();
+                gpu_sync_wait_ms = sw_sync.ms();
+            }
+
+            void ExecutePolicy_Converge_OverlapProbe(AlgoVariant *algo_variant,
+                                                     uint64_t coop_seq,
+                                                     uint32_t coop_round,
+                                                     const char *split_mode_name) {
+                CoopOverlapProbeStats probe;
+                std::thread cpu_probe_thread([this, &probe]() {
+                    RunCpuOverlapProbeDryRun(probe);
+                });
+
+                double gpu_launch_submit_ms = 0.0;
+                double gpu_sync_wait_ms = 0.0;
+                uint32_t gpu_kernel_launches = 0;
+                LaunchGpuDeltaAndSync(algo_variant,
+                                      gpu_launch_submit_ms,
+                                      gpu_sync_wait_ms,
+                                      gpu_kernel_launches);
+
+                if (cpu_probe_thread.joinable()) {
+                    cpu_probe_thread.join();
+                }
+
+                const double overlap_window_ms = gpu_launch_submit_ms + gpu_sync_wait_ms;
+                const double hidden_ms = std::min(probe.cpu_wall_ms, overlap_window_ms);
+                const double exposed_ms = probe.cpu_wall_ms > overlap_window_ms
+                                              ? probe.cpu_wall_ms - overlap_window_ms
+                                              : 0.0;
+                const double hidden_ratio = probe.cpu_wall_ms > 0.0
+                                                ? hidden_ms / probe.cpu_wall_ms
+                                                : 0.0;
+
+                LOG("[COOP-OVERLAP] seq=%lu round=%u split_mode=%s phase=9A_read_only_probe candidate_sources=%lu selected_sources=%lu cached_sources=%lu non_cached_sources=%lu edge_visits=%lu structural_proposals=%lu host_pma_read_bytes=%lu edge_budget=%lu cpu_wall_ms=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f overlap_window_ms=%f cpu_overlap_hidden_ms=%f cpu_overlap_exposed_ms=%f hidden_ratio=%f gpu_kernel_launches=%u dst_checksum=%lu note=no_device_state_change\n",
+                    static_cast<unsigned long>(coop_seq),
+                    coop_round,
+                    split_mode_name,
+                    probe.candidate_sources,
+                    probe.selected_sources,
+                    probe.cached_sources,
+                    probe.non_cached_sources,
+                    probe.edge_visits,
+                    probe.structural_proposals,
+                    probe.host_pma_read_bytes,
+                    probe.edge_budget,
+                    probe.cpu_wall_ms,
+                    gpu_launch_submit_ms,
+                    gpu_sync_wait_ms,
+                    overlap_window_ms,
+                    hidden_ms,
+                    exposed_ms,
+                    hidden_ratio,
+                    gpu_kernel_launches,
+                    probe.dst_checksum);
+
+                PostComputationBW();
+            }
+
+            void RunCpuPacketDryRun(const std::vector<index_t> &sources,
+                                    const std::vector<TValue> &source_values,
+                                    const std::vector<TBuffer> &source_buffers,
+                                    std::vector<CpuRelaxProposal<TBuffer>> &proposals,
+                                    CoopPacketDryRunStats &packet) {
+                Stopwatch sw_cpu(true);
+                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
+                GraphDatum &graph_datum = *m_graph_datum;
+                uint64_t checksum = 1469598103934665603ull;
+
+                for (size_t i = 0; i < sources.size(); i++) {
+                    if (packet.edge_budget > 0 && packet.edge_visits >= packet.edge_budget) {
+                        break;
+                    }
+                    const index_t src = sources[i];
+                    if (src >= host_pma.nnodes) {
+                        continue;
+                    }
+                    const TBuffer inf = static_cast<TBuffer>(std::numeric_limits<uint32_t>::max());
+                    const TBuffer src_buffer = source_buffers[i];
+                    const TValue src_value = source_values[i];
+                    TBuffer base_value = src_buffer < static_cast<TBuffer>(src_value)
+                                             ? src_buffer
+                                             : static_cast<TBuffer>(src_value);
+                    if (base_value == inf) {
+                        continue;
+                    }
+                    packet.reachable_sources++;
+                    if (src_buffer >= static_cast<TBuffer>(src_value)) {
+                        continue;
+                    }
+                    packet.active_sources++;
+
+                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
+                    if (degree == 0) {
+                        continue;
+                    }
+                    const uint64_t edge_start = host_pma.sync_vertices_[src].index;
+                    uint64_t edges_to_read = degree;
+                    if (packet.edge_budget > 0) {
+                        edges_to_read = std::min(edges_to_read, packet.edge_budget - packet.edge_visits);
+                    }
+                    for (uint64_t edge_offset = 0; edge_offset < edges_to_read; edge_offset++) {
+                        const index_t dst = host_pma.edges_[edge_start + edge_offset];
+                        if (dst >= graph_datum.nnodes) {
+                            continue;
+                        }
+                        const TBuffer weight = static_cast<TBuffer>((src + dst) % 128 + 1);
+                        const TBuffer new_value = base_value + weight;
+                        proposals.push_back({dst, new_value, src});
+                        checksum ^= static_cast<uint64_t>(dst) + 0x9e3779b97f4a7c15ull +
+                                    (static_cast<uint64_t>(new_value) << 6) + (checksum >> 2);
+                    }
+                    packet.edge_visits += edges_to_read;
+                    packet.generated_proposals += edges_to_read;
+                }
+
+                packet.proposal_checksum = checksum;
+                packet.host_pma_read_bytes =
+                    packet.edge_visits * sizeof(index_t) +
+                    packet.selected_sources *
+                        (sizeof(host_pma.sync_vertices_[0]) + sizeof(host_pma.vertices_[0]));
+                sw_cpu.stop();
+                packet.cpu_wall_ms = sw_cpu.ms();
+            }
+
+            void SelectCpuPacketSources(CoopPacketDryRunStats &packet,
+                                        std::vector<index_t> &packet_sources,
+                                        uint64_t &selected_edge_est) {
+                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
+                packet.edge_budget = static_cast<uint64_t>(std::max(FLAGS_coop_packet_edge_budget, 0));
+                const uint64_t max_sources =
+                    static_cast<uint64_t>(std::max(FLAGS_coop_packet_max_sources, 0));
+                selected_edge_est = 0;
+                const std::string source_policy = FLAGS_coop_packet_source_policy;
+                auto try_select_source = [&](const index_t src) {
+                    packet.candidate_sources++;
+                    if (max_sources > 0 && packet_sources.size() >= max_sources) {
+                        return false;
+                    }
+                    if (packet.edge_budget > 0 && selected_edge_est >= packet.edge_budget) {
+                        return false;
+                    }
+                    if (src >= host_pma.nnodes) {
+                        return true;
+                    }
+                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
+                    if (degree == 0) {
+                        return true;
+                    }
+                    if (FLAGS_coop_cpu_min_degree > 0 &&
+                        degree < static_cast<uint64_t>(FLAGS_coop_cpu_min_degree)) {
+                        return true;
+                    }
+                    packet_sources.push_back(src);
+                    selected_edge_est += degree;
+                    if (host_pma.vertices_[src].cache) {
+                        packet.cached_sources++;
+                    } else {
+                        packet.non_cached_sources++;
+                    }
+                    return true;
+                };
+
+                if (source_policy == "active_frontier") {
+                    GraphDatum &graph_datum = *m_graph_datum;
+                    for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
+                        if (max_sources > 0 && packet_sources.size() >= max_sources) {
+                            break;
+                        }
+                        if (packet.edge_budget > 0 && selected_edge_est >= packet.edge_budget) {
+                            break;
+                        }
+                        const index_t stream_id = seg_idx % FLAGS_n_stream;
+                        const uint32_t active_count =
+                            graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream[stream_id]);
+                        if (active_count == 0) {
+                            continue;
+                        }
+                        std::vector<index_t> active_vertices(active_count);
+                        GROUTE_CUDA_CHECK(cudaMemcpyAsync(
+                            active_vertices.data(),
+                            graph_datum.m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
+                            sizeof(index_t) * active_count,
+                            cudaMemcpyDeviceToHost,
+                            stream[stream_id].cuda_stream));
+                        stream[stream_id].Sync();
+                        for (const index_t src : active_vertices) {
+                            if (!try_select_source(src)) {
+                                break;
+                            }
+                        }
+                    }
+                    std::sort(packet_sources.begin(), packet_sources.end());
+                    packet_sources.erase(std::unique(packet_sources.begin(), packet_sources.end()),
+                                         packet_sources.end());
+                    packet.selected_sources = packet_sources.size();
+                } else {
+                    if (source_policy != "batch_touched") {
+                        LOG("[COOP-PACKET-WARN] unknown_source_policy=%s fallback=batch_touched\n",
+                            source_policy.c_str());
+                    }
+                    std::vector<index_t> touched = m_coop_batch_touched_sources;
+                    std::sort(touched.begin(), touched.end());
+                    touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+                    for (const index_t src : touched) {
+                        if (!try_select_source(src)) {
+                            break;
+                        }
+                    }
+                    packet.selected_sources = packet_sources.size();
+                }
+            }
+
+            void ExecutePolicy_Converge_PacketDryRun(AlgoVariant *algo_variant,
+                                                     uint64_t coop_seq,
+                                                     uint32_t coop_round,
+                                                     const char *split_mode_name) {
+                CoopPacketDryRunStats packet;
+
+                std::vector<index_t> packet_sources;
+                uint64_t selected_edge_est = 0;
+                SelectCpuPacketSources(packet, packet_sources, selected_edge_est);
+                const std::string source_policy = FLAGS_coop_packet_source_policy;
+
+                CoopRoundStats state_stats;
+                std::vector<TValue> source_values;
+                std::vector<TBuffer> source_buffers;
+                if (!packet_sources.empty()) {
+                    FetchCoopStateForVertices(packet_sources,
+                                              source_values,
+                                              source_buffers,
+                                              state_stats,
+                                              false);
+                }
+                packet.source_state_snapshots = packet_sources.size();
+                packet.state_snapshot_bytes =
+                    state_stats.state_request_h2d_bytes + state_stats.state_d2h_bytes;
+                packet.source_state_snapshot_ms =
+                    state_stats.state_request_h2d_ms + state_stats.state_d2h_ms;
+
+                std::vector<CpuRelaxProposal<TBuffer>> proposals;
+                proposals.reserve(packet.edge_budget > 0
+                                      ? static_cast<size_t>(packet.edge_budget)
+                                      : static_cast<size_t>(selected_edge_est));
+                RunCpuPacketDryRun(packet_sources,
+                                   source_values,
+                                   source_buffers,
+                                   proposals,
+                                   packet);
+
+                CoopRoundStats compress_stats;
+                CompressCpuRelaxProposals(proposals, compress_stats);
+                packet.compressed_proposals = proposals.size();
+                packet.compressed_unique_dst = proposals.size();
+                packet.proposal_compress_ms = compress_stats.proposal_compress_ms;
+
+                std::vector<index_t> dst_vertices;
+                if (!proposals.empty()) {
+                    dst_vertices.reserve(proposals.size());
+                    for (const auto &proposal : proposals) {
+                        dst_vertices.push_back(proposal.dst);
+                    }
+                    CoopRoundStats pre_dst_stats;
+                    std::vector<TValue> pre_dst_values;
+                    std::vector<TBuffer> pre_dst_buffers;
+                    FetchCoopStateForVertices(dst_vertices,
+                                              pre_dst_values,
+                                              pre_dst_buffers,
+                                              pre_dst_stats,
+                                              false);
+                    auto &probe_host_pma = m_vcsr_dev_graph_allocator->HostObject();
+                    for (size_t i = 0; i < proposals.size(); i++) {
+                        if (proposals[i].value < pre_dst_buffers[i]) {
+                            packet.estimated_success_before_gpu++;
+                            const index_t dst = proposals[i].dst;
+                            if (dst < probe_host_pma.nnodes) {
+                                const uint64_t dst_degree =
+                                    probe_host_pma.sync_vertices_[dst].degree;
+                                packet.expected_avoided_gpu_edges += dst_degree;
+                                if (dst_degree >= 32) {
+                                    packet.dst_ge32_count++;
+                                    packet.dst_ge32_sum += dst_degree;
+                                }
+                                if (dst_degree >= 128) {
+                                    packet.dst_ge128_count++;
+                                    packet.dst_ge128_sum += dst_degree;
+                                }
+                                if (dst_degree >= 512) {
+                                    packet.dst_ge512_count++;
+                                    packet.dst_ge512_sum += dst_degree;
+                                }
+                                if (dst_degree >= 1024) {
+                                    packet.dst_ge1024_count++;
+                                    packet.dst_ge1024_sum += dst_degree;
+                                }
+                            }
+                        }
+                    }
+                    packet.pre_dst_state_probe_bytes =
+                        pre_dst_stats.state_request_h2d_bytes + pre_dst_stats.state_d2h_bytes;
+                    packet.pre_dst_state_probe_ms =
+                        pre_dst_stats.state_request_h2d_ms + pre_dst_stats.state_d2h_ms;
+                    packet.dst_state_probe_bytes += packet.pre_dst_state_probe_bytes;
+                    packet.dst_state_probe_ms += packet.pre_dst_state_probe_ms;
+                }
+
+                if (FLAGS_coop_packet_diagnostic_merge && !proposals.empty()) {
+                    CoopRoundStats merge_stats;
+                    std::vector<CpuSourceCommit<TValue>> no_source_commits;
+                    Stopwatch sw_merge_wall(true);
+                    MergeCpuSSSPProposals(proposals,
+                                          no_source_commits,
+                                          merge_stats,
+                                          m_coop_device_changed_vertices.DeviceObject());
+                    sw_merge_wall.stop();
+                    packet.diagnostic_merge_success = merge_stats.cpu_proposals_success;
+                    packet.diagnostic_merge_h2d_bytes = merge_stats.h2d_proposal_bytes;
+                    packet.diagnostic_merge_h2d_ms = merge_stats.h2d_proposal_ms;
+                    packet.diagnostic_merge_kernel_ms = merge_stats.merge_ms;
+                    packet.diagnostic_merge_wall_ms = sw_merge_wall.ms();
+                }
+
+                double gpu_launch_submit_ms = 0.0;
+                double gpu_sync_wait_ms = 0.0;
+                uint32_t gpu_kernel_launches = 0;
+                LaunchGpuDeltaAndSync(algo_variant,
+                                      gpu_launch_submit_ms,
+                                      gpu_sync_wait_ms,
+                                      gpu_kernel_launches);
+
+                if (!proposals.empty()) {
+                    CoopRoundStats dst_stats;
+                    std::vector<TValue> dst_values;
+                    std::vector<TBuffer> dst_buffers;
+                    FetchCoopStateForVertices(dst_vertices,
+                                              dst_values,
+                                              dst_buffers,
+                                              dst_stats,
+                                              false);
+                    for (size_t i = 0; i < proposals.size(); i++) {
+                        if (proposals[i].value < dst_buffers[i]) {
+                            packet.estimated_success_after_gpu++;
+                        }
+                    }
+                    packet.post_dst_state_probe_bytes =
+                        dst_stats.state_request_h2d_bytes + dst_stats.state_d2h_bytes;
+                    packet.post_dst_state_probe_ms =
+                        dst_stats.state_request_h2d_ms + dst_stats.state_d2h_ms;
+                    packet.dst_state_probe_bytes += packet.post_dst_state_probe_bytes;
+                    packet.dst_state_probe_ms += packet.post_dst_state_probe_ms;
+                }
+                if (packet.estimated_success_before_gpu > packet.estimated_success_after_gpu) {
+                    packet.pre_after_success_gap =
+                        packet.estimated_success_before_gpu - packet.estimated_success_after_gpu;
+                }
+
+                const double overlap_window_ms = gpu_launch_submit_ms + gpu_sync_wait_ms;
+                const double pre_gpu_probe_ms =
+                    packet.cpu_wall_ms + packet.proposal_compress_ms + packet.pre_dst_state_probe_ms;
+                const double hidden_ms = 0.0;
+                const double exposed_ms = pre_gpu_probe_ms;
+                const double hidden_ratio = 0.0;
+
+                LOG("[COOP-PACKET-DRYRUN] seq=%lu round=%u split_mode=%s phase=9C_packet_dry_run source_policy=%s candidate_sources=%lu selected_sources=%lu source_state_snapshots=%lu reachable_sources=%lu active_sources=%lu cached_sources=%lu non_cached_sources=%lu edge_visits=%lu generated_proposals=%lu compressed_proposals=%lu estimated_success_after_gpu=%lu estimated_success_before_gpu=%lu compressed_unique_dst=%lu pre_after_success_gap=%lu expected_avoided_gpu_edges=%lu dst_ge32_count=%lu dst_ge32_sum=%lu dst_ge128_count=%lu dst_ge128_sum=%lu dst_ge512_count=%lu dst_ge512_sum=%lu dst_ge1024_count=%lu dst_ge1024_sum=%lu diagnostic_merge_enabled=%d diagnostic_merge_success=%lu diagnostic_merge_h2d_bytes=%lu diagnostic_merge_h2d_ms=%f diagnostic_merge_kernel_ms=%f diagnostic_merge_wall_ms=%f host_pma_read_bytes=%lu state_snapshot_bytes=%lu dst_state_probe_bytes=%lu pre_dst_state_probe_bytes=%lu post_dst_state_probe_bytes=%lu edge_budget=%lu source_state_snapshot_ms=%f cpu_wall_ms=%f proposal_compress_ms=%f dst_state_probe_ms=%f pre_dst_state_probe_ms=%f post_dst_state_probe_ms=%f pre_gpu_probe_ms=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f overlap_window_ms=%f cpu_overlap_hidden_ms=%f cpu_overlap_exposed_ms=%f hidden_ratio=%f gpu_kernel_launches=%u proposal_checksum=%lu note=%s\n",
+                    static_cast<unsigned long>(coop_seq),
+                    coop_round,
+                    split_mode_name,
+                    source_policy.c_str(),
+                    packet.candidate_sources,
+                    packet.selected_sources,
+                    packet.source_state_snapshots,
+                    packet.reachable_sources,
+                    packet.active_sources,
+                    packet.cached_sources,
+                    packet.non_cached_sources,
+                    packet.edge_visits,
+                    packet.generated_proposals,
+                    packet.compressed_proposals,
+                    packet.estimated_success_after_gpu,
+                    packet.estimated_success_before_gpu,
+                    packet.compressed_unique_dst,
+                    packet.pre_after_success_gap,
+                    packet.expected_avoided_gpu_edges,
+                    packet.dst_ge32_count,
+                    packet.dst_ge32_sum,
+                    packet.dst_ge128_count,
+                    packet.dst_ge128_sum,
+                    packet.dst_ge512_count,
+                    packet.dst_ge512_sum,
+                    packet.dst_ge1024_count,
+                    packet.dst_ge1024_sum,
+                    FLAGS_coop_packet_diagnostic_merge ? 1 : 0,
+                    packet.diagnostic_merge_success,
+                    packet.diagnostic_merge_h2d_bytes,
+                    packet.diagnostic_merge_h2d_ms,
+                    packet.diagnostic_merge_kernel_ms,
+                    packet.diagnostic_merge_wall_ms,
+                    packet.host_pma_read_bytes,
+                    packet.state_snapshot_bytes,
+                    packet.dst_state_probe_bytes,
+                    packet.pre_dst_state_probe_bytes,
+                    packet.post_dst_state_probe_bytes,
+                    packet.edge_budget,
+                    packet.source_state_snapshot_ms,
+                    packet.cpu_wall_ms,
+                    packet.proposal_compress_ms,
+                    packet.dst_state_probe_ms,
+                    packet.pre_dst_state_probe_ms,
+                    packet.post_dst_state_probe_ms,
+                    pre_gpu_probe_ms,
+                    gpu_launch_submit_ms,
+                    gpu_sync_wait_ms,
+                    overlap_window_ms,
+                    hidden_ms,
+                    exposed_ms,
+                    hidden_ratio,
+                    gpu_kernel_launches,
+                    packet.proposal_checksum,
+                    FLAGS_coop_packet_diagnostic_merge
+                        ? "pre_gpu_quality_probe_diagnostic_merge_no_gpu_skip"
+                        : "pre_gpu_quality_probe_no_device_state_change_no_merge_no_gpu_skip");
+
+                PostComputationBW();
+            }
+
+            void ExecutePolicy_Converge_PacketProductionMerge(AlgoVariant *algo_variant,
+                                                              uint64_t coop_seq,
+                                                              uint32_t coop_round,
+                                                              const char *split_mode_name) {
+                CoopPacketDryRunStats packet;
+                std::vector<index_t> packet_sources;
+                uint64_t selected_edge_est = 0;
+                SelectCpuPacketSources(packet, packet_sources, selected_edge_est);
+                const std::string source_policy = FLAGS_coop_packet_source_policy;
+
+                CoopRoundStats state_stats;
+                std::vector<TValue> source_values;
+                std::vector<TBuffer> source_buffers;
+                if (!packet_sources.empty()) {
+                    FetchCoopStateForVertices(packet_sources,
+                                              source_values,
+                                              source_buffers,
+                                              state_stats,
+                                              false);
+                }
+                packet.source_state_snapshots = packet_sources.size();
+                packet.state_snapshot_bytes =
+                    state_stats.state_request_h2d_bytes + state_stats.state_d2h_bytes;
+                packet.source_state_snapshot_ms =
+                    state_stats.state_request_h2d_ms + state_stats.state_d2h_ms;
+
+                std::vector<CpuRelaxProposal<TBuffer>> proposals;
+                proposals.reserve(packet.edge_budget > 0
+                                      ? static_cast<size_t>(packet.edge_budget)
+                                      : static_cast<size_t>(selected_edge_est));
+                RunCpuPacketDryRun(packet_sources,
+                                   source_values,
+                                   source_buffers,
+                                   proposals,
+                                   packet);
+
+                CoopRoundStats compress_stats;
+                CompressCpuRelaxProposals(proposals, compress_stats);
+                packet.compressed_proposals = proposals.size();
+                packet.compressed_unique_dst = proposals.size();
+                packet.proposal_compress_ms = compress_stats.proposal_compress_ms;
+
+                if (!proposals.empty()) {
+                    CoopRoundStats merge_stats;
+                    std::vector<CpuSourceCommit<TValue>> no_source_commits;
+                    Stopwatch sw_merge_wall(true);
+                    MergeCpuSSSPProposals(proposals,
+                                          no_source_commits,
+                                          merge_stats,
+                                          m_coop_device_changed_vertices.DeviceObject());
+                    sw_merge_wall.stop();
+                    packet.diagnostic_merge_success = merge_stats.cpu_proposals_success;
+                    packet.diagnostic_merge_h2d_bytes = merge_stats.h2d_proposal_bytes;
+                    packet.diagnostic_merge_h2d_ms = merge_stats.h2d_proposal_ms;
+                    packet.diagnostic_merge_kernel_ms = merge_stats.merge_ms;
+                    packet.diagnostic_merge_wall_ms = sw_merge_wall.ms();
+                }
+
+                double gpu_launch_submit_ms = 0.0;
+                double gpu_sync_wait_ms = 0.0;
+                uint32_t gpu_kernel_launches = 0;
+                LaunchGpuDeltaAndSync(algo_variant,
+                                      gpu_launch_submit_ms,
+                                      gpu_sync_wait_ms,
+                                      gpu_kernel_launches);
+
+                const double overlap_window_ms = gpu_launch_submit_ms + gpu_sync_wait_ms;
+
+                LOG("[COOP-PACKET-MERGE] seq=%lu round=%u split_mode=%s phase=9F_packet_production_candidate source_policy=%s candidate_sources=%lu selected_sources=%lu source_state_snapshots=%lu reachable_sources=%lu active_sources=%lu cached_sources=%lu non_cached_sources=%lu edge_visits=%lu generated_proposals=%lu compressed_proposals=%lu compressed_unique_dst=%lu merge_success=%lu merge_h2d_bytes=%lu state_snapshot_bytes=%lu host_pma_read_bytes=%lu edge_budget=%lu source_state_snapshot_ms=%f cpu_wall_ms=%f proposal_compress_ms=%f merge_h2d_ms=%f merge_kernel_ms=%f merge_wall_ms=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f overlap_window_ms=%f gpu_kernel_launches=%u proposal_checksum=%lu note=production_candidate_no_dst_probe_no_gpu_skip\n",
+                    static_cast<unsigned long>(coop_seq),
+                    coop_round,
+                    split_mode_name,
+                    source_policy.c_str(),
+                    packet.candidate_sources,
+                    packet.selected_sources,
+                    packet.source_state_snapshots,
+                    packet.reachable_sources,
+                    packet.active_sources,
+                    packet.cached_sources,
+                    packet.non_cached_sources,
+                    packet.edge_visits,
+                    packet.generated_proposals,
+                    packet.compressed_proposals,
+                    packet.compressed_unique_dst,
+                    packet.diagnostic_merge_success,
+                    packet.diagnostic_merge_h2d_bytes,
+                    packet.state_snapshot_bytes,
+                    packet.host_pma_read_bytes,
+                    packet.edge_budget,
+                    packet.source_state_snapshot_ms,
+                    packet.cpu_wall_ms,
+                    packet.proposal_compress_ms,
+                    packet.diagnostic_merge_h2d_ms,
+                    packet.diagnostic_merge_kernel_ms,
+                    packet.diagnostic_merge_wall_ms,
+                    gpu_launch_submit_ms,
+                    gpu_sync_wait_ms,
+                    overlap_window_ms,
+                    gpu_kernel_launches,
+                    packet.proposal_checksum);
+
+                PostComputationBW();
+            }
+
+            void ExecutePolicy_Converge_PacketOverlapMerge(AlgoVariant *algo_variant,
+                                                           uint64_t coop_seq,
+                                                           uint32_t coop_round,
+                                                           const char *split_mode_name) {
+                CoopPacketDryRunStats packet;
+                std::vector<index_t> packet_sources;
+                uint64_t selected_edge_est = 0;
+                SelectCpuPacketSources(packet, packet_sources, selected_edge_est);
+                const std::string source_policy = FLAGS_coop_packet_source_policy;
+
+                CoopRoundStats state_stats;
+                std::vector<TValue> source_values;
+                std::vector<TBuffer> source_buffers;
+                if (!packet_sources.empty()) {
+                    FetchCoopStateForVertices(packet_sources,
+                                              source_values,
+                                              source_buffers,
+                                              state_stats,
+                                              false);
+                }
+                packet.source_state_snapshots = packet_sources.size();
+                packet.state_snapshot_bytes =
+                    state_stats.state_request_h2d_bytes + state_stats.state_d2h_bytes;
+                packet.source_state_snapshot_ms =
+                    state_stats.state_request_h2d_ms + state_stats.state_d2h_ms;
+
+                std::vector<CpuRelaxProposal<TBuffer>> proposals;
+                proposals.reserve(packet.edge_budget > 0
+                                      ? static_cast<size_t>(packet.edge_budget)
+                                      : static_cast<size_t>(selected_edge_est));
+
+                CoopRoundStats compress_stats;
+                std::thread cpu_packet_thread([this,
+                                               &packet_sources,
+                                               &source_values,
+                                               &source_buffers,
+                                               &proposals,
+                                               &packet,
+                                               &compress_stats]() {
+                    RunCpuPacketDryRun(packet_sources,
+                                       source_values,
+                                       source_buffers,
+                                       proposals,
+                                       packet);
+                    CompressCpuRelaxProposals(proposals, compress_stats);
+                    packet.compressed_proposals = proposals.size();
+                    packet.compressed_unique_dst = proposals.size();
+                    packet.proposal_compress_ms = compress_stats.proposal_compress_ms;
+                });
+
+                m_coop_device_changed_vertices.ResetAsync(m_stream->cuda_stream);
+                m_stream->Sync();
+
+                double gpu_launch_submit_ms = 0.0;
+                double gpu_sync_wait_ms = 0.0;
+                uint32_t gpu_kernel_launches = 0;
+                LaunchGpuDeltaAndSync(algo_variant,
+                                      gpu_launch_submit_ms,
+                                      gpu_sync_wait_ms,
+                                      gpu_kernel_launches);
+
+                if (cpu_packet_thread.joinable()) {
+                    cpu_packet_thread.join();
+                }
+
+                const uint64_t compressed_before_stale_filter = proposals.size();
+                uint64_t still_valid_proposals = 0;
+                uint64_t stale_proposals = 0;
+                uint64_t dropped_stale_proposals = 0;
+                double stale_filter_ms = 0.0;
+                uint64_t stale_filter_bytes = 0;
+                if (!proposals.empty()) {
+                    Stopwatch sw_stale_filter(true);
+                    std::vector<index_t> dst_vertices;
+                    dst_vertices.reserve(proposals.size());
+                    for (const auto &proposal : proposals) {
+                        dst_vertices.push_back(proposal.dst);
+                    }
+                    CoopRoundStats dst_stats;
+                    std::vector<TValue> dst_values;
+                    std::vector<TBuffer> dst_buffers;
+                    FetchCoopStateForVertices(dst_vertices,
+                                              dst_values,
+                                              dst_buffers,
+                                              dst_stats,
+                                              false);
+                    std::vector<CpuRelaxProposal<TBuffer>> still_valid;
+                    still_valid.reserve(proposals.size());
+                    for (size_t i = 0; i < proposals.size(); i++) {
+                        if (proposals[i].value < dst_buffers[i]) {
+                            still_valid.push_back(proposals[i]);
+                        }
+                    }
+                    still_valid_proposals = still_valid.size();
+                    stale_proposals = proposals.size() - still_valid.size();
+                    dropped_stale_proposals = stale_proposals;
+                    proposals.swap(still_valid);
+                    sw_stale_filter.stop();
+                    stale_filter_ms = sw_stale_filter.ms();
+                    stale_filter_bytes =
+                        dst_stats.state_request_h2d_bytes + dst_stats.state_d2h_bytes;
+                }
+
+                if (!proposals.empty()) {
+                    CoopRoundStats merge_stats;
+                    std::vector<CpuSourceCommit<TValue>> no_source_commits;
+                    Stopwatch sw_merge_wall(true);
+                    MergeCpuSSSPProposals(proposals,
+                                          no_source_commits,
+                                          merge_stats,
+                                          m_coop_device_changed_vertices.DeviceObject());
+                    sw_merge_wall.stop();
+                    packet.diagnostic_merge_success = merge_stats.cpu_proposals_success;
+                    packet.diagnostic_merge_h2d_bytes = merge_stats.h2d_proposal_bytes;
+                    packet.diagnostic_merge_h2d_ms = merge_stats.h2d_proposal_ms;
+                    packet.diagnostic_merge_kernel_ms = merge_stats.merge_ms;
+                    packet.diagnostic_merge_wall_ms = sw_merge_wall.ms();
+                }
+
+                uint32_t postbw_visible_active = 0;
+                if (packet.diagnostic_merge_success > 0) {
+                    postbw_visible_active = m_coop_device_changed_vertices.GetCount(*m_stream);
+                }
+
+                const double overlap_window_ms = gpu_launch_submit_ms + gpu_sync_wait_ms;
+                const double cpu_hidden_candidate_ms =
+                    packet.cpu_wall_ms + packet.proposal_compress_ms;
+                const double hidden_ms = std::min(cpu_hidden_candidate_ms, overlap_window_ms);
+                const double exposed_ms = cpu_hidden_candidate_ms > overlap_window_ms
+                                              ? cpu_hidden_candidate_ms - overlap_window_ms
+                                              : 0.0;
+                const double hidden_ratio = cpu_hidden_candidate_ms > 0.0
+                                                ? hidden_ms / cpu_hidden_candidate_ms
+                                                : 0.0;
+
+                LOG("[COOP-PACKET-OVERLAP] seq=%lu packet_round=%u merge_round=%u split_mode=%s phase=10A_packet_overlap_merge source_policy=%s candidate_sources=%lu selected_sources=%lu source_state_snapshots=%lu reachable_sources=%lu active_sources=%lu cached_sources=%lu non_cached_sources=%lu edge_visits=%lu generated_proposals=%lu compressed_proposals=%lu compressed_before_stale_filter=%lu still_valid_proposals=%lu stale_proposals=%lu dropped_stale_proposals=%lu merge_success=%lu merge_h2d_bytes=%lu state_snapshot_bytes=%lu stale_filter_bytes=%lu host_pma_read_bytes=%lu edge_budget=%lu source_state_snapshot_ms=%f cpu_generate_ms=%f cpu_wall_ms=%f proposal_compress_ms=%f stale_filter_ms=%f overlap_window_ms=%f hidden_cpu_ms=%f exposed_cpu_ms=%f hidden_ratio=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f merge_h2d_ms=%f merge_kernel_ms=%f merge_wall_ms=%f gpu_kernel_launches=%u postbw_visible_active=%u performance_claim_valid=%d proposal_checksum=%lu note=phase10A_overlap_generate_compress_then_barrier_merge_no_gpu_skip\n",
+                    static_cast<unsigned long>(coop_seq),
+                    coop_round,
+                    coop_round,
+                    split_mode_name,
+                    source_policy.c_str(),
+                    packet.candidate_sources,
+                    packet.selected_sources,
+                    packet.source_state_snapshots,
+                    packet.reachable_sources,
+                    packet.active_sources,
+                    packet.cached_sources,
+                    packet.non_cached_sources,
+                    packet.edge_visits,
+                    packet.generated_proposals,
+                    packet.compressed_proposals,
+                    compressed_before_stale_filter,
+                    still_valid_proposals,
+                    stale_proposals,
+                    dropped_stale_proposals,
+                    packet.diagnostic_merge_success,
+                    packet.diagnostic_merge_h2d_bytes,
+                    packet.state_snapshot_bytes,
+                    stale_filter_bytes,
+                    packet.host_pma_read_bytes,
+                    packet.edge_budget,
+                    packet.source_state_snapshot_ms,
+                    packet.cpu_wall_ms,
+                    packet.cpu_wall_ms,
+                    packet.proposal_compress_ms,
+                    stale_filter_ms,
+                    overlap_window_ms,
+                    hidden_ms,
+                    exposed_ms,
+                    hidden_ratio,
+                    gpu_launch_submit_ms,
+                    gpu_sync_wait_ms,
+                    packet.diagnostic_merge_h2d_ms,
+                    packet.diagnostic_merge_kernel_ms,
+                    packet.diagnostic_merge_wall_ms,
+                    gpu_kernel_launches,
+                    postbw_visible_active,
+                    1,
+                    packet.proposal_checksum);
+
+                PostComputationBW();
+            }
+
             void ExecutePolicy_Converge_Coop(AlgoVariant *algo_variant) {
                 Stopwatch sw_round(true);
                 const uint32_t coop_round = m_running_info.current_round;
@@ -3745,10 +4635,67 @@ namespace sepgraph {
                 const bool cpu_home_mode = split_mode == CoopSplitMode::CPU_HOME;
                 const bool cpu_home_owner_skip_enabled =
                     cpu_home_mode && FLAGS_coop_home_skip_gpu_sources;
+                const bool cpu_home_diagnostic_launch_enabled =
+                    cpu_home_mode && FLAGS_coop_home_diagnostic_launch;
                 const char *split_mode_name = cpu_home_mode ? "cpu_home" : "host_select";
 
                 if (cpu_home_mode && !m_coop_cpu_home_batch_enabled) {
                     LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_disabled_low_work\n",
+                        static_cast<unsigned long>(coop_seq),
+                        coop_round,
+                        split_mode_name);
+                    ExecutePolicy_Converge(algo_variant);
+                    return;
+                }
+
+                if (cpu_home_mode &&
+                    !cpu_home_owner_skip_enabled &&
+                    !cpu_home_diagnostic_launch_enabled) {
+                    if (FLAGS_coop_packet_overlap_merge) {
+                        LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_packet_overlap_merge_gpu_authoritative_no_skip\n",
+                            static_cast<unsigned long>(coop_seq),
+                            coop_round,
+                            split_mode_name);
+                        ExecutePolicy_Converge_PacketOverlapMerge(algo_variant,
+                                                                  coop_seq,
+                                                                  coop_round,
+                                                                  split_mode_name);
+                        return;
+                    }
+                    if (FLAGS_coop_packet_production_merge) {
+                        LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_packet_production_merge_gpu_authoritative_no_skip\n",
+                            static_cast<unsigned long>(coop_seq),
+                            coop_round,
+                            split_mode_name);
+                        ExecutePolicy_Converge_PacketProductionMerge(algo_variant,
+                                                                     coop_seq,
+                                                                     coop_round,
+                                                                     split_mode_name);
+                        return;
+                    }
+                    if (FLAGS_coop_packet_dry_run) {
+                        LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_packet_dry_run_gpu_only_with_cpu_proposal_quality_probe\n",
+                            static_cast<unsigned long>(coop_seq),
+                            coop_round,
+                            split_mode_name);
+                        ExecutePolicy_Converge_PacketDryRun(algo_variant,
+                                                            coop_seq,
+                                                            coop_round,
+                                                            split_mode_name);
+                        return;
+                    }
+                    if (FLAGS_coop_overlap_probe) {
+                        LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_overlap_probe_gpu_only_with_cpu_readonly_probe\n",
+                            static_cast<unsigned long>(coop_seq),
+                            coop_round,
+                            split_mode_name);
+                        ExecutePolicy_Converge_OverlapProbe(algo_variant,
+                                                            coop_seq,
+                                                            coop_round,
+                                                            split_mode_name);
+                        return;
+                    }
+                    LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_safe_gpu_only_default\n",
                         static_cast<unsigned long>(coop_seq),
                         coop_round,
                         split_mode_name);

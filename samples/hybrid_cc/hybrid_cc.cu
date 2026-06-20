@@ -30,6 +30,17 @@ DEFINE_int32(coop_home_min_injected_sources, 32, "Compatibility flag; cooperativ
 DEFINE_int32(coop_home_min_injected_edges, 50000, "Compatibility flag; cooperative execution is implemented for SSSP only");
 DEFINE_int32(coop_home_feedback_min_success_per_mille, 1, "Compatibility flag; cooperative execution is implemented for SSSP only");
 DEFINE_bool(coop_home_skip_gpu_sources, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_bool(coop_home_diagnostic_launch, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_bool(coop_overlap_probe, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_int32(coop_overlap_probe_max_sources, 512, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_int32(coop_overlap_probe_edge_budget, 200000, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_bool(coop_packet_dry_run, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_bool(coop_packet_diagnostic_merge, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_bool(coop_packet_production_merge, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_bool(coop_packet_overlap_merge, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_string(coop_packet_source_policy, "batch_touched", "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_int32(coop_packet_max_sources, 256, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_int32(coop_packet_edge_budget, 200000, "Compatibility flag; cooperative execution is implemented for SSSP only");
 DECLARE_bool(non_atomic);
 DECLARE_int32(top_ranks);
 DECLARE_bool(print_ranks);
