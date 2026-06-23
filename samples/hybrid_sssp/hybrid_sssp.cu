@@ -67,6 +67,8 @@ DEFINE_bool(coop_packet_production_merge,
             false, "Experimental production candidate: merge CPU packet proposals without pre/post dst probes and without GPU source skip; default false");
 DEFINE_bool(coop_packet_overlap_merge,
             false, "Experimental Phase 10A candidate: generate/compress CPU packet while GPU delta runs, then merge still-valid proposals after the GPU barrier without GPU source skip");
+DEFINE_bool(coop_packet_skip_audit,
+            false, "Experimental Phase 10B audit: skip CPU-covered active-frontier packet sources in convergence delta and merge CPU proposals through GPU authoritative merge");
 DEFINE_string(coop_packet_source_policy,
               "batch_touched", "CPU packet source policy: batch_touched/active_frontier");
 DEFINE_int32(coop_packet_max_sources,

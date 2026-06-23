@@ -94,8 +94,6 @@ namespace sepgraph
                     graph_datum.GetBufferDeviceObject(),
 		            graph_datum.GetValueDeviceObject()
 		    );
-
-            stream.Sync();
         }
 
         // template<typename TAppInst,typename PMAGraph, typename TGraphDatum>
@@ -1191,10 +1189,14 @@ namespace sepgraph
                             unsigned long long *gpu_relax_dst_high_degree_sum = nullptr,
                             unsigned long long *gpu_relax_dst_batch_touched_count = nullptr,
                             const uint8_t *batch_touched_flags = nullptr,
-                            uint32_t high_degree_threshold = 0)
+                            uint32_t high_degree_threshold = 0,
+                            uint32_t known_work_size = std::numeric_limits<uint32_t>::max())
         {       
             dim3 grid_dims, block_dims;
-            uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
+            uint32_t work_size =
+                known_work_size == std::numeric_limits<uint32_t>::max()
+                    ? graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream)
+                    : known_work_size;
                 KernelSizing(grid_dims, block_dims, work_size);
             switch (engine_options.GetLoadBalancing(common::MsgPassing::PUSH))
             {
