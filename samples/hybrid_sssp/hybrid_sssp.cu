@@ -22,9 +22,9 @@ DEFINE_bool(sparse,
 DEFINE_int32(sssp_max_batches,
              10, "Maximum number of update batches processed by hybrid_sssp");
 DEFINE_string(coop_mode,
-              "off", "CPU-GPU cooperative execution mode for SSSP add convergence: off/hybrid");
+              "hybrid", "CPU-GPU cooperative execution mode for SSSP add convergence: hybrid/off; use off for GPU-only ablation");
 DEFINE_string(coop_split_mode,
-              "host_select", "CPU-GPU cooperative split mode for SSSP: host_select/cpu_home");
+              "cpu_home", "CPU-GPU cooperative split mode for SSSP: cpu_home/host_select; host_select is kept for ablation");
 DEFINE_int32(coop_cpu_segment_limit,
              1, "Maximum number of whole frontier segments assigned to CPU in one cooperative round");
 DEFINE_int32(coop_max_cpu_sources,
@@ -68,9 +68,9 @@ DEFINE_bool(coop_packet_production_merge,
 DEFINE_bool(coop_packet_overlap_merge,
             false, "Experimental Phase 10A candidate: generate/compress CPU packet while GPU delta runs, then merge still-valid proposals after the GPU barrier without GPU source skip");
 DEFINE_bool(coop_packet_skip_audit,
-            false, "Experimental Phase 10B audit: skip CPU-covered active-frontier packet sources in convergence delta and merge CPU proposals through GPU authoritative merge");
+            true, "CPU-owned packet path: skip CPU-covered active-frontier packet sources in convergence delta and merge CPU proposals through GPU authoritative merge; set false for no-skip ablation");
 DEFINE_string(coop_packet_source_policy,
-              "batch_touched", "CPU packet source policy: batch_touched/active_frontier");
+              "active_frontier", "CPU packet source policy: active_frontier/batch_touched; batch_touched is kept for source-policy ablation");
 DEFINE_int32(coop_packet_max_sources,
              256, "Maximum sources used by the CPU packet dry-run per convergence round");
 DEFINE_int32(coop_packet_edge_budget,

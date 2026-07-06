@@ -356,6 +356,44 @@ namespace sepgraph {
             double diagnostic_merge_wall_ms = 0.0;
         };
 
+        struct CoopOwnedPacketSummaryStats {
+            uint64_t rounds = 0;
+            uint64_t candidate_sources = 0;
+            uint64_t selected_sources = 0;
+            uint64_t source_state_snapshots = 0;
+            uint64_t reachable_sources = 0;
+            uint64_t active_sources = 0;
+            uint64_t cpu_covered_sources = 0;
+            uint64_t cpu_covered_edges = 0;
+            uint64_t generated_proposals = 0;
+            uint64_t dropped_uncovered_proposals = 0;
+            uint64_t compressed_proposals = 0;
+            uint64_t source_commits = 0;
+            uint64_t gpu_skipped_sources = 0;
+            uint64_t gpu_kernel_launches = 0;
+            uint64_t merge_success = 0;
+            uint64_t merge_h2d_bytes = 0;
+            uint64_t postbw_visible_active = 0;
+            uint64_t state_snapshot_bytes = 0;
+            uint64_t host_pma_read_bytes = 0;
+            double source_state_snapshot_ms = 0.0;
+            double cpu_generate_ms = 0.0;
+            double proposal_compress_ms = 0.0;
+            double owner_mark_ms = 0.0;
+            double gpu_launch_submit_ms = 0.0;
+            double gpu_sync_wait_ms = 0.0;
+            double overlap_window_ms = 0.0;
+            double hidden_cpu_ms = 0.0;
+            double exposed_cpu_ms = 0.0;
+            double gpu_skip_counter_d2h_ms = 0.0;
+            double merge_h2d_ms = 0.0;
+            double merge_kernel_ms = 0.0;
+            double merge_wall_ms = 0.0;
+            uint64_t fully_covered_active_sources = 0;
+            uint64_t partial_covered_active_sources = 0;
+            uint64_t missing_relax_count = 0;
+        };
+
         struct CoopRoundStats {
             uint64_t active_vertices = 0;
             uint64_t gpu_frontier_vertices = 0;
@@ -557,6 +595,8 @@ namespace sepgraph {
             size_t m_coop_device_active_state_capacity = 0;
             size_t m_coop_device_state_request_capacity = 0;
             uint64_t m_coop_attr_sequence = 0;
+            CoopOwnedPacketSummaryStats m_coop_owned_summary;
+            bool m_coop_owned_summary_emitted = false;
             // Loader<index_t,index_t,index_t> load_update;
             // WeightedDynT result_graph;
 
@@ -606,6 +646,105 @@ namespace sepgraph {
                     graph_datum.seg_active_num[seg_idx] = active_count;
                     m_running_info.input_active_count_seg[seg_idx] = active_count;
                 }
+            }
+
+            void AccumulateCoopOwnedSummary(const CoopPacketDryRunStats &packet,
+                                            uint64_t cpu_covered_sources,
+                                            uint64_t source_commits,
+                                            uint64_t gpu_skipped_sources,
+                                            uint32_t gpu_kernel_launches,
+                                            uint32_t postbw_visible_active,
+                                            double owner_mark_ms,
+                                            double gpu_launch_submit_ms,
+                                            double gpu_sync_wait_ms,
+                                            double overlap_window_ms,
+                                            double hidden_cpu_ms,
+                                            double exposed_cpu_ms,
+                                            double gpu_skip_counter_d2h_ms) {
+                m_coop_owned_summary.rounds += 1;
+                m_coop_owned_summary.candidate_sources += packet.candidate_sources;
+                m_coop_owned_summary.selected_sources += packet.selected_sources;
+                m_coop_owned_summary.source_state_snapshots += packet.source_state_snapshots;
+                m_coop_owned_summary.reachable_sources += packet.reachable_sources;
+                m_coop_owned_summary.active_sources += packet.active_sources;
+                m_coop_owned_summary.cpu_covered_sources += cpu_covered_sources;
+                m_coop_owned_summary.cpu_covered_edges += packet.edge_visits;
+                m_coop_owned_summary.generated_proposals += packet.generated_proposals;
+                m_coop_owned_summary.dropped_uncovered_proposals += packet.dropped_uncovered_proposals;
+                m_coop_owned_summary.compressed_proposals += packet.compressed_proposals;
+                m_coop_owned_summary.source_commits += source_commits;
+                m_coop_owned_summary.gpu_skipped_sources += gpu_skipped_sources;
+                m_coop_owned_summary.gpu_kernel_launches += gpu_kernel_launches;
+                m_coop_owned_summary.merge_success += packet.diagnostic_merge_success;
+                m_coop_owned_summary.merge_h2d_bytes += packet.diagnostic_merge_h2d_bytes;
+                m_coop_owned_summary.postbw_visible_active += postbw_visible_active;
+                m_coop_owned_summary.state_snapshot_bytes += packet.state_snapshot_bytes;
+                m_coop_owned_summary.host_pma_read_bytes += packet.host_pma_read_bytes;
+                m_coop_owned_summary.source_state_snapshot_ms += packet.source_state_snapshot_ms;
+                m_coop_owned_summary.cpu_generate_ms += packet.cpu_wall_ms;
+                m_coop_owned_summary.proposal_compress_ms += packet.proposal_compress_ms;
+                m_coop_owned_summary.owner_mark_ms += owner_mark_ms;
+                m_coop_owned_summary.gpu_launch_submit_ms += gpu_launch_submit_ms;
+                m_coop_owned_summary.gpu_sync_wait_ms += gpu_sync_wait_ms;
+                m_coop_owned_summary.overlap_window_ms += overlap_window_ms;
+                m_coop_owned_summary.hidden_cpu_ms += hidden_cpu_ms;
+                m_coop_owned_summary.exposed_cpu_ms += exposed_cpu_ms;
+                m_coop_owned_summary.gpu_skip_counter_d2h_ms += gpu_skip_counter_d2h_ms;
+                m_coop_owned_summary.merge_h2d_ms += packet.diagnostic_merge_h2d_ms;
+                m_coop_owned_summary.merge_kernel_ms += packet.diagnostic_merge_kernel_ms;
+                m_coop_owned_summary.merge_wall_ms += packet.diagnostic_merge_wall_ms;
+                m_coop_owned_summary.fully_covered_active_sources += packet.fully_covered_active_sources;
+                m_coop_owned_summary.partial_covered_active_sources += packet.partial_covered_active_sources;
+                m_coop_owned_summary.missing_relax_count += packet.missing_relax_count;
+            }
+
+            void EmitCoopOwnedSummary(const char *reason) {
+                if (m_coop_owned_summary_emitted || m_coop_owned_summary.rounds == 0) {
+                    return;
+                }
+                m_coop_owned_summary_emitted = true;
+                const double cpu_packet_ms =
+                    m_coop_owned_summary.hidden_cpu_ms + m_coop_owned_summary.exposed_cpu_ms;
+                const double hidden_ratio =
+                    cpu_packet_ms > 0.0 ? m_coop_owned_summary.hidden_cpu_ms / cpu_packet_ms : 0.0;
+                LOG("[COOP-OWNED-SUMMARY] phase=10D_cpu_owned_packet reason=%s rounds=%lu candidate_sources=%lu selected_sources=%lu source_state_snapshots=%lu reachable_sources=%lu active_sources=%lu cpu_covered_sources=%lu cpu_covered_edges=%lu generated_proposals=%lu dropped_uncovered_proposals=%lu compressed_proposals=%lu source_commits=%lu gpu_skipped_sources=%lu gpu_kernel_launches=%lu merge_success=%lu merge_h2d_bytes=%lu postbw_visible_active=%lu state_snapshot_bytes=%lu host_pma_read_bytes=%lu source_state_snapshot_ms=%f cpu_generate_ms=%f proposal_compress_ms=%f owner_mark_ms=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f overlap_window_ms=%f hidden_cpu_ms=%f exposed_cpu_ms=%f hidden_ratio=%f gpu_skip_counter_d2h_ms=%f merge_h2d_ms=%f merge_kernel_ms=%f merge_wall_ms=%f fully_covered_active_sources=%lu partial_covered_active_sources=%lu missing_relax_count=%lu performance_claim_valid=1 note=quiet_mechanism_summary_cpu_owned_packet\n",
+                    reason,
+                    m_coop_owned_summary.rounds,
+                    m_coop_owned_summary.candidate_sources,
+                    m_coop_owned_summary.selected_sources,
+                    m_coop_owned_summary.source_state_snapshots,
+                    m_coop_owned_summary.reachable_sources,
+                    m_coop_owned_summary.active_sources,
+                    m_coop_owned_summary.cpu_covered_sources,
+                    m_coop_owned_summary.cpu_covered_edges,
+                    m_coop_owned_summary.generated_proposals,
+                    m_coop_owned_summary.dropped_uncovered_proposals,
+                    m_coop_owned_summary.compressed_proposals,
+                    m_coop_owned_summary.source_commits,
+                    m_coop_owned_summary.gpu_skipped_sources,
+                    m_coop_owned_summary.gpu_kernel_launches,
+                    m_coop_owned_summary.merge_success,
+                    m_coop_owned_summary.merge_h2d_bytes,
+                    m_coop_owned_summary.postbw_visible_active,
+                    m_coop_owned_summary.state_snapshot_bytes,
+                    m_coop_owned_summary.host_pma_read_bytes,
+                    m_coop_owned_summary.source_state_snapshot_ms,
+                    m_coop_owned_summary.cpu_generate_ms,
+                    m_coop_owned_summary.proposal_compress_ms,
+                    m_coop_owned_summary.owner_mark_ms,
+                    m_coop_owned_summary.gpu_launch_submit_ms,
+                    m_coop_owned_summary.gpu_sync_wait_ms,
+                    m_coop_owned_summary.overlap_window_ms,
+                    m_coop_owned_summary.hidden_cpu_ms,
+                    m_coop_owned_summary.exposed_cpu_ms,
+                    hidden_ratio,
+                    m_coop_owned_summary.gpu_skip_counter_d2h_ms,
+                    m_coop_owned_summary.merge_h2d_ms,
+                    m_coop_owned_summary.merge_kernel_ms,
+                    m_coop_owned_summary.merge_wall_ms,
+                    m_coop_owned_summary.fully_covered_active_sources,
+                    m_coop_owned_summary.partial_covered_active_sources,
+                    m_coop_owned_summary.missing_relax_count);
             }
 
             std::vector<CoopSegmentOwner> ChooseCoopSegments(CoopRoundStats &stats) {
@@ -1949,6 +2088,7 @@ namespace sepgraph {
     }
 
     ~Engine() {
+        EmitCoopOwnedSummary("engine_destructor");
         if (m_coop_device_proposals != nullptr) {
             cudaFree(m_coop_device_proposals);
             m_coop_device_proposals = nullptr;
@@ -4987,6 +5127,20 @@ namespace sepgraph {
                 if (packet.diagnostic_merge_success > 0) {
                     postbw_visible_active = m_coop_device_changed_vertices.GetCount(*m_stream);
                 }
+
+                AccumulateCoopOwnedSummary(packet,
+                                           static_cast<uint64_t>(source_commits.size()),
+                                           static_cast<uint64_t>(source_commits.size()),
+                                           gpu_skipped_sources,
+                                           gpu_kernel_launches,
+                                           postbw_visible_active,
+                                           sw_mark.ms(),
+                                           gpu_launch_submit_ms,
+                                           gpu_sync_wait_ms,
+                                           overlap_window_ms,
+                                           hidden_cpu_ms,
+                                           exposed_cpu_ms,
+                                           gpu_skip_counter_d2h_ms);
 
                 if (FLAGS_verbose) {
                     LOG("[COOP-SKIP-AUDIT] seq=%lu round=%u split_mode=%s phase=10C3_overlapped_owner_packet source_policy=%s skip_enabled=1 candidate_sources=%lu selected_sources=%lu source_state_snapshots=%lu reachable_sources=%lu active_sources=%lu cpu_covered_sources=%lu cpu_covered_edges=%lu generated_proposals=%lu dropped_uncovered_proposals=%lu compressed_proposals=%lu compressed_before_merge=%lu source_commits=%lu gpu_skipped_sources=%lu gpu_kernel_launches=%u merge_success=%lu merge_h2d_bytes=%lu postbw_visible_active=%u state_snapshot_bytes=%lu host_pma_read_bytes=%lu source_state_snapshot_ms=%f cpu_generate_ms=%f proposal_compress_ms=%f owner_mark_ms=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f overlap_window_ms=%f hidden_cpu_ms=%f exposed_cpu_ms=%f hidden_ratio=%f gpu_skip_counter_d2h_ms=%f merge_h2d_ms=%f merge_kernel_ms=%f merge_wall_ms=%f fully_covered_active_sources=%lu partial_covered_active_sources=%lu missing_relax_count=%lu mismatched_buffer_count=not_checked_minimal mismatched_active_count=not_checked_minimal performance_claim_valid=0 note=cggraph_style_gpu_skip_cpu_packet_overlap\n",
