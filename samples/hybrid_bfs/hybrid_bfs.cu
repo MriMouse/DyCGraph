@@ -44,6 +44,7 @@ DEFINE_bool(coop_packet_skip_audit, false, "Compatibility flag; cooperative exec
 DEFINE_string(coop_packet_source_policy, "batch_touched", "Compatibility flag; cooperative execution is implemented for SSSP only");
 DEFINE_int32(coop_packet_max_sources, 256, "Compatibility flag; cooperative execution is implemented for SSSP only");
 DEFINE_int32(coop_packet_edge_budget, 200000, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_bool(coop_merge_light_prefilter, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
 DECLARE_bool(non_atomic);
 DECLARE_int32(top_ranks);
 DECLARE_bool(print_ranks);

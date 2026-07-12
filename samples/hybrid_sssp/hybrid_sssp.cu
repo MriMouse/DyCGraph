@@ -70,11 +70,13 @@ DEFINE_bool(coop_packet_overlap_merge,
 DEFINE_bool(coop_packet_skip_audit,
             true, "CPU-owned packet path: skip CPU-covered active-frontier packet sources in convergence delta and merge CPU proposals through GPU authoritative merge; set false for no-skip ablation");
 DEFINE_string(coop_packet_source_policy,
-              "active_frontier", "CPU packet source policy: active_frontier/batch_touched; batch_touched is kept for source-policy ablation");
+              "active_frontier", "CPU packet source policy: active_frontier/degree_desc/noncached_degree/cache_aware/hybrid_score/history_success/batch_touched");
 DEFINE_int32(coop_packet_max_sources,
              256, "Maximum sources used by the CPU packet dry-run per convergence round");
 DEFINE_int32(coop_packet_edge_budget,
              200000, "Maximum host PMA edges read by the CPU packet dry-run per convergence round");
+DEFINE_bool(coop_merge_light_prefilter,
+            false, "Filter CPU relax proposals against current dst buffer before GPU merge to reduce H2D/merge work");
 DEFINE_bool(sssp_print_checksum,
             false, "Print final SSSP distance and parent checksums");
 DECLARE_int32(top_ranks);
@@ -373,15 +375,23 @@ bool HybridSSSP()
     while(true){
         if(NumOfSnapShots==max_batches) break;
         std::cout<<"batch number "<<NumOfSnapShots<<std::endl;
+        engine.SetCoopMechanismBatch(static_cast<uint64_t>(NumOfSnapShots));
         Stopwatch sw_paper_batch(true);
         engine.del_edge(local_begin,NumOfSnapShots);
         engine.add_edge(local_begin,NumOfSnapShots);
+        Stopwatch sw_hot_cache_refresh(true);
         engine.compute_hot_vertices_sssp();
         engine.confirm_candidate_batch();
         engine.evication_cache();
         engine.compact_cache();
         engine.LoadCache();
+        sw_hot_cache_refresh.stop();
         sw_paper_batch.stop();
+        if (FLAGS_verbose) {
+            LOG("[P0-TIMER][SSSP][batch %d] hot_cache_refresh: %.3f ms\n",
+                NumOfSnapShots,
+                sw_hot_cache_refresh.ms());
+        }
         LOG("[P0-TIMER][SSSP][batch %d] total_batch: %.3f ms\n",
             NumOfSnapShots,
             sw_paper_batch.ms());
