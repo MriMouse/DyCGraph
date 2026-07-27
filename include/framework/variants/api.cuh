@@ -22,6 +22,12 @@ namespace sepgraph
         template<typename TValue, typename TBuffer, typename TWeight>
         struct AppBase
         {
+            static constexpr bool kSupportsGpuDeletionRepair = false;
+
+            __host__ __device__ static TWeight DeletionEdgeWeight(index_t, index_t) {
+                return TWeight(1);
+            }
+
             // [ACCUMULATE] [CONTINUE/BREAK]
             const int ACCUMULATE_SUCCESS_BREAK = 0;         // 0 0
             const int ACCUMULATE_SUCCESS_CONTINUE = 1;      // 0 1
@@ -86,18 +92,6 @@ namespace sepgraph
                                          TValue *p_parent,
                                          TBuffer *p_buffer,
                                          TBuffer *buffer)
-            {
-                assert(false);
-                return 0;
-            }
-
-            __forceinline__ __device__
-            virtual int AccumulateBuffer_del(index_t src,
-                                         index_t dst,
-                                        //  TWeight weight,
-                                         TValue *p_parent,
-                                         TBuffer *p_buffer,
-                                         TValue *p_value)
             {
                 assert(false);
                 return 0;

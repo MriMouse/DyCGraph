@@ -128,7 +128,7 @@ namespace sepgraph {
             for (index_t i = 0 + tid; i < work_size; i += nthreads) {
                 index_t node = work_source.get_work(i);
                 d_hotness.d_buffers[d_hotness.selector][node] = 1/d_hotness.d_buffers[d_hotness.selector][node];
-                
+
             }
         }
         template<typename TAppInst,
@@ -250,7 +250,7 @@ namespace sepgraph {
                     vcsr_graph.vertices_[node].cache= false;
                 }
                }
-                
+
             }
         }
 
@@ -286,7 +286,7 @@ namespace sepgraph {
             uint32_t nthreads = TOTAL_THREADS_1D;
             uint32_t work_size = work_size_d[1];
             uint32_t loca_begin = work_size_d[0];
-            for (uint32_t i = 0 + tid; i < work_size; i += nthreads) 
+            for (uint32_t i = 0 + tid; i < work_size; i += nthreads)
             {
                 // if(i>=loca_begin&&i<work_size){
                     index_t node = del_edges_d[i+loca_begin].u;
@@ -294,7 +294,7 @@ namespace sepgraph {
                     vcsr_graph.vertices_[node].cache = false;
                     vcsr_graph.vertices_[node].virtual_start = 0;
                     vcsr_graph.vertices_[node].virtual_degree = 0;
-                    // vcsr_graph.vertices_[node].secondary_degree = 0;       
+                    // vcsr_graph.vertices_[node].secondary_degree = 0;
                 // }
 
             }
@@ -318,7 +318,7 @@ namespace sepgraph {
             uint32_t work_size = work_size_d[1];
             uint32_t loca_begin = work_size_d[0];
             uint32_t work_size_rup = round_up(work_size, blockDim.x) * blockDim.x;
-            for (uint32_t i = loca_begin + tid; i < loca_begin+work_size_rup; i += nthreads) 
+            for (uint32_t i = loca_begin + tid; i < loca_begin+work_size_rup; i += nthreads)
             {
                 if(tid < work_size){
                     index_t node = add_edges_d[tid].u;
@@ -371,7 +371,7 @@ namespace sepgraph {
                                                    (TBuffer) 0,
                                                    out_active,
                                                    in_active);
-        }      
+        }
         template<typename WorkSource>
         __global__
         void reset_cache(
@@ -387,42 +387,35 @@ namespace sepgraph {
             }
         }
         template<template<typename, typename, typename, typename ...> class TAppImpl,
-                typename PMAGraph,
                 typename TValue,
                 typename TBuffer,
                 typename TWEdge,
                 typename TWeight,
-                typename BufferVec,
-                // typename NodesHash,
                 typename... UnusedData>
         __global__
         void reset_del_edges(
                         TAppImpl<TValue, TBuffer, TWeight, UnusedData...> app_inst,
-                        PMAGraph vcsr_graph,
                         TValue *node_parent_datum,
-                       TValue *node_value_datum,
-                       TBuffer *node_buffer_datum,
-                       BufferVec buffer,
-                       BufferVec buffer_l2,
-                       TWEdge *del_edges_d,
-                       uint32_t *work_size_d,
-                       bool* reset_nodes) {
+                        TValue *node_value_datum,
+                        TBuffer *node_buffer_datum,
+                        TWEdge *del_edges_d,
+                        uint32_t *work_size_d,
+                        bool *reset_nodes,
+                        groute::dev::Queue<index_t> affected_vertices) {
             uint32_t tid = TID_1D;
             uint32_t nthreads = TOTAL_THREADS_1D;
             uint32_t work_size = work_size_d[1];
             uint32_t loca_begin = work_size_d[0];
-            for (uint32_t i = 0 + tid; i < work_size; i += nthreads) 
+            for (uint32_t i = 0 + tid; i < work_size; i += nthreads)
             {
                 index_t src = del_edges_d[i+loca_begin].u;
                 index_t dst = del_edges_d[i+loca_begin].v;
-                if(node_parent_datum[dst]==src){
+                if (AtomicInvalidateParent(&node_parent_datum[dst], src)) {
                     TBuffer init_buffer = app_inst.GetInitBuffer(dst);
                     node_buffer_datum[dst] = init_buffer;
                     node_value_datum[dst] = app_inst.GetInitValue(dst);
-                    node_parent_datum[dst] = UINT32_MAX;
-                    vcsr_graph.vertices_[dst].deletion = true;
-                    // reset_nodes[dst]=true;
-                    
+                    reset_nodes[dst] = true;
+                    affected_vertices.append(dst);
                 }
 
             }
@@ -447,7 +440,7 @@ namespace sepgraph {
                 index_t node = work_source.get_work(i);
                     d_hotness.d_buffers[d_hotness.selector][node] = ((vcsr_graph.vertices_[node].hotness[0]+vcsr_graph.vertices_[node].hotness[1]+vcsr_graph.vertices_[node].hotness[2]+vcsr_graph.vertices_[node].hotness[3]));
                     // d_hotness.d_buffers[d_hotness.selector][node] = (vcsr_graph.vertices_[node].hotness[0]);
-                
+
             }
         }
         template<typename TAppInst,
@@ -474,7 +467,7 @@ namespace sepgraph {
                 }
                 // d_hotness.d_buffers[d_hotness.selector][node] =vcsr_graph.sync_vertices_[node].degree;
                     // d_hotness.d_buffers[d_hotness.selector][node] = (vcsr_graph.vertices_[node].hotness[0]);
-                
+
             }
         }
         template<typename TAppInst,
@@ -543,7 +536,7 @@ namespace sepgraph {
             uint32_t nthreads = TOTAL_THREADS_1D;
             uint32_t work_size = work_size_d[1];
             uint32_t loca_begin = work_size_d[0];
-            for (uint32_t i = 0 + tid; i < work_size; i += nthreads) 
+            for (uint32_t i = 0 + tid; i < work_size; i += nthreads)
             {
                 index_t node = add_edges_d[i+loca_begin].u;
                 vcsr_graph.vertices_[node].cache=false;
@@ -600,8 +593,8 @@ namespace sepgraph {
                 }
             }
         }
-        
-        
+
+
         template<typename TBitmap, typename TQueue>
         __global__ void BitmapToQueueRange(TBitmap bitmap, TQueue queue,index_t start,index_t end) {
             uint32_t tid = TID_1D;
@@ -609,7 +602,7 @@ namespace sepgraph {
             uint32_t work_size = bitmap.get_size();
 
             for (uint32_t i = 0 + tid; i < end - start; i += nthreads) {
-                
+
 	               index_t pos = start + i;
                 if (bitmap.get_bit(pos)) {
 		    //printf("node: %d\n",i);
@@ -641,7 +634,7 @@ namespace sepgraph {
             if(tid < (*cache_size)){
                 cache_l1[tid] = cache_l3[tid];
                 // printf("tid %d river %d\n",tid,vcsr_graph.river);
-            } 
+            }
         }
 
         template<typename TAppInst,
@@ -658,7 +651,9 @@ namespace sepgraph {
                             //   GraphDatum<TBuffer> node_buffer_datum,
                             //   GraphDatum<TValue> node_value_datum,
                             TBuffer *node_buffer_datum,
-                            TValue *node_value_datum) {
+                            TValue *node_value_datum,
+                            uint32_t *node_state_epoch,
+                            uint32_t state_epoch) {
             uint32_t tid = TID_1D;
             uint32_t nthreads = TOTAL_THREADS_1D;
             uint32_t work_size = work_source.get_size();
@@ -667,6 +662,9 @@ namespace sepgraph {
                 // activeNodesLabeling[node] = 0;
                 // activeNodesDegree[node] = 0;
                 if (app_inst.IsActiveNode(node, node_buffer_datum[node], node_value_datum[node])) {
+                    if (node_state_epoch != nullptr) {
+                        node_state_epoch[node] = state_epoch;
+                    }
                     // printf("active node %d\n",node);
                     work_target.append(node);
                 }
@@ -836,30 +834,6 @@ namespace sepgraph {
             }
         }
         template<typename TAppInst,
-                typename WorkSource,
-                typename PMAGraph,
-                typename TBuffer,
-                typename TValue>
-        // template<typename TAppInst,
-        //         typename WorkSource>
-        __global__
-        void RebuildWorklist_deletion(TAppInst app_inst,
-                                 WorkSource work_source,
-                                PMAGraph vcsr_graph,
-                                groute::dev::Queue<index_t> work_target,
-                                TBuffer *node_buffer_datum,
-                                TValue *node_value_datum) {
-            uint32_t tid = TID_1D;
-            uint32_t nthreads = TOTAL_THREADS_1D;
-            uint32_t work_size = work_source.get_size();
-            for (index_t i = 0 + tid; i < work_size; i += nthreads) {
-                index_t node = work_source.get_work(i);
-                if (vcsr_graph.vertices_[node].deletion){
-                    work_target.append(node);
-                }
-            }
-        }
-        template<typename TAppInst,
                 typename PMAGraph,
                 typename WorkSource,
                 typename TDB_32,
@@ -883,28 +857,6 @@ namespace sepgraph {
             for (index_t i = 0 + tid; i < work_size; i += nthreads) {
                 index_t node = work_source.get_work(i);
                 hotness.d_buffers[hotness.selector][node] = 0;
-                vcsr_graph.vertices_[node].deletion = false;
-            }
-        }
-
-        template<typename TAppInst,
-        typename PMAGraph,
-                typename WorkSource>
-        // template<typename TAppInst,
-        //         typename WorkSource>
-        __global__
-        void RebuildWorklist_del(TAppInst app_inst,
-                            PMAGraph vcsr_graph,
-                              WorkSource work_source,
-                              groute::dev::Queue<index_t> work_target) {
-            uint32_t tid = TID_1D;
-            uint32_t nthreads = TOTAL_THREADS_1D;
-            uint32_t work_size = work_source.get_size();
-            for (index_t i = 0 + tid; i < work_size; i += nthreads) {
-                index_t node = work_source.get_work(i);
-                if (vcsr_graph.vertices_[node].deletion) {
-                    work_target.append(node);
-                }
             }
         }
 
@@ -949,8 +901,8 @@ namespace sepgraph {
             }
         }
 
-        __global__ void makeActiveNodesPointer(uint32_t *activeNodesPointer, uint32_t *activeNodesLabeling, 
-                                                    uint32_t *prefixLabeling, uint32_t *prefixSumDegrees, 
+        __global__ void makeActiveNodesPointer(uint32_t *activeNodesPointer, uint32_t *activeNodesLabeling,
+                                                    uint32_t *prefixLabeling, uint32_t *prefixSumDegrees,
                                                     uint32_t numNodes)
         {
             uint32_t id = blockDim.x * blockIdx.x + threadIdx.x;
@@ -984,18 +936,18 @@ namespace sepgraph {
                 local_sum += app_inst.sum_value(node, node_value_datum[node], node_buffer_datum[node]);
 
             }
-	    
+
             int warp_id = threadIdx.x / 32;
             TValue aggregate = WarpReduce(temp_storage[warp_id]).Sum(local_sum);
 
             if (cub::LaneId() == 0) {
-	       
+
                 atomicAdd(p_total_res, aggregate);
-		
+
             }
         }
-          
-        
+
+
         template<typename WorkSource>
         __global__ void SumOutDegreeQueue(WorkSource work_source,
                                      uint32_t *p_out_degree,
@@ -1011,15 +963,15 @@ namespace sepgraph {
                 index_t node = work_source.get_work(i);
 
                 local_sum += p_out_degree[node];
-		
+
             }
-	    
+
             int warp_id = threadIdx.x / 32;
             int aggregate = WarpReduce(temp_storage[warp_id]).Sum(local_sum);
 
             if (cub::LaneId() == 0) {
                 atomicAdd(p_total_out_degree, aggregate);
-		
+
             }
         }
 
@@ -1182,7 +1134,7 @@ namespace sepgraph {
                               uint32_t *p_active_count) {
             uint32_t work_size = work_source.get_size();
             uint32_t tid = TID_1D;
-                         if(tid==0)printf("AsyncPushTDFused\n");           
+                         if(tid==0)printf("AsyncPushTDFused\n");
             while (*p_active_count) {
                 if (LB == LoadBalancing::NONE) {
                     async_push_td::Relax<false>(app_inst,
@@ -1244,7 +1196,7 @@ namespace sepgraph {
                          GraphDatum<TBuffer> node_buffer_datum,
                          GraphDatum<TWeight> edge_weight_datum) {
                             uint32_t tid = TID_1D;
-                            if(tid==0)printf("AsyncPushDD\n");    
+                            if(tid==0)printf("AsyncPushDD\n");
             if (LB == LoadBalancing::NONE) {
                 async_push_dd::Relax(app_inst,
                                      work_source,
@@ -1288,7 +1240,7 @@ namespace sepgraph {
                              GraphDatum<TBuffer> node_buffer_datum,
                              GraphDatum<TWeight> edge_weight_datum) {
                                 uint32_t tid = TID_1D;
-                                if(tid==0)printf("AsyncPushDDPrio\n");  
+                                if(tid==0)printf("AsyncPushDDPrio\n");
             if (LB == LoadBalancing::NONE) {
                 async_push_dd::Relax(app_inst,
                                      work_source,
@@ -1331,7 +1283,7 @@ namespace sepgraph {
             uint32_t tid = TID_1D;
             groute::dev::Queue<index_t> *p_input = &queue_input;
             groute::dev::Queue<index_t> *p_output = &queue_output;
-            if(tid==0)printf("AsyncPushDDFused\n");  
+            if(tid==0)printf("AsyncPushDDFused\n");
             assert(p_input->count() > 0);
             assert(p_output->count() == 0);
 
@@ -1447,7 +1399,7 @@ namespace sepgraph {
 //                                p_output_low->count(),
 //                                p_output_high->count(),
 //                                current_priority);
-                if(tid==0)printf("AsyncPushDDFusedPrio\n"); 
+                if(tid==0)printf("AsyncPushDDFusedPrio\n");
                         app_inst.PostComputation();
                         *app_inst.m_p_current_round += 1;
                         p_input->reset();
@@ -1563,9 +1515,9 @@ namespace sepgraph {
                         GraphDatum<TBuffer> node_out_buffer_datum,
                         GraphDatum<TWeight> edge_weight_datum) {
                             uint32_t tid = TID_1D;
-                            if(tid==0)printf("SyncPullTD\n");  
+                            if(tid==0)printf("SyncPullTD\n");
             if (LB == LoadBalancing::NONE) {
-		
+
                 sync_pull_td::Relax(app_inst,seg_snode,seg_sedge_csc,
                                     work_source,
                                     csc_graph,
@@ -1580,7 +1532,7 @@ namespace sepgraph {
                                            node_out_buffer_datum,
                                            edge_weight_datum);
             }
-        }        
+        }
         template<LoadBalancing LB,
                 typename TAppInst,
                 typename WorkSource,
@@ -1603,7 +1555,7 @@ namespace sepgraph {
                         GraphDatum<TBuffer> node_out_buffer_datum,
                         GraphDatum<TWeight> edge_weight_datum) {
                             uint32_t tid = TID_1D;
-                            if(tid==0)printf("SyncPullDD\n"); 
+                            if(tid==0)printf("SyncPullDD\n");
             if (LB == LoadBalancing::NONE) {
                 sync_pull_dd::Relax(app_inst,seg_snode,seg_enode,seg_sedge_csc,zcflag,
                                     work_source,
@@ -1647,7 +1599,7 @@ namespace sepgraph {
                         GraphDatum<TBuffer> node_out_buffer_datum,
                         GraphDatum<TWeight> edge_weight_datum) {
                             uint32_t tid = TID_1D;
-                            if(tid==0)printf("SyncPullDD\n"); 
+                            if(tid==0)printf("SyncPullDD\n");
             if (zcflag) {
                 sync_pull_dd::RelaxCTA_ZC<LB>(app_inst,seg_snode,seg_enode,seg_sedge_csc,
                                     work_source,
@@ -1678,7 +1630,7 @@ namespace sepgraph {
                 template<typename> class GraphDatum,
                 typename TValue,
                 typename TBuffer,
-                typename TWeight>        
+                typename TWeight>
         __global__
         void SyncPushDD(TAppInst app_inst,
 			index_t seg_snode,
@@ -1692,7 +1644,7 @@ namespace sepgraph {
                          GraphDatum<TBuffer> node_buffer_datum,
                          GraphDatum<TWeight> edge_weight_datum) {
                             uint32_t tid = TID_1D;
-              //             if(tid==0)printf("SyncPushDD\n");  
+              //             if(tid==0)printf("SyncPushDD\n");
             //if (LB == LoadBalancing::NONE)
             if (true)
              {
@@ -1740,12 +1692,9 @@ namespace sepgraph {
                          uint64_t* cache_size,
                          TValue* node_value_datum,
                          TValue* node_parent_datum,
-                         TBuffer* node_buffer_datum,
-                         BitmapDeviceObject out_active,
-                         BitmapDeviceObject in_active,
-                         const uint32_t *cpu_source_owner_epoch = nullptr,
-                         uint32_t cpu_source_epoch = 0,
-                         unsigned long long *gpu_skipped_cpu_sources = nullptr) {
+	                         TBuffer* node_buffer_datum,
+	                         BitmapDeviceObject out_active,
+	                         BitmapDeviceObject in_active) {
                 sync_push_dd::RelaxCTADB_all_vertices<LB, false>(app_inst,seg_snode,seg_enode, seg_sedge_csr,zcflag,
                                                    work_source,
                                                    vcsr_graph,
@@ -1758,12 +1707,9 @@ namespace sepgraph {
                                                    node_value_datum,
                                                    node_parent_datum,
                                                    node_buffer_datum,
-                                                   (TBuffer) 0,
-                                                   out_active,
-                                                   in_active,
-                                                   cpu_source_owner_epoch,
-                                                   cpu_source_epoch,
-                                                   gpu_skipped_cpu_sources);
+	                                                   (TBuffer) 0,
+	                                                   out_active,
+	                                                   in_active);
         }
 
          template<LoadBalancing LB,
@@ -1869,12 +1815,9 @@ namespace sepgraph {
                          uint64_t *cache_size,
                          TValue* node_value_datum,
                          TValue* node_parent_datum,
-                         TBuffer* node_buffer_datum,
-                         BitmapDeviceObject out_active,
-                         BitmapDeviceObject in_active,
-                         const uint32_t *cpu_source_owner_epoch = nullptr,
-                         uint32_t cpu_source_epoch = 0,
-                         unsigned long long *gpu_skipped_cpu_sources = nullptr) {
+	                         TBuffer* node_buffer_datum,
+	                         BitmapDeviceObject out_active,
+	                         BitmapDeviceObject in_active) {
                 sync_push_dd::RelaxCTADBFlush<LB, false>(app_inst,seg_snode,seg_enode, seg_sedge_csr,zcflag,
                                                    work_source,
                                                    vcsr_graph,
@@ -1885,12 +1828,9 @@ namespace sepgraph {
                                                    node_value_datum,
                                                    node_parent_datum,
                                                    node_buffer_datum,
-                                                   (TBuffer) 0,
-                                                   out_active,
-                                                   in_active,
-                                                   cpu_source_owner_epoch,
-                                                   cpu_source_epoch,
-                                                   gpu_skipped_cpu_sources);
+	                                                   (TBuffer) 0,
+	                                                   out_active,
+	                                                   in_active);
         }
 
          template<LoadBalancing LB,
@@ -1919,26 +1859,14 @@ namespace sepgraph {
                         TValue *node_value_datum,
                         TBuffer * node_buffer_datum,
                         BitmapDeviceObject out_active,
-                        BitmapDeviceObject in_active,
-                        groute::dev::Queue<index_t> changed_vertices,
-                        const uint8_t *shadow_valid_flags,
-                        bool record_changed,
-                        const uint32_t *cpu_source_owner_epoch = nullptr,
-                        uint32_t cpu_source_epoch = 0,
-                        unsigned long long *gpu_skipped_cpu_sources = nullptr,
-                        const uint8_t *cpu_home_flags = nullptr,
-                        groute::dev::Queue<index_t> gpu_to_cpu_boundary_vertices =
-                            groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                        groute::dev::Queue<index_t> gpu_relax_dst_vertices =
-                            groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                        unsigned long long *gpu_relax_success_count = nullptr,
-                        unsigned long long *gpu_relax_cpu_home_success_count = nullptr,
-                        unsigned long long *gpu_relax_dst_degree_sum = nullptr,
-                        unsigned long long *gpu_relax_dst_high_degree_count = nullptr,
-                        unsigned long long *gpu_relax_dst_high_degree_sum = nullptr,
-                        unsigned long long *gpu_relax_dst_batch_touched_count = nullptr,
-                        const uint8_t *batch_touched_flags = nullptr,
-                        uint32_t high_degree_threshold = 0) {
+	                        BitmapDeviceObject in_active,
+	                        groute::dev::Queue<index_t> changed_vertices,
+	                        bool record_changed,
+	                        const uint8_t *cpu_home_flags = nullptr,
+	                        groute::dev::Queue<index_t> gpu_to_cpu_boundary_vertices =
+	                            groute::dev::Queue<index_t>(nullptr, nullptr, 0),
+	                        TBuffer *boundary_values = nullptr,
+                        index_t *boundary_parents = nullptr) {
                 sync_push_dd::RelaxCTADB<LB, false>(app_inst,seg_snode,seg_enode,seg_sedge_csr,zcflag,
                                                    work_source,
                                                    vcsr_graph,
@@ -1953,26 +1881,15 @@ namespace sepgraph {
                                                    node_buffer_datum,
                                                    (TBuffer) 0,
                                                    out_active,
-                                                   in_active,
-                                                   changed_vertices,
-                                                   shadow_valid_flags,
-                                                   record_changed,
-                                                   cpu_source_owner_epoch,
-                                                   cpu_source_epoch,
-                                                   gpu_skipped_cpu_sources,
-                                                   cpu_home_flags,
-                                                   gpu_to_cpu_boundary_vertices,
-                                                   gpu_relax_dst_vertices,
-                                                   gpu_relax_success_count,
-                                                   gpu_relax_cpu_home_success_count,
-                                                   gpu_relax_dst_degree_sum,
-                                                   gpu_relax_dst_high_degree_count,
-                                                   gpu_relax_dst_high_degree_sum,
-                                                   gpu_relax_dst_batch_touched_count,
-                                                   batch_touched_flags,
-                                                   high_degree_threshold);
+	                                                   in_active,
+	                                                   changed_vertices,
+	                                                   record_changed,
+	                                                   cpu_home_flags,
+	                                                   gpu_to_cpu_boundary_vertices,
+	                                                   boundary_values,
+                                                   boundary_parents);
         }
-        
+
          template<LoadBalancing LB,
                 typename TAppInst,
                 typename WorkSource,
@@ -2032,10 +1949,7 @@ namespace sepgraph {
                 typename TBuffer>
         __global__
         void SyncPushDDB_del(TAppInst app_inst,
-                         index_t seg_snode,
-			             index_t seg_enode,
-			             uint64_t seg_sedge_csr,
-			             bool zcflag,
+                         bool zcflag,
                          WorkSource work_source,
                          const PMAGraph vcsr_graph,
                          BufferVec buffer,
@@ -2043,12 +1957,13 @@ namespace sepgraph {
                          uint64_t *count_gpu,
                          uint64_t *total_act_d,
                          bool* reset_node,
-                        TValue *node_parent_datum,
+                         groute::dev::Queue<index_t> affected_vertices,
+                         TValue *node_parent_datum,
                         TValue *node_value_datum,
                         TBuffer * node_buffer_datum,
                         BitmapDeviceObject out_active,
                         BitmapDeviceObject in_active) {
-                sync_push_dd::RelaxCTADB_del<LB, false>(app_inst,seg_snode,seg_enode,seg_sedge_csr,zcflag,
+                sync_push_dd::RelaxCTADB_del<LB, false>(app_inst,zcflag,
                                                    work_source,
                                                    vcsr_graph,
                                                    buffer,
@@ -2056,6 +1971,7 @@ namespace sepgraph {
                                                    count_gpu,
                                                    total_act_d,
                                                    reset_node,
+                                                   affected_vertices,
                                                    node_parent_datum,
                                                    node_value_datum,
                                                    node_buffer_datum,
@@ -2063,7 +1979,7 @@ namespace sepgraph {
                                                    out_active,
                                                    in_active);
         }
-        
+
 /**
  * @brief Quaful SyncPushAdd kernel function
  * @tparam TAppInst  Type of the application
@@ -2136,7 +2052,7 @@ namespace sepgraph {
                                                    (TBuffer) 0,
                                                    out_active,
                                                    in_active);
-            
+
         }
 
 
@@ -2160,7 +2076,7 @@ namespace sepgraph {
 			BitmapDeviceObject out_active,
                          BitmapDeviceObject in_active) {
                             uint32_t tid = TID_1D;
-                            //if(tid==0)printf("SyncPullTD\n");  
+                            //if(tid==0)printf("SyncPullTD\n");
                 sync_pull_td::RelaxCTADB<LB>(app_inst,seg_snode,seg_sedge_csc,zcflag,
                                            work_source,
                                            csc_graph,
@@ -2170,8 +2086,8 @@ namespace sepgraph {
 					   out_active,
 					   in_active
 					    );
-            
-        }  
+
+        }
 
 
     }

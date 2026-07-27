@@ -7,7 +7,6 @@
 #ifndef HYBRID_FRAMEWORK_H
 #define HYBRID_FRAMEWORK_H
 
-#include <functional>
 #include <map>
 #include <math.h>
 #include <thrust/device_ptr.h>
@@ -22,6 +21,7 @@
 #include <framework/variants/common.cuh>
 #include <framework/variants/driver.cuh>
 #include <framework/hybrid_policy.h>
+#include <framework/dynamic_reverse_index.h>
 #include <framework/algo_variants.cuh>
 #include <utils/cuda_utils.h>
 #include <utils/graphs/traversal.h>
@@ -34,7 +34,10 @@
 #include <thrust/device_vector.h>
 #include <thrust/host_vector.h>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <deque>
 #include <limits>
 #include <string>
 #include <type_traits>
@@ -59,34 +62,7 @@ DECLARE_double(edge_factor);
 DECLARE_string(updatefile);
 DECLARE_string(update_size);
 DECLARE_bool(weight);
-DECLARE_string(coop_mode);
-DECLARE_string(coop_split_mode);
-DECLARE_int32(coop_cpu_segment_limit);
-DECLARE_int32(coop_max_cpu_sources);
-DECLARE_string(coop_segment_policy);
-DECLARE_int32(coop_cpu_min_degree);
-DECLARE_bool(coop_cpu_dry_run);
-DECLARE_bool(coop_compress_proposals);
-DECLARE_int32(coop_home_min_degree);
-DECLARE_int32(coop_home_max_sources);
-DECLARE_string(coop_home_policy);
-DECLARE_int32(coop_home_min_injected_sources);
-DECLARE_int32(coop_home_min_injected_edges);
-DECLARE_int32(coop_home_feedback_min_success_per_mille);
-DECLARE_bool(coop_home_skip_gpu_sources);
-DECLARE_bool(coop_home_diagnostic_launch);
-DECLARE_bool(coop_overlap_probe);
-DECLARE_int32(coop_overlap_probe_max_sources);
-DECLARE_int32(coop_overlap_probe_edge_budget);
-DECLARE_bool(coop_packet_dry_run);
-DECLARE_bool(coop_packet_diagnostic_merge);
-DECLARE_bool(coop_packet_production_merge);
-DECLARE_bool(coop_packet_overlap_merge);
-DECLARE_bool(coop_packet_skip_audit);
-DECLARE_string(coop_packet_source_policy);
-DECLARE_int32(coop_packet_max_sources);
-DECLARE_int32(coop_packet_edge_budget);
-DECLARE_bool(coop_merge_light_prefilter);
+DECLARE_int32(sssp_cpu_partition_capacity);
 
 namespace sepgraph {
     namespace engine {
@@ -105,7 +81,7 @@ namespace sepgraph {
             static const char *Name() {
                 return "Hybrid Graph Engine";
             }
-        };  
+        };
 
         template<typename TBuffer>
         struct CpuRelaxProposal {
@@ -114,11 +90,175 @@ namespace sepgraph {
             index_t parent;
         };
 
-        template<typename TValue>
-        struct CpuSourceCommit {
-            index_t src;
-            TValue value;
+        enum class PartitionOwner : uint8_t {
+            GPU = 0,
+            CPU = 1
         };
+
+        template<typename TAppInst, typename TValue, typename TBuffer>
+        __global__ void GpuAffectedPullRelax(TAppInst app_inst,
+                                             const index_t *affected_vertices,
+                                             uint32_t affected_count,
+                                             const uint64_t *incoming_offsets,
+                                             const index_t *incoming_sources,
+                                             TValue *node_value,
+                                             TBuffer *node_buffer,
+                                             TValue *node_parent,
+                                             TValue infinity,
+                                             unsigned int *changed_count) {
+            static_assert(sizeof(TValue) == sizeof(unsigned int),
+                          "GPU affected repair requires 32-bit values");
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            for (uint32_t i = tid; i < affected_count; i += nthreads) {
+                const index_t dst = affected_vertices[i];
+                TValue best = static_cast<TValue>(atomicAdd(
+                    reinterpret_cast<unsigned int *>(&node_value[dst]), 0));
+                index_t best_parent = node_parent[dst];
+                for (uint64_t edge = incoming_offsets[i];
+                     edge < incoming_offsets[i + 1]; ++edge) {
+                    const index_t src = incoming_sources[edge];
+                    const TValue src_value = static_cast<TValue>(atomicAdd(
+                        reinterpret_cast<unsigned int *>(&node_value[src]), 0));
+                    if (src_value == infinity) {
+                        continue;
+                    }
+                    const uint64_t candidate_wide =
+                        static_cast<uint64_t>(src_value) +
+                        static_cast<uint64_t>(TAppInst::DeletionEdgeWeight(src, dst));
+                    if (candidate_wide < static_cast<uint64_t>(best)) {
+                        best = static_cast<TValue>(candidate_wide);
+                        best_parent = src;
+                    }
+                }
+                const TValue old_value = static_cast<TValue>(atomicMin(
+                    reinterpret_cast<unsigned int *>(&node_value[dst]),
+                    static_cast<unsigned int>(best)));
+                if (best < old_value) {
+                    atomicExch(reinterpret_cast<unsigned int *>(&node_buffer[dst]),
+                               static_cast<unsigned int>(best));
+                    atomicExch(reinterpret_cast<unsigned int *>(&node_parent[dst]),
+                               static_cast<unsigned int>(best_parent));
+                    atomicAdd(changed_count, 1u);
+                }
+            }
+        }
+
+        template<typename TValue, typename TBuffer>
+        __global__ void FinalizeGpuAffectedRepair(const index_t *affected_vertices,
+                                                  uint32_t affected_count,
+                                                  const TValue *node_value,
+                                                  TBuffer *node_buffer,
+                                                  bool *node_reset) {
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            for (uint32_t i = tid; i < affected_count; i += nthreads) {
+                const index_t node = affected_vertices[i];
+                node_buffer[node] = static_cast<TBuffer>(node_value[node]);
+                node_reset[node] = false;
+            }
+        }
+
+        template<typename TValue>
+        __device__ TValue AtomicMinState(TValue *address, TValue value) {
+            static_assert(sizeof(TValue) == sizeof(uint32_t),
+                          "AtomicMinState requires a 32-bit state type");
+            uint32_t *bits = reinterpret_cast<uint32_t *>(address);
+            uint32_t observed_bits = *bits;
+            while (value < *reinterpret_cast<TValue *>(&observed_bits)) {
+                const uint32_t desired_bits = *reinterpret_cast<uint32_t *>(&value);
+                const uint32_t previous_bits = atomicCAS(bits, observed_bits, desired_bits);
+                if (previous_bits == observed_bits) {
+                    break;
+                }
+                observed_bits = previous_bits;
+            }
+            return *reinterpret_cast<TValue *>(&observed_bits);
+        }
+
+        template<typename TValue, typename TWEdge>
+        __global__ void SeedAddedEdgeFrontier(const TWEdge *added_edges,
+                                              const uint32_t *work_size,
+                                              const TValue *node_value,
+                                              TValue *node_buffer,
+                                              TValue *node_parent,
+                                              TValue infinity,
+                                              BitmapDeviceObject out_active,
+                                              const index_t *segment_end_nodes,
+                                              const uint8_t *segment_owners,
+                                              uint32_t segment_count,
+                                              uint32_t epoch,
+                                              uint32_t *node_state_epoch,
+                                              unsigned long long *owner_reject_count,
+                                              TValue *boundary_values,
+                                              index_t *boundary_parents,
+                                              groute::dev::Queue<index_t> boundary_vertices) {
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            const uint32_t begin = work_size[0];
+            const uint32_t count = work_size[1];
+            for (uint32_t offset = tid; offset < count; offset += nthreads) {
+                const TWEdge edge = added_edges[begin + offset];
+                uint32_t lo = 0;
+                uint32_t hi = segment_count;
+                while (lo < hi) {
+                    const uint32_t mid = lo + (hi - lo) / 2;
+                    if (edge.v < segment_end_nodes[mid]) {
+                        hi = mid;
+                    } else {
+                        lo = mid + 1;
+                    }
+                }
+                if (lo >= segment_count) {
+                    if (owner_reject_count != nullptr) {
+                        atomicAdd(owner_reject_count, 1ULL);
+                    }
+                    continue;
+                }
+                (void)segment_owners;
+                if (node_value[edge.u] == infinity) {
+                    continue;
+                }
+                const uint64_t candidate_wide =
+                    static_cast<uint64_t>(node_value[edge.u]) +
+                    static_cast<uint64_t>(edge.w);
+                if (candidate_wide >= static_cast<uint64_t>(infinity)) {
+                    continue;
+                }
+                const TValue candidate = static_cast<TValue>(candidate_wide);
+                if (segment_owners[lo] == static_cast<uint8_t>(PartitionOwner::CPU)) {
+                    const TValue old = AtomicMinState(&boundary_values[edge.v], candidate);
+                    if (candidate < old) {
+                        boundary_parents[edge.v] = edge.u;
+                        boundary_vertices.append(edge.v);
+                    }
+                    continue;
+                }
+                const TValue old_buffer = AtomicMinState(&node_buffer[edge.v], candidate);
+                if (candidate < old_buffer && candidate == node_buffer[edge.v]) {
+                    atomicExch(reinterpret_cast<uint32_t *>(&node_parent[edge.v]), edge.u);
+                    node_state_epoch[edge.v] = epoch;
+                    out_active.set_bit_atomic(edge.v);
+                }
+            }
+        }
+
+        template<typename TBuffer>
+        __global__ void GatherAndResetBoundary(
+                const index_t *vertices,
+                uint32_t count,
+                TBuffer *boundary_values,
+                index_t *boundary_parents,
+                CpuRelaxProposal<TBuffer> *proposals,
+                TBuffer infinity) {
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            for (uint32_t i = tid; i < count; i += nthreads) {
+                const index_t dst = vertices[i];
+                const TBuffer value = atomicExch(&boundary_values[dst], infinity);
+                proposals[i] = {dst, value, boundary_parents[dst]};
+            }
+        }
 
         template<typename TBuffer>
         __global__ void MergeCpuRelaxProposals(CpuRelaxProposal<TBuffer> *proposals,
@@ -127,416 +267,61 @@ namespace sepgraph {
                                                TBuffer *node_parent,
                                                BitmapDeviceObject out_active,
                                                groute::dev::Queue<index_t> changed_vertices,
-                                               groute::dev::Queue<index_t> cpu_success_dst_vertices,
-                                               const uint8_t *shadow_valid_flags,
                                                unsigned long long *success_count) {
             uint32_t tid = TID_1D;
             uint32_t nthreads = TOTAL_THREADS_1D;
 
             for (uint32_t i = tid; i < proposal_count; i += nthreads) {
                 CpuRelaxProposal<TBuffer> proposal = proposals[i];
-                TBuffer old_buffer = atomicMin(&node_buffer[proposal.dst], proposal.value);
+                TBuffer old_buffer = AtomicMinState(&node_buffer[proposal.dst], proposal.value);
                 if (proposal.value < old_buffer) {
                     if (success_count != nullptr) {
                         atomicAdd(success_count, 1ULL);
                     }
-                    TBuffer old_parent = node_parent[proposal.dst];
+                    static_assert(sizeof(TBuffer) == sizeof(uint32_t),
+                                  "CPU proposal merge requires 32-bit state");
+                    uint32_t *parent_bits = reinterpret_cast<uint32_t *>(
+                        &node_parent[proposal.dst]);
+                    uint32_t old_parent_bits = *parent_bits;
+                    const uint32_t proposal_parent_bits = proposal.parent;
                     do {
-                        old_parent = atomicCAS(&node_parent[proposal.dst], old_parent, proposal.parent);
+                        old_parent_bits = atomicCAS(parent_bits,
+                                                    old_parent_bits,
+                                                    proposal_parent_bits);
                     } while (proposal.value == node_buffer[proposal.dst] &&
-                             node_parent[proposal.dst] != proposal.parent);
+                             *parent_bits != proposal_parent_bits);
                     out_active.set_bit_atomic(proposal.dst);
-                    cpu_success_dst_vertices.append(proposal.dst);
-                    if (shadow_valid_flags != nullptr && shadow_valid_flags[proposal.dst]) {
-                        changed_vertices.append(proposal.dst);
-                    }
+                    changed_vertices.append(proposal.dst);
                 }
             }
         }
 
-        template<typename TValue>
-        __global__ void MergeCpuSourceCommits(CpuSourceCommit<TValue> *commits,
-                                              uint32_t commit_count,
-                                              TValue *node_value) {
-            uint32_t tid = TID_1D;
-            uint32_t nthreads = TOTAL_THREADS_1D;
-
-            for (uint32_t i = tid; i < commit_count; i += nthreads) {
-                CpuSourceCommit<TValue> commit = commits[i];
-                node_value[commit.src] = commit.value;
-            }
-        }
-
-        __global__ void SetCoopShadowFlags(const index_t *vertices,
-                                           uint32_t vertex_count,
-                                           uint8_t *shadow_valid_flags,
-                                           uint8_t value) {
-            uint32_t tid = TID_1D;
-            uint32_t nthreads = TOTAL_THREADS_1D;
-
-            if (shadow_valid_flags == nullptr) {
-                return;
-            }
-            for (uint32_t i = tid; i < vertex_count; i += nthreads) {
-                shadow_valid_flags[vertices[i]] = value;
-            }
-        }
-
-        __global__ void SetCoopShadowFlagRange(index_t begin_vertex,
-                                               index_t end_vertex,
-                                               uint8_t *shadow_valid_flags,
-                                               uint8_t value) {
-            uint32_t tid = TID_1D;
-            uint32_t nthreads = TOTAL_THREADS_1D;
-
-            if (shadow_valid_flags == nullptr) {
-                return;
-            }
-            const index_t count = end_vertex - begin_vertex;
-            for (index_t i = tid; i < count; i += nthreads) {
-                shadow_valid_flags[begin_vertex + i] = value;
-            }
-        }
-
-        __global__ void SetCoopHomeFlags(const index_t *vertices,
-                                         uint32_t vertex_count,
-                                         uint8_t *home_flags,
-                                         uint8_t value) {
-            uint32_t tid = TID_1D;
-            uint32_t nthreads = TOTAL_THREADS_1D;
-
-            if (home_flags == nullptr) {
-                return;
-            }
-            for (uint32_t i = tid; i < vertex_count; i += nthreads) {
-                home_flags[vertices[i]] = value;
-            }
-        }
-
-        __global__ void MarkDirtySegmentsFromVertices(const index_t *vertices,
-                                                      uint32_t vertex_count,
-                                                      const index_t *seg_enodes,
-                                                      index_t segment_count,
-                                                      uint8_t *dirty_segments) {
-            uint32_t tid = TID_1D;
-            uint32_t nthreads = TOTAL_THREADS_1D;
-
-            if (vertices == nullptr || seg_enodes == nullptr || dirty_segments == nullptr) {
-                return;
-            }
-            for (uint32_t i = tid; i < vertex_count; i += nthreads) {
-                const index_t vertex = vertices[i];
-                index_t lo = 0;
-                index_t hi = segment_count;
-                while (lo < hi) {
-                    const index_t mid = lo + (hi - lo) / 2;
-                    if (vertex < seg_enodes[mid]) {
-                        hi = mid;
-                    } else {
-                        lo = mid + 1;
-                    }
-                }
-                if (lo < segment_count) {
-                    dirty_segments[lo] = 1;
-                }
-            }
-        }
-
-        template<typename TValue, typename TBuffer>
-        __global__ void PackCpuActiveSourceState(const index_t *active_vertices,
-                                                 uint32_t active_count,
-                                                 const TValue *node_value,
-                                                 const TBuffer *node_buffer,
-                                                 TValue *source_values,
-                                                 TBuffer *source_buffers) {
-            uint32_t tid = TID_1D;
-            uint32_t nthreads = TOTAL_THREADS_1D;
-
-            for (uint32_t i = tid; i < active_count; i += nthreads) {
-                const index_t src = active_vertices[i];
-                source_values[i] = node_value[src];
-                source_buffers[i] = node_buffer[src];
-            }
-        }
-
-        enum class CoopExecMode {
-            OFF,
-            HYBRID
-        };
-
-        enum class CoopSplitMode {
-            HOST_SELECT,
-            CPU_HOME
-        };
-
-        enum class CoopHome : uint8_t {
-            GPU_HOME = 0,
-            CPU_HOME = 1
-        };
-
-        enum class CoopSegmentOwner {
-            GPU,
-            CPU
-        };
-
-        struct CoopSourceCandidate {
-            index_t src;
-            index_t seg_idx;
-            uint64_t degree;
-            uint8_t cached;
-            uint64_t score;
-            uint8_t force_expand = 0;
-        };
-
-        __global__ void MarkCpuSourceOwnerEpoch(const CoopSourceCandidate *candidates,
-                                                uint32_t candidate_count,
-                                                uint32_t *owner_epoch,
-                                                uint32_t epoch) {
-            uint32_t tid = TID_1D;
-            uint32_t nthreads = TOTAL_THREADS_1D;
-            for (uint32_t i = tid; i < candidate_count; i += nthreads) {
-                owner_epoch[candidates[i].src] = epoch;
-            }
-        }
-
-        struct CoopOverlapProbeStats {
-            uint64_t candidate_sources = 0;
-            uint64_t selected_sources = 0;
-            uint64_t cached_sources = 0;
-            uint64_t non_cached_sources = 0;
-            uint64_t edge_visits = 0;
-            uint64_t edge_budget = 0;
-            uint64_t host_pma_read_bytes = 0;
-            uint64_t structural_proposals = 0;
-            uint64_t dst_checksum = 0;
-            double cpu_wall_ms = 0.0;
-        };
-
-        struct CoopPacketDryRunStats {
-            uint64_t candidate_sources = 0;
-            uint64_t selected_sources = 0;
-            uint64_t source_state_snapshots = 0;
-            uint64_t frontier_active_sources = 0;
-            uint64_t active_segments = 0;
-            uint64_t reachable_sources = 0;
-            uint64_t active_sources = 0;
-            uint64_t edge_visits = 0;
-            uint64_t edge_budget = 0;
-            uint64_t generated_proposals = 0;
-            uint64_t compressed_proposals = 0;
-            uint64_t compressed_unique_dst = 0;
-            uint64_t estimated_success_before_gpu = 0;
-            uint64_t estimated_success_after_gpu = 0;
-            uint64_t pre_after_success_gap = 0;
-            uint64_t dst_ge32_count = 0;
-            uint64_t dst_ge32_sum = 0;
-            uint64_t dst_ge128_count = 0;
-            uint64_t dst_ge128_sum = 0;
-            uint64_t dst_ge512_count = 0;
-            uint64_t dst_ge512_sum = 0;
-            uint64_t dst_ge1024_count = 0;
-            uint64_t dst_ge1024_sum = 0;
-            uint64_t expected_avoided_gpu_edges = 0;
-            uint64_t cached_sources = 0;
-            uint64_t non_cached_sources = 0;
-            uint64_t cached_edges = 0;
-            uint64_t non_cached_edges = 0;
-            uint64_t cached_active_sources = 0;
-            uint64_t non_cached_active_sources = 0;
-            uint64_t host_pma_read_bytes = 0;
-            uint64_t state_snapshot_bytes = 0;
-            uint64_t dst_state_probe_bytes = 0;
-            uint64_t pre_dst_state_probe_bytes = 0;
-            uint64_t post_dst_state_probe_bytes = 0;
-            uint64_t diagnostic_merge_success = 0;
-            uint64_t diagnostic_merge_h2d_bytes = 0;
-            uint64_t merge_prefilter_input_proposals = 0;
-            uint64_t merge_prefilter_kept_proposals = 0;
-            uint64_t merge_prefilter_dropped_proposals = 0;
-            uint64_t merge_prefilter_probe_bytes = 0;
-            uint64_t proposal_checksum = 0;
-            uint64_t missing_relax_count = 0;
-            uint64_t fully_covered_active_sources = 0;
-            uint64_t partial_covered_active_sources = 0;
-            uint64_t dropped_uncovered_proposals = 0;
-            double source_state_snapshot_ms = 0.0;
-            double cpu_wall_ms = 0.0;
-            double proposal_compress_ms = 0.0;
-            double dst_state_probe_ms = 0.0;
-            double pre_dst_state_probe_ms = 0.0;
-            double post_dst_state_probe_ms = 0.0;
-            double diagnostic_merge_h2d_ms = 0.0;
-            double diagnostic_merge_kernel_ms = 0.0;
-            double diagnostic_merge_wall_ms = 0.0;
-            double merge_prefilter_ms = 0.0;
-        };
-
-        struct CoopOwnedPacketSummaryStats {
-            uint64_t rounds = 0;
-            uint64_t candidate_sources = 0;
-            uint64_t selected_sources = 0;
-            uint64_t source_state_snapshots = 0;
-            uint64_t frontier_active_sources = 0;
-            uint64_t active_segments = 0;
-            uint64_t reachable_sources = 0;
-            uint64_t active_sources = 0;
-            uint64_t cpu_covered_sources = 0;
-            uint64_t cpu_covered_edges = 0;
-            uint64_t generated_proposals = 0;
-            uint64_t dropped_uncovered_proposals = 0;
-            uint64_t compressed_proposals = 0;
-            uint64_t source_commits = 0;
-            uint64_t gpu_skipped_sources = 0;
-            uint64_t gpu_kernel_launches = 0;
-            uint64_t merge_success = 0;
-            uint64_t skipped_edges_est = 0;
-            uint64_t cached_sources = 0;
-            uint64_t non_cached_sources = 0;
-            uint64_t cached_edges = 0;
-            uint64_t non_cached_edges = 0;
-            uint64_t cached_active_sources = 0;
-            uint64_t non_cached_active_sources = 0;
-            uint64_t merge_prefilter_input_proposals = 0;
-            uint64_t merge_prefilter_kept_proposals = 0;
-            uint64_t merge_prefilter_dropped_proposals = 0;
-            uint64_t merge_prefilter_probe_bytes = 0;
-            uint64_t merge_h2d_bytes = 0;
-            uint64_t postbw_visible_active = 0;
-            uint64_t dirty_segments = 0;
-            uint64_t postbw_active_count = 0;
-            uint64_t state_snapshot_bytes = 0;
-            uint64_t host_pma_read_bytes = 0;
-            double source_state_snapshot_ms = 0.0;
-            double cpu_generate_ms = 0.0;
-            double proposal_compress_ms = 0.0;
-            double owner_mark_ms = 0.0;
-            double gpu_launch_submit_ms = 0.0;
-            double gpu_sync_wait_ms = 0.0;
-            double overlap_window_ms = 0.0;
-            double hidden_cpu_ms = 0.0;
-            double exposed_cpu_ms = 0.0;
-            double gpu_skip_counter_d2h_ms = 0.0;
-            double merge_h2d_ms = 0.0;
-            double merge_kernel_ms = 0.0;
-            double merge_wall_ms = 0.0;
-            double merge_prefilter_ms = 0.0;
-            double post_bw_ms = 0.0;
-            double post_bw_rebuild_worklist_ms = 0.0;
-            double post_bw_active_count_ms = 0.0;
-            double post_bw_queue_reset_ms = 0.0;
-            double post_bw_other_ms = 0.0;
-            uint64_t fully_covered_active_sources = 0;
-            uint64_t partial_covered_active_sources = 0;
-            uint64_t missing_relax_count = 0;
-        };
-
-        struct CoopRoundStats {
-            uint64_t active_vertices = 0;
-            uint64_t gpu_frontier_vertices = 0;
-            uint64_t cpu_cached_source_vertices = 0;
-            uint64_t cpu_non_cached_source_vertices = 0;
-            uint64_t cpu_cached_edges = 0;
-            uint64_t cpu_non_cached_edges = 0;
-            uint64_t cpu_host_pma_edge_visits = 0;
-            uint32_t cpu_segments = 0;
-            uint32_t gpu_segments = 0;
-            uint64_t cpu_frontier_vertices = 0;
+        struct InsertionRoundStats {
             uint64_t cpu_expanded_vertices = 0;
-            uint64_t active_degree_sum = 0;
             uint64_t cpu_edge_visits = 0;
-            uint64_t cpu_proposals = 0;
-            uint64_t cpu_proposals_generated = 0;
-            uint64_t cpu_proposals_survived = 0;
-            uint64_t cpu_proposals_compressed = 0;
             uint64_t cpu_proposals_success = 0;
-            uint64_t cpu_unique_dst = 0;
-            uint64_t gpu_skipped_cpu_sources = 0;
-            uint64_t state_d2h_bytes = 0;
-            uint64_t d2h_frontier_bytes = 0;
-            uint64_t h2d_proposal_bytes = 0;
-            uint64_t shadow_hits = 0;
-            uint64_t shadow_misses = 0;
-            uint64_t shadow_dirty_vertices = 0;
-            uint64_t shadow_invalidated_vertices = 0;
-            uint64_t delta_state_d2h_bytes = 0;
-            uint64_t state_request_h2d_bytes = 0;
-            uint64_t dirty_queue_d2h_bytes = 0;
-            double state_d2h_ms = 0.0;
-            double d2h_frontier_ms = 0.0;
-            double cpu_ms = 0.0;
             double h2d_proposal_ms = 0.0;
             double merge_ms = 0.0;
             double allocation_ms = 0.0;
             double proposal_compress_ms = 0.0;
-            double delta_state_d2h_ms = 0.0;
-            double state_request_h2d_ms = 0.0;
-            double dirty_queue_d2h_ms = 0.0;
-            double round_wall_ms = 0.0;
-            double collect_stats_ms = 0.0;
-            double reset_buffers_ms = 0.0;
-            double source_select_ms = 0.0;
-            double owner_mark_ms = 0.0;
-            double changed_queue_reset_ms = 0.0;
-            double cpu_generate_wall_ms = 0.0;
-            double gpu_launch_submit_ms = 0.0;
-            double gpu_sync_ms = 0.0;
-            double gpu_skip_counter_d2h_ms = 0.0;
-            double merge_wall_ms = 0.0;
-            double shadow_refresh_wall_ms = 0.0;
-            double shadow_apply_ms = 0.0;
-            double post_bw_ms = 0.0;
-            double post_bw_rebuild_worklist_ms = 0.0;
-            double post_bw_active_count_ms = 0.0;
-            double post_bw_queue_reset_ms = 0.0;
-            double post_bw_other_ms = 0.0;
-            uint32_t gpu_kernel_launches = 0;
-            uint32_t active_gpu_segments = 0;
-            uint64_t cpu_home_sources = 0;
-            uint64_t gpu_home_sources = 0;
-            uint64_t cpu_home_edges_est = 0;
-            uint64_t cpu_home_active_sources = 0;
-            uint64_t cpu_home_injected_sources = 0;
-            uint64_t gpu_home_active_sources = 0;
-            uint64_t cpu_local_edge_visits = 0;
             uint64_t cpu_local_relax_success = 0;
-            uint64_t cpu_local_frontier_pushes = 0;
+            uint64_t cpu_closure_rounds = 0;
             uint64_t cpu_to_gpu_boundary_proposals = 0;
-            uint64_t cpu_to_gpu_boundary_success = 0;
-            uint64_t cpu_home_commit_count = 0;
-            uint64_t gpu_relax_success = 0;
-            uint64_t gpu_relax_cpu_home_success = 0;
-            uint64_t gpu_relax_dst_degree_sum = 0;
-            uint64_t gpu_relax_dst_high_degree_count = 0;
-            uint64_t gpu_relax_dst_high_degree_sum = 0;
-            uint64_t gpu_relax_dst_batch_touched_count = 0;
-            uint64_t gpu_relax_unique_dst = 0;
-            uint64_t gpu_relax_unique_dst_degree_sum = 0;
-            uint64_t gpu_relax_unique_dst_ge32_count = 0;
-            uint64_t gpu_relax_unique_dst_ge32_sum = 0;
-            uint64_t gpu_relax_unique_dst_ge128_count = 0;
-            uint64_t gpu_relax_unique_dst_ge128_sum = 0;
-            uint64_t gpu_relax_unique_dst_ge512_count = 0;
-            uint64_t gpu_relax_unique_dst_ge512_sum = 0;
-            uint64_t gpu_relax_unique_dst_ge1024_count = 0;
-            uint64_t gpu_relax_unique_dst_ge1024_sum = 0;
-            uint64_t gpu_relax_unique_dst_batch_touched_count = 0;
-            uint64_t gpu_relax_unique_dst_cpu_home_count = 0;
-            uint64_t gpu_relax_dst_queue_items = 0;
-            uint64_t gpu_relax_dst_queue_bytes = 0;
-            double gpu_relax_dst_queue_d2h_ms = 0.0;
-            uint64_t dirty_segments = 0;
-            uint64_t post_bw_active_count = 0;
+            uint64_t cpu_to_gpu_boundary_bytes = 0;
             uint64_t gpu_to_cpu_boundary_items = 0;
             uint64_t gpu_to_cpu_boundary_bytes = 0;
-            uint64_t gpu_to_cpu_boundary_unique = 0;
-            uint64_t full_frontier_d2h_bytes = 0;
-            double gpu_to_cpu_boundary_d2h_ms = 0.0;
-            double full_frontier_d2h_ms = 0.0;
+            double gpu_submit_ms = 0.0;
+            double gpu_service_ms = 0.0;
+            double cpu_service_ms = 0.0;
+            double overlap_ms = 0.0;
+            double cpu_wait_ms = 0.0;
+            double gpu_wait_ms = 0.0;
+            bool concurrent = false;
         };
 
 
       template<typename TValue, typename TBuffer, typename TWeight, template<typename, typename, typename, typename ...> class TAppImpl, typename... UnusedData>
-      class 	Engine {
+      class     Engine {
         private:
         typedef TAppImpl<TValue, TBuffer, TWeight, UnusedData...> AppImplDeviceObject;
         typedef graphs::GraphDatum<TValue, TBuffer, TWeight> GraphDatum;
@@ -545,7 +330,7 @@ namespace sepgraph {
         typedef WEdgePair<uint32_t,uint32_t,uint32_t>  WEdge;
         // using WeightedDynT = groute::graphs::single::TestGraph<TValue, TBuffer, TValue,true>;
         cudaDeviceProp m_dev_props;
-	    
+
             // Graph data
             std::unique_ptr<utils::traversal::Context<Algo>> m_groute_context;
             std::unique_ptr<groute::Stream> m_stream;
@@ -553,6 +338,36 @@ namespace sepgraph {
             std::unique_ptr<groute::graphs::single::PMAGraphAllocator> m_vcsr_dev_graph_allocator;
             // std::unique_ptr<groute::graphs::single::PMAGraphAllocator> m_vcsr_dev_graph_allocator_update;
             std::unique_ptr<groute::graphs::single::CSCGraphAllocator> m_csc_dev_graph_allocator;
+            runtime::DynamicReverseIndex m_reverse_index;
+            groute::Queue<index_t> m_device_affected_vertices;
+            std::vector<index_t> m_affected_vertices;
+            std::vector<uint64_t> m_gpu_repair_incoming_offsets;
+            std::vector<index_t> m_gpu_repair_incoming_sources;
+            uint64_t *m_device_gpu_repair_offsets = nullptr;
+            index_t *m_device_gpu_repair_sources = nullptr;
+            unsigned int *m_device_gpu_repair_changed = nullptr;
+            size_t m_device_gpu_repair_offset_capacity = 0;
+            size_t m_device_gpu_repair_source_capacity = 0;
+            std::vector<uint8_t> m_partition_owners;
+            index_t *m_device_partition_end_nodes = nullptr;
+            uint8_t *m_device_partition_owners = nullptr;
+            uint32_t *m_device_node_state_epoch = nullptr;
+            unsigned long long *m_device_seed_owner_reject_count = nullptr;
+            uint32_t m_insertion_epoch = 0;
+            uint64_t m_insertion_convergence_round = 0;
+            bool m_insertion_epoch_active = false;
+            index_t m_insertion_seed_begin = 0;
+            index_t m_insertion_seed_count = 0;
+            TBuffer *m_device_gpu_to_cpu_boundary_values = nullptr;
+            index_t *m_device_gpu_to_cpu_boundary_parents = nullptr;
+            std::vector<uint8_t> m_node_cpu_owner;
+            std::vector<index_t> m_cpu_owned_segments;
+            std::vector<TValue> m_cpu_node_values;
+            std::vector<TBuffer> m_cpu_node_buffers;
+            std::vector<index_t> m_cpu_node_parents;
+            std::deque<index_t> m_cpu_frontier;
+            std::vector<uint8_t> m_insertion_seed_partitions;
+            uint32_t m_last_insertion_dirty_partitions = 0;
 
             std::unique_ptr<AppImplDeviceObject> m_app_inst;
             groute::Stream stream[64];
@@ -578,1008 +393,71 @@ namespace sepgraph {
             unsigned int partitions_csr;
             unsigned int* partition_offset_csr;
             unsigned int max_partition_size_csr;
-            std::vector<index_t> m_coop_active_vertices;
-            std::vector<TValue> m_coop_active_values;
-            std::vector<TBuffer> m_coop_active_buffers;
-            std::vector<index_t> m_coop_state_request_vertices;
-            std::vector<uint32_t> m_coop_state_request_active_indices;
-            std::vector<CoopSourceCandidate> m_coop_cpu_source_candidates;
-            std::vector<TValue> m_coop_shadow_values;
-            std::vector<TBuffer> m_coop_shadow_buffers;
-            std::vector<uint8_t> m_coop_shadow_valid;
-            std::vector<index_t> m_coop_changed_vertices;
-            std::vector<CpuRelaxProposal<TBuffer>> m_coop_cpu_proposals;
-            std::vector<CpuRelaxProposal<TBuffer>> m_coop_cpu_compressed_proposals;
-            std::vector<CpuSourceCommit<TValue>> m_coop_source_commits;
-            std::vector<index_t> m_coop_compress_keys;
-            std::vector<size_t> m_coop_compress_indices;
-            std::vector<size_t> m_coop_compress_touched_slots;
-            std::vector<uint8_t> m_coop_dirty_segments;
-            std::vector<uint8_t> m_coop_home;
-            std::vector<index_t> m_coop_batch_touched_sources;
-            std::vector<index_t> m_coop_cpu_home_injected_sources;
-            bool m_coop_cpu_home_batch_enabled = true;
-            uint64_t m_coop_cpu_home_injected_edges_est = 0;
-            bool m_coop_home_initialized = false;
-            uint64_t m_coop_home_edges_est = 0;
-            uint64_t m_coop_home_cpu_source_count = 0;
-            groute::Queue<index_t> m_coop_device_gpu_to_cpu_boundary_vertices;
-            groute::Queue<index_t> m_coop_device_gpu_relax_dst_vertices;
-            groute::Queue<index_t> m_coop_device_changed_vertices;
-            groute::Queue<index_t> m_coop_device_cpu_success_dst_vertices;
-            CpuRelaxProposal<TBuffer> *m_coop_device_proposals = nullptr;
-            CpuSourceCommit<TValue> *m_coop_device_commits = nullptr;
-            CoopSourceCandidate *m_coop_device_cpu_source_candidates = nullptr;
-            unsigned long long *m_coop_device_proposal_success_count = nullptr;
-            unsigned long long *m_coop_device_gpu_skipped_cpu_sources = nullptr;
-            unsigned long long *m_coop_device_gpu_relax_success_count = nullptr;
-            unsigned long long *m_coop_device_gpu_relax_cpu_home_success_count = nullptr;
-            unsigned long long *m_coop_device_gpu_relax_dst_degree_sum = nullptr;
-            unsigned long long *m_coop_device_gpu_relax_dst_high_degree_count = nullptr;
-            unsigned long long *m_coop_device_gpu_relax_dst_high_degree_sum = nullptr;
-            unsigned long long *m_coop_device_gpu_relax_dst_batch_touched_count = nullptr;
-            uint32_t *m_coop_device_cpu_source_owner_epoch = nullptr;
-            uint8_t *m_coop_device_cpu_home_flags = nullptr;
-            uint8_t *m_coop_device_batch_touched_flags = nullptr;
-            uint32_t m_coop_cpu_source_epoch = 1;
-            TValue *m_coop_device_active_values = nullptr;
-            TBuffer *m_coop_device_active_buffers = nullptr;
-            index_t *m_coop_device_state_request_vertices = nullptr;
-            uint8_t *m_coop_device_shadow_valid_flags = nullptr;
-            index_t *m_coop_device_seg_enodes = nullptr;
-            uint8_t *m_coop_device_dirty_segments = nullptr;
-            size_t m_coop_device_proposal_capacity = 0;
-            size_t m_coop_device_commit_capacity = 0;
-            size_t m_coop_device_cpu_source_candidate_capacity = 0;
-            size_t m_coop_device_active_state_capacity = 0;
-            size_t m_coop_device_state_request_capacity = 0;
-            uint64_t m_coop_attr_sequence = 0;
-            uint64_t m_coop_current_batch = 0;
-            CoopOwnedPacketSummaryStats m_coop_owned_summary;
-            bool m_coop_owned_summary_emitted = false;
+            std::vector<index_t> m_insertion_changed_vertices;
+            std::vector<CpuRelaxProposal<TBuffer>> m_cpu_boundary_proposals;
+            std::vector<CpuRelaxProposal<TBuffer>> m_cpu_compressed_proposals;
+            std::vector<index_t> m_cpu_proposal_compress_keys;
+            std::vector<size_t> m_cpu_proposal_compress_indices;
+            std::vector<size_t> m_cpu_proposal_compress_touched_slots;
+            groute::Queue<index_t> m_device_gpu_to_cpu_boundary_vertices;
+            groute::Queue<index_t> m_device_insertion_changed_vertices;
+            CpuRelaxProposal<TBuffer> *m_device_cpu_boundary_proposals = nullptr;
+            unsigned long long *m_device_cpu_proposal_success_count = nullptr;
+            uint8_t *m_device_cpu_destination_flags = nullptr;
+            size_t m_device_cpu_boundary_proposal_capacity = 0;
             // Loader<index_t,index_t,index_t> load_update;
             // WeightedDynT result_graph;
 
-            CoopExecMode GetCoopMode() const {
-                if (FLAGS_coop_mode == "off") {
-                    return CoopExecMode::OFF;
-                }
-                if (FLAGS_coop_mode == "hybrid") {
-                    return CoopExecMode::HYBRID;
-                }
-                LOG("[COOP-DECISION] mode=off reason=unknown_coop_mode_%s\n", FLAGS_coop_mode.c_str());
-                return CoopExecMode::OFF;
-            }
 
-            CoopSplitMode GetCoopSplitMode() const {
-                if (FLAGS_coop_split_mode == "cpu_home") {
-                    return CoopSplitMode::CPU_HOME;
-                }
-                if (FLAGS_coop_split_mode != "host_select") {
-                    LOG("[COOP-DECISION] unknown_split_mode=%s fallback=host_select\n",
-                        FLAGS_coop_split_mode.c_str());
-                }
-                return CoopSplitMode::HOST_SELECT;
-            }
-
-            int GetCoopMaxCpuSources() const {
-                if (FLAGS_coop_max_cpu_sources >= 0) {
-                    return FLAGS_coop_max_cpu_sources;
-                }
-                return FLAGS_coop_cpu_segment_limit;
-            }
-
-            void CollectCoopRoundStats(CoopRoundStats &stats) {
-                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                    const index_t stream_id = seg_idx % FLAGS_n_stream;
-                    const uint64_t active_count = m_graph_datum->m_wl_array_in_seg[seg_idx].GetCount(stream[stream_id]);
-                    stats.active_vertices += active_count;
-                }
-            }
 
             void RefreshSegmentActiveCountsFromQueues() {
                 GraphDatum &graph_datum = *m_graph_datum;
-                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                    const index_t stream_id = seg_idx % FLAGS_n_stream;
-                    const index_t active_count =
-                        graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream[stream_id]);
-                    graph_datum.seg_active_num[seg_idx] = active_count;
-                    m_running_info.input_active_count_seg[seg_idx] = active_count;
+                for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                    const index_t stream_id = seg % FLAGS_n_stream;
+                    const index_t active =
+                        graph_datum.m_wl_array_in_seg[seg].GetCount(stream[stream_id]);
+                    graph_datum.seg_active_num[seg] = active;
+                    m_running_info.input_active_count_seg[seg] = active;
                 }
             }
 
-            void AccumulateCoopOwnedSummary(const CoopPacketDryRunStats &packet,
-                                            uint64_t cpu_covered_sources,
-                                            uint64_t source_commits,
-                                            uint64_t gpu_skipped_sources,
-                                            uint32_t gpu_kernel_launches,
-                                            uint32_t postbw_visible_active,
-                                            const CoopRoundStats &postbw_stats,
-                                            double owner_mark_ms,
-                                            double gpu_launch_submit_ms,
-                                            double gpu_sync_wait_ms,
-                                            double overlap_window_ms,
-                                            double hidden_cpu_ms,
-                                            double exposed_cpu_ms,
-                                            double gpu_skip_counter_d2h_ms) {
-                m_coop_owned_summary.rounds += 1;
-                m_coop_owned_summary.candidate_sources += packet.candidate_sources;
-                m_coop_owned_summary.selected_sources += packet.selected_sources;
-                m_coop_owned_summary.source_state_snapshots += packet.source_state_snapshots;
-                m_coop_owned_summary.frontier_active_sources += packet.frontier_active_sources;
-                m_coop_owned_summary.active_segments += packet.active_segments;
-                m_coop_owned_summary.reachable_sources += packet.reachable_sources;
-                m_coop_owned_summary.active_sources += packet.active_sources;
-                m_coop_owned_summary.cpu_covered_sources += cpu_covered_sources;
-                m_coop_owned_summary.cpu_covered_edges += packet.edge_visits;
-                m_coop_owned_summary.generated_proposals += packet.generated_proposals;
-                m_coop_owned_summary.dropped_uncovered_proposals += packet.dropped_uncovered_proposals;
-                m_coop_owned_summary.compressed_proposals += packet.compressed_proposals;
-                m_coop_owned_summary.source_commits += source_commits;
-                m_coop_owned_summary.gpu_skipped_sources += gpu_skipped_sources;
-                m_coop_owned_summary.gpu_kernel_launches += gpu_kernel_launches;
-                m_coop_owned_summary.merge_success += packet.diagnostic_merge_success;
-                m_coop_owned_summary.skipped_edges_est += packet.expected_avoided_gpu_edges;
-                m_coop_owned_summary.cached_sources += packet.cached_sources;
-                m_coop_owned_summary.non_cached_sources += packet.non_cached_sources;
-                m_coop_owned_summary.cached_edges += packet.cached_edges;
-                m_coop_owned_summary.non_cached_edges += packet.non_cached_edges;
-                m_coop_owned_summary.cached_active_sources += packet.cached_active_sources;
-                m_coop_owned_summary.non_cached_active_sources += packet.non_cached_active_sources;
-                m_coop_owned_summary.merge_prefilter_input_proposals +=
-                    packet.merge_prefilter_input_proposals;
-                m_coop_owned_summary.merge_prefilter_kept_proposals +=
-                    packet.merge_prefilter_kept_proposals;
-                m_coop_owned_summary.merge_prefilter_dropped_proposals +=
-                    packet.merge_prefilter_dropped_proposals;
-                m_coop_owned_summary.merge_prefilter_probe_bytes +=
-                    packet.merge_prefilter_probe_bytes;
-                m_coop_owned_summary.merge_h2d_bytes += packet.diagnostic_merge_h2d_bytes;
-                m_coop_owned_summary.postbw_visible_active += postbw_visible_active;
-                m_coop_owned_summary.dirty_segments += postbw_stats.dirty_segments;
-                m_coop_owned_summary.postbw_active_count += postbw_stats.post_bw_active_count;
-                m_coop_owned_summary.state_snapshot_bytes += packet.state_snapshot_bytes;
-                m_coop_owned_summary.host_pma_read_bytes += packet.host_pma_read_bytes;
-                m_coop_owned_summary.source_state_snapshot_ms += packet.source_state_snapshot_ms;
-                m_coop_owned_summary.cpu_generate_ms += packet.cpu_wall_ms;
-                m_coop_owned_summary.proposal_compress_ms += packet.proposal_compress_ms;
-                m_coop_owned_summary.owner_mark_ms += owner_mark_ms;
-                m_coop_owned_summary.gpu_launch_submit_ms += gpu_launch_submit_ms;
-                m_coop_owned_summary.gpu_sync_wait_ms += gpu_sync_wait_ms;
-                m_coop_owned_summary.overlap_window_ms += overlap_window_ms;
-                m_coop_owned_summary.hidden_cpu_ms += hidden_cpu_ms;
-                m_coop_owned_summary.exposed_cpu_ms += exposed_cpu_ms;
-                m_coop_owned_summary.gpu_skip_counter_d2h_ms += gpu_skip_counter_d2h_ms;
-                m_coop_owned_summary.merge_h2d_ms += packet.diagnostic_merge_h2d_ms;
-                m_coop_owned_summary.merge_kernel_ms += packet.diagnostic_merge_kernel_ms;
-                m_coop_owned_summary.merge_wall_ms += packet.diagnostic_merge_wall_ms;
-                m_coop_owned_summary.merge_prefilter_ms += packet.merge_prefilter_ms;
-                m_coop_owned_summary.post_bw_ms += postbw_stats.post_bw_ms;
-                m_coop_owned_summary.post_bw_rebuild_worklist_ms +=
-                    postbw_stats.post_bw_rebuild_worklist_ms;
-                m_coop_owned_summary.post_bw_active_count_ms +=
-                    postbw_stats.post_bw_active_count_ms;
-                m_coop_owned_summary.post_bw_queue_reset_ms +=
-                    postbw_stats.post_bw_queue_reset_ms;
-                m_coop_owned_summary.post_bw_other_ms += postbw_stats.post_bw_other_ms;
-                m_coop_owned_summary.fully_covered_active_sources += packet.fully_covered_active_sources;
-                m_coop_owned_summary.partial_covered_active_sources += packet.partial_covered_active_sources;
-                m_coop_owned_summary.missing_relax_count += packet.missing_relax_count;
-            }
+            void PrepareCpuOwnerRuntimeStorage() {
+                if (FLAGS_sssp_cpu_partition_capacity < 0 ||
+                    FLAGS_sssp_cpu_partition_capacity > FLAGS_SEGMENT) {
+                    LOG("[DUAL-RUNTIME] protocol_error=invalid_cpu_capacity capacity=%d partitions=%d\n",
+                        FLAGS_sssp_cpu_partition_capacity,
+                        FLAGS_SEGMENT);
+                    std::abort();
+                }
+                if (FLAGS_sssp_cpu_partition_capacity == 0) return;
 
-            void EmitCoopOwnedSummary(const char *reason) {
-                if (m_coop_owned_summary_emitted || m_coop_owned_summary.rounds == 0) {
-                    return;
-                }
-                m_coop_owned_summary_emitted = true;
-                const double cpu_packet_ms =
-                    m_coop_owned_summary.hidden_cpu_ms + m_coop_owned_summary.exposed_cpu_ms;
-                const double hidden_ratio =
-                    cpu_packet_ms > 0.0 ? m_coop_owned_summary.hidden_cpu_ms / cpu_packet_ms : 0.0;
-                const double merge_success_per_edge =
-                    m_coop_owned_summary.cpu_covered_edges > 0
-                        ? static_cast<double>(m_coop_owned_summary.merge_success) /
-                              static_cast<double>(m_coop_owned_summary.cpu_covered_edges)
-                        : 0.0;
-                const double merge_success_per_compressed =
-                    m_coop_owned_summary.compressed_proposals > 0
-                        ? static_cast<double>(m_coop_owned_summary.merge_success) /
-                              static_cast<double>(m_coop_owned_summary.compressed_proposals)
-                        : 0.0;
-                const double skipped_edges_per_covered =
-                    m_coop_owned_summary.cpu_covered_edges > 0
-                        ? static_cast<double>(m_coop_owned_summary.skipped_edges_est) /
-                              static_cast<double>(m_coop_owned_summary.cpu_covered_edges)
-                        : 0.0;
-                const double fixed_tax_ms =
-                    m_coop_owned_summary.owner_mark_ms +
-                    m_coop_owned_summary.gpu_skip_counter_d2h_ms +
-                    m_coop_owned_summary.merge_wall_ms +
-                    m_coop_owned_summary.post_bw_ms +
-                    m_coop_owned_summary.source_state_snapshot_ms;
-                LOG("[COOP-OWNED-SUMMARY] phase=10D_cpu_owned_packet reason=%s rounds=%lu candidate_sources=%lu selected_sources=%lu source_state_snapshots=%lu frontier_active_sources=%lu active_segments=%lu reachable_sources=%lu active_sources=%lu cpu_covered_sources=%lu cpu_covered_edges=%lu generated_proposals=%lu dropped_uncovered_proposals=%lu compressed_proposals=%lu source_commits=%lu gpu_skipped_sources=%lu gpu_kernel_launches=%lu merge_success=%lu skipped_edges_est=%lu merge_success_per_edge=%f merge_success_per_compressed=%f skipped_edges_per_covered=%f cached_sources=%lu non_cached_sources=%lu cached_edges=%lu non_cached_edges=%lu cached_active_sources=%lu non_cached_active_sources=%lu merge_prefilter_enabled=%d merge_prefilter_input=%lu merge_prefilter_kept=%lu merge_prefilter_dropped=%lu merge_prefilter_probe_bytes=%lu merge_prefilter_ms=%f merge_h2d_bytes=%lu postbw_visible_active=%lu dirty_segments=%lu postbw_active_count=%lu state_snapshot_bytes=%lu host_pma_read_bytes=%lu source_state_snapshot_ms=%f cpu_generate_ms=%f proposal_compress_ms=%f owner_mark_ms=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f overlap_window_ms=%f hidden_cpu_ms=%f exposed_cpu_ms=%f hidden_ratio=%f gpu_skip_counter_d2h_ms=%f merge_h2d_ms=%f merge_kernel_ms=%f merge_wall_ms=%f postbw_ms=%f postbw_rebuild_ms=%f postbw_active_count_ms=%f owner_merge_postbw_fixed_tax_ms=%f fully_covered_active_sources=%lu partial_covered_active_sources=%lu missing_relax_count=%lu performance_claim_valid=1 note=quiet_mechanism_summary_cpu_owned_packet\n",
-                    reason,
-                    m_coop_owned_summary.rounds,
-                    m_coop_owned_summary.candidate_sources,
-                    m_coop_owned_summary.selected_sources,
-                    m_coop_owned_summary.source_state_snapshots,
-                    m_coop_owned_summary.frontier_active_sources,
-                    m_coop_owned_summary.active_segments,
-                    m_coop_owned_summary.reachable_sources,
-                    m_coop_owned_summary.active_sources,
-                    m_coop_owned_summary.cpu_covered_sources,
-                    m_coop_owned_summary.cpu_covered_edges,
-                    m_coop_owned_summary.generated_proposals,
-                    m_coop_owned_summary.dropped_uncovered_proposals,
-                    m_coop_owned_summary.compressed_proposals,
-                    m_coop_owned_summary.source_commits,
-                    m_coop_owned_summary.gpu_skipped_sources,
-                    m_coop_owned_summary.gpu_kernel_launches,
-                    m_coop_owned_summary.merge_success,
-                    m_coop_owned_summary.skipped_edges_est,
-                    merge_success_per_edge,
-                    merge_success_per_compressed,
-                    skipped_edges_per_covered,
-                    m_coop_owned_summary.cached_sources,
-                    m_coop_owned_summary.non_cached_sources,
-                    m_coop_owned_summary.cached_edges,
-                    m_coop_owned_summary.non_cached_edges,
-                    m_coop_owned_summary.cached_active_sources,
-                    m_coop_owned_summary.non_cached_active_sources,
-                    FLAGS_coop_merge_light_prefilter ? 1 : 0,
-                    m_coop_owned_summary.merge_prefilter_input_proposals,
-                    m_coop_owned_summary.merge_prefilter_kept_proposals,
-                    m_coop_owned_summary.merge_prefilter_dropped_proposals,
-                    m_coop_owned_summary.merge_prefilter_probe_bytes,
-                    m_coop_owned_summary.merge_prefilter_ms,
-                    m_coop_owned_summary.merge_h2d_bytes,
-                    m_coop_owned_summary.postbw_visible_active,
-                    m_coop_owned_summary.dirty_segments,
-                    m_coop_owned_summary.postbw_active_count,
-                    m_coop_owned_summary.state_snapshot_bytes,
-                    m_coop_owned_summary.host_pma_read_bytes,
-                    m_coop_owned_summary.source_state_snapshot_ms,
-                    m_coop_owned_summary.cpu_generate_ms,
-                    m_coop_owned_summary.proposal_compress_ms,
-                    m_coop_owned_summary.owner_mark_ms,
-                    m_coop_owned_summary.gpu_launch_submit_ms,
-                    m_coop_owned_summary.gpu_sync_wait_ms,
-                    m_coop_owned_summary.overlap_window_ms,
-                    m_coop_owned_summary.hidden_cpu_ms,
-                    m_coop_owned_summary.exposed_cpu_ms,
-                    hidden_ratio,
-                    m_coop_owned_summary.gpu_skip_counter_d2h_ms,
-                    m_coop_owned_summary.merge_h2d_ms,
-                    m_coop_owned_summary.merge_kernel_ms,
-                    m_coop_owned_summary.merge_wall_ms,
-                    m_coop_owned_summary.post_bw_ms,
-                    m_coop_owned_summary.post_bw_rebuild_worklist_ms,
-                    m_coop_owned_summary.post_bw_active_count_ms,
-                    fixed_tax_ms,
-                    m_coop_owned_summary.fully_covered_active_sources,
-                    m_coop_owned_summary.partial_covered_active_sources,
-                    m_coop_owned_summary.missing_relax_count);
-            }
-
-            std::vector<CoopSegmentOwner> ChooseCoopSegments(CoopRoundStats &stats) {
-                std::vector<CoopSegmentOwner> owners(FLAGS_SEGMENT, CoopSegmentOwner::GPU);
-                if (FLAGS_coop_cpu_dry_run || stats.active_vertices == 0 || FLAGS_coop_cpu_segment_limit <= 0) {
-                    return owners;
-                }
-
-                struct Candidate {
-                    index_t seg_idx;
-                    uint64_t active_count;
-                    uint64_t seg_edges;
-                    uint64_t active_degree_sum;
-                    uint64_t high_degree_count;
-                    uint64_t high_degree_sum;
-                    uint64_t score;
-                };
-
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                std::vector<index_t> segment_active_vertices;
-                std::vector<Candidate> candidates;
-                candidates.reserve(FLAGS_SEGMENT);
-                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                    const index_t stream_id = seg_idx % FLAGS_n_stream;
-                    const uint64_t active_count = m_graph_datum->m_wl_array_in_seg[seg_idx].GetCount(stream[stream_id]);
-                    if (active_count == 0) {
-                        continue;
-                    }
-                    const uint64_t seg_edges = m_groute_context->seg_nedge_csr[seg_idx];
-                    uint64_t active_degree_sum = 0;
-                    uint64_t high_degree_count = 0;
-                    uint64_t high_degree_sum = 0;
-                    segment_active_vertices.resize(active_count);
-                    GROUTE_CUDA_CHECK(cudaMemcpyAsync(segment_active_vertices.data(),
-                                                      m_graph_datum->m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
-                                                      sizeof(index_t) * active_count,
-                                                      cudaMemcpyDeviceToHost,
-                                                      stream[stream_id].cuda_stream));
-                    stream[stream_id].Sync();
-                    for (uint64_t i = 0; i < active_count; i++) {
-                        const index_t src = segment_active_vertices[i];
-                        if (src >= host_pma.nnodes) {
-                            continue;
-                        }
-                        const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                        active_degree_sum += degree;
-                        if (degree >= static_cast<uint64_t>(std::max(FLAGS_coop_cpu_min_degree, 0))) {
-                            high_degree_count++;
-                            high_degree_sum += degree;
-                        }
-                    }
-                    if (FLAGS_coop_cpu_min_degree > 0 && high_degree_count == 0) {
-                        continue;
-                    }
-                    uint64_t score = active_count;
-                    if (FLAGS_coop_segment_policy == "estimated_edges") {
-                        score = FLAGS_coop_cpu_min_degree > 0 ? high_degree_sum : active_degree_sum;
-                    }
-                    candidates.push_back({seg_idx, active_count, seg_edges, active_degree_sum, high_degree_count, high_degree_sum, score});
-                }
-
-                if (FLAGS_coop_segment_policy == "active_frontier" ||
-                    FLAGS_coop_segment_policy == "estimated_edges") {
-                    std::stable_sort(candidates.begin(), candidates.end(),
-                                     [](const Candidate &lhs, const Candidate &rhs) {
-                                         if (lhs.score != rhs.score) {
-                                             return lhs.score > rhs.score;
-                                         }
-                                         if (lhs.active_count != rhs.active_count) {
-                                             return lhs.active_count > rhs.active_count;
-                                         }
-                                         return lhs.seg_idx < rhs.seg_idx;
-                                     });
-                } else if (FLAGS_coop_segment_policy != "first_active") {
-                    LOG("[COOP-DECISION] unknown_segment_policy=%s fallback=first_active\n",
-                        FLAGS_coop_segment_policy.c_str());
-                }
-
-                const int limit = std::min<int>(FLAGS_coop_cpu_segment_limit, candidates.size());
-                for (int i = 0; i < limit; i++) {
-                    owners[candidates[i].seg_idx] = CoopSegmentOwner::CPU;
-                }
-                return owners;
-            }
-
-            void ResetCoopRoundBuffers() {
-                m_coop_active_vertices.clear();
-                m_coop_state_request_vertices.clear();
-                m_coop_state_request_active_indices.clear();
-                m_coop_cpu_source_candidates.clear();
-                m_coop_changed_vertices.clear();
-                m_coop_cpu_proposals.clear();
-                m_coop_cpu_compressed_proposals.clear();
-                m_coop_source_commits.clear();
-            }
-
-            void EnsureCoopSourceOwnerStorage() {
-                if (m_graph_datum == nullptr || m_coop_device_cpu_source_owner_epoch != nullptr) {
-                    return;
-                }
-                const uint32_t nnodes = std::max<uint32_t>(m_graph_datum->nnodes, 1);
-                GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_cpu_source_owner_epoch,
-                                             sizeof(uint32_t) * nnodes));
-                GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_cpu_source_owner_epoch,
-                                             0,
-                                             sizeof(uint32_t) * nnodes));
-            }
-
-            void EnsureCoopGpuRelaxCounterStorage() {
-                if (m_coop_device_gpu_relax_success_count == nullptr) {
-                    GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_gpu_relax_success_count,
-                                                 sizeof(unsigned long long)));
-                    GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_gpu_relax_success_count,
-                                                 0,
-                                                 sizeof(unsigned long long)));
-                }
-                if (m_coop_device_gpu_relax_cpu_home_success_count == nullptr) {
-                    GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_gpu_relax_cpu_home_success_count,
-                                                 sizeof(unsigned long long)));
-                    GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_gpu_relax_cpu_home_success_count,
-                                                 0,
-                                                 sizeof(unsigned long long)));
-                }
-                if (m_coop_device_gpu_relax_dst_degree_sum == nullptr) {
-                    GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_gpu_relax_dst_degree_sum,
-                                                 sizeof(unsigned long long)));
-                    GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_gpu_relax_dst_degree_sum,
-                                                 0,
-                                                 sizeof(unsigned long long)));
-                }
-                if (m_coop_device_gpu_relax_dst_high_degree_count == nullptr) {
-                    GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_gpu_relax_dst_high_degree_count,
-                                                 sizeof(unsigned long long)));
-                    GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_gpu_relax_dst_high_degree_count,
-                                                 0,
-                                                 sizeof(unsigned long long)));
-                }
-                if (m_coop_device_gpu_relax_dst_high_degree_sum == nullptr) {
-                    GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_gpu_relax_dst_high_degree_sum,
-                                                 sizeof(unsigned long long)));
-                    GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_gpu_relax_dst_high_degree_sum,
-                                                 0,
-                                                 sizeof(unsigned long long)));
-                }
-                if (m_coop_device_gpu_relax_dst_batch_touched_count == nullptr) {
-                    GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_gpu_relax_dst_batch_touched_count,
-                                                 sizeof(unsigned long long)));
-                    GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_gpu_relax_dst_batch_touched_count,
-                                                 0,
-                                                 sizeof(unsigned long long)));
-                }
-            }
-
-            void EnsureCoopHomeDeviceStorage() {
-                if (m_graph_datum == nullptr || m_coop_device_cpu_home_flags != nullptr) {
-                    return;
-                }
-                const uint32_t nnodes = std::max<uint32_t>(m_graph_datum->nnodes, 1);
-                GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_cpu_home_flags,
-                                             sizeof(uint8_t) * nnodes));
-                GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_cpu_home_flags,
-                                             0,
-                                             sizeof(uint8_t) * nnodes));
-            }
-
-            void EnsureCoopBatchTouchedDeviceStorage() {
-                if (m_graph_datum == nullptr || m_coop_device_batch_touched_flags != nullptr) {
-                    return;
-                }
-                const uint32_t nnodes = std::max<uint32_t>(m_graph_datum->nnodes, 1);
-                GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_batch_touched_flags,
-                                             sizeof(uint8_t) * nnodes));
-                GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_batch_touched_flags,
-                                             0,
-                                             sizeof(uint8_t) * nnodes));
-            }
-
-            void EnsureCoopStateRequestCapacityNoStats(size_t needed) {
-                if (needed <= m_coop_device_state_request_capacity) {
-                    return;
-                }
-                if (m_coop_device_state_request_vertices != nullptr) {
-                    cudaFree(m_coop_device_state_request_vertices);
-                    m_coop_device_state_request_vertices = nullptr;
-                }
-                GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_state_request_vertices,
-                                             sizeof(index_t) * needed));
-                m_coop_device_state_request_capacity = needed;
-            }
-
-            void SyncCpuHomeFlagsToDevice(const std::vector<index_t> &vertices,
-                                          uint8_t value) {
-                if (vertices.empty()) {
-                    return;
-                }
-                EnsureCoopHomeDeviceStorage();
-                EnsureCoopStateRequestCapacityNoStats(vertices.size());
-                GROUTE_CUDA_CHECK(cudaMemcpy(m_coop_device_state_request_vertices,
-                                             vertices.data(),
-                                             sizeof(index_t) * vertices.size(),
-                                             cudaMemcpyHostToDevice));
-                dim3 grid_dims, block_dims;
-                KernelSizing(grid_dims, block_dims, vertices.size());
-                SetCoopHomeFlags<<<grid_dims, block_dims>>>(
-                    m_coop_device_state_request_vertices,
-                    vertices.size(),
-                    m_coop_device_cpu_home_flags,
-                    value);
-                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
-            }
-
-            void SyncBatchTouchedFlagsToDevice(const std::vector<index_t> &vertices) {
-                EnsureCoopBatchTouchedDeviceStorage();
-                if (m_coop_device_batch_touched_flags == nullptr) {
-                    return;
-                }
-                const uint32_t nnodes = std::max<uint32_t>(m_graph_datum->nnodes, 1);
-                GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_batch_touched_flags,
-                                             0,
-                                             sizeof(uint8_t) * nnodes));
-                if (vertices.empty()) {
-                    return;
-                }
-                EnsureCoopStateRequestCapacityNoStats(vertices.size());
-                GROUTE_CUDA_CHECK(cudaMemcpy(m_coop_device_state_request_vertices,
-                                             vertices.data(),
-                                             sizeof(index_t) * vertices.size(),
-                                             cudaMemcpyHostToDevice));
-                dim3 grid_dims, block_dims;
-                KernelSizing(grid_dims, block_dims, vertices.size());
-                SetCoopHomeFlags<<<grid_dims, block_dims>>>(
-                    m_coop_device_state_request_vertices,
-                    vertices.size(),
-                    m_coop_device_batch_touched_flags,
-                    1);
-                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
-            }
-
-            void AdvanceCoopSourceEpoch() {
-                if (m_coop_cpu_source_epoch == std::numeric_limits<uint32_t>::max()) {
-                    EnsureCoopSourceOwnerStorage();
-                    GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_cpu_source_owner_epoch,
-                                                 0,
-                                                 sizeof(uint32_t) * std::max<uint32_t>(m_graph_datum->nnodes, 1)));
-                    m_coop_cpu_source_epoch = 1;
-                } else {
-                    m_coop_cpu_source_epoch++;
-                }
-            }
-
-            void MarkCpuSourcesForGpuSkip(CoopRoundStats &stats) {
-                EnsureCoopSourceOwnerStorage();
-                AdvanceCoopSourceEpoch();
-                if (m_coop_device_gpu_skipped_cpu_sources == nullptr) {
-                    Stopwatch sw_alloc(true);
-                    GROUTE_CUDA_CHECK(cudaMalloc(&m_coop_device_gpu_skipped_cpu_sources,
-                                                 sizeof(unsigned long long)));
-                    sw_alloc.stop();
-                    stats.allocation_ms += sw_alloc.ms();
-                }
-                GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_gpu_skipped_cpu_sources,
-                                             0,
-                                             sizeof(unsigned long long)));
-                if (m_coop_cpu_source_candidates.empty()) {
-                    return;
-                }
-                EnsureCoopDeviceCapacity(&m_coop_device_cpu_source_candidates,
-                                         &m_coop_device_cpu_source_candidate_capacity,
-                                         m_coop_cpu_source_candidates.size(),
-                                         stats);
-                GROUTE_CUDA_CHECK(cudaMemcpy(m_coop_device_cpu_source_candidates,
-                                             m_coop_cpu_source_candidates.data(),
-                                             sizeof(CoopSourceCandidate) * m_coop_cpu_source_candidates.size(),
-                                             cudaMemcpyHostToDevice));
-                dim3 grid_dims, block_dims;
-                KernelSizing(grid_dims, block_dims, m_coop_cpu_source_candidates.size());
-                MarkCpuSourceOwnerEpoch<<<grid_dims, block_dims>>>(m_coop_device_cpu_source_candidates,
-                                                                   m_coop_cpu_source_candidates.size(),
-                                                                   m_coop_device_cpu_source_owner_epoch,
-                                                                   m_coop_cpu_source_epoch);
-                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
-            }
-
-            void SelectCpuSourcesForRound(CoopRoundStats &stats) {
-                const int max_cpu_sources = GetCoopMaxCpuSources();
-                if (FLAGS_coop_cpu_dry_run || max_cpu_sources <= 0) {
-                    return;
-                }
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
                 GraphDatum &graph_datum = *m_graph_datum;
-                m_coop_cpu_source_candidates.clear();
-
-                std::vector<index_t> segment_active_vertices;
-                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                    const index_t stream_id = seg_idx % FLAGS_n_stream;
-                    const uint32_t active_count = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream[stream_id]);
-                    if (active_count == 0) {
-                        continue;
-                    }
-                    segment_active_vertices.resize(active_count);
-                    Stopwatch sw_d2h(true);
-                    GROUTE_CUDA_CHECK(cudaMemcpyAsync(segment_active_vertices.data(),
-                                                      graph_datum.m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
-                                                      sizeof(index_t) * active_count,
-                                                      cudaMemcpyDeviceToHost,
-                                                      stream[stream_id].cuda_stream));
-                    stream[stream_id].Sync();
-                    sw_d2h.stop();
-                    stats.d2h_frontier_ms += sw_d2h.ms();
-                    stats.d2h_frontier_bytes += sizeof(index_t) * active_count;
-
-                    for (uint32_t i = 0; i < active_count; i++) {
-                        const index_t src = segment_active_vertices[i];
-                        if (src >= host_pma.nnodes) {
-                            continue;
-                        }
-                        const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                        if (degree == 0) {
-                            continue;
-                        }
-                        if (FLAGS_coop_cpu_min_degree > 0 &&
-                            degree < static_cast<uint64_t>(FLAGS_coop_cpu_min_degree)) {
-                            continue;
-                        }
-                        const uint8_t cached = host_pma.vertices_[src].cache ? 1 : 0;
-                        const uint64_t cache_penalty = cached ? 0 : (degree + 1);
-                        const uint64_t score = degree + cache_penalty;
-                        m_coop_cpu_source_candidates.push_back({src, seg_idx, degree, cached, score});
-                    }
-                }
-
-                std::stable_sort(m_coop_cpu_source_candidates.begin(),
-                                 m_coop_cpu_source_candidates.end(),
-                                 [](const CoopSourceCandidate &lhs, const CoopSourceCandidate &rhs) {
-                                     if (lhs.score != rhs.score) {
-                                         return lhs.score > rhs.score;
-                                     }
-                                     if (lhs.degree != rhs.degree) {
-                                         return lhs.degree > rhs.degree;
-                                     }
-                                     return lhs.src < rhs.src;
-                                 });
-
-                const size_t source_limit = max_cpu_sources > 0
-                                                ? static_cast<size_t>(max_cpu_sources)
-                                                : 0;
-                if (source_limit == 0 || m_coop_cpu_source_candidates.empty()) {
-                    m_coop_cpu_source_candidates.clear();
-                    return;
-                }
-                if (m_coop_cpu_source_candidates.size() > source_limit) {
-                    m_coop_cpu_source_candidates.resize(source_limit);
-                }
-                stats.cpu_frontier_vertices += m_coop_cpu_source_candidates.size();
-                for (const auto &candidate : m_coop_cpu_source_candidates) {
-                    stats.active_degree_sum += candidate.degree;
-                    if (candidate.cached) {
-                        stats.cpu_cached_source_vertices++;
-                        stats.cpu_cached_edges += candidate.degree;
-                    } else {
-                        stats.cpu_non_cached_source_vertices++;
-                        stats.cpu_non_cached_edges += candidate.degree;
-                    }
-                }
+                GROUTE_CUDA_CHECK(cudaMalloc(
+                    reinterpret_cast<void **>(&m_device_cpu_destination_flags),
+                    sizeof(uint8_t) * graph_datum.nnodes));
+                GROUTE_CUDA_CHECK(cudaMalloc(
+                    reinterpret_cast<void **>(&m_device_gpu_to_cpu_boundary_values),
+                    sizeof(TBuffer) * graph_datum.nnodes));
+                GROUTE_CUDA_CHECK(cudaMalloc(
+                    reinterpret_cast<void **>(&m_device_gpu_to_cpu_boundary_parents),
+                    sizeof(index_t) * graph_datum.nnodes));
+                m_node_cpu_owner.assign(graph_datum.nnodes, 0);
+                m_cpu_node_values.resize(graph_datum.nnodes);
+                m_cpu_node_buffers.resize(graph_datum.nnodes);
+                m_cpu_node_parents.resize(graph_datum.nnodes);
+                GROUTE_CUDA_CHECK(cudaMemset(
+                    m_device_cpu_destination_flags, 0, graph_datum.nnodes));
+                GROUTE_CUDA_CHECK(cudaMemset(
+                    m_device_gpu_to_cpu_boundary_values,
+                    0xff,
+                    sizeof(TBuffer) * graph_datum.nnodes));
             }
-
-            void EnsureCoopHomeStorage() {
-                if (m_graph_datum == nullptr) {
-                    return;
-                }
-                const size_t nnodes = m_graph_datum->nnodes;
-                if (m_coop_home.size() != nnodes) {
-                    m_coop_home.assign(nnodes, static_cast<uint8_t>(CoopHome::GPU_HOME));
-                    m_coop_home_initialized = true;
-                    m_coop_home_edges_est = 0;
-                    m_coop_home_cpu_source_count = 0;
-                } else if (!m_coop_home_initialized) {
-                    std::fill(m_coop_home.begin(), m_coop_home.end(), static_cast<uint8_t>(CoopHome::GPU_HOME));
-                    m_coop_home_initialized = true;
-                    m_coop_home_edges_est = 0;
-                    m_coop_home_cpu_source_count = 0;
-                }
-            }
-
-            bool IsCpuHome(index_t src) const {
-                return src < m_coop_home.size() &&
-                       m_coop_home[src] == static_cast<uint8_t>(CoopHome::CPU_HOME);
-            }
-
-            bool TryPromoteCpuHome(index_t src,
-                                   uint64_t degree,
-                                   uint8_t cached) {
-                if (src >= m_coop_home.size()) {
-                    return false;
-                }
-                if (IsCpuHome(src)) {
-                    return true;
-                }
-                if (FLAGS_coop_cpu_dry_run) {
-                    return false;
-                }
-                if (FLAGS_coop_home_max_sources <= 0 ||
-                    m_coop_home_cpu_source_count >= static_cast<uint64_t>(FLAGS_coop_home_max_sources)) {
-                    return false;
-                }
-                if (FLAGS_coop_home_policy != "update_touched_high_degree") {
-                    LOG("[COOP-HOME] unknown_home_policy=%s fallback=update_touched_high_degree\n",
-                        FLAGS_coop_home_policy.c_str());
-                }
-                if (cached) {
-                    return false;
-                }
-                if (degree < static_cast<uint64_t>(std::max(FLAGS_coop_home_min_degree, 0))) {
-                    return false;
-                }
-                m_coop_home[src] = static_cast<uint8_t>(CoopHome::CPU_HOME);
-                m_coop_home_cpu_source_count++;
-                m_coop_home_edges_est += degree;
-                return true;
-            }
-
-            void SelectCpuHomeSourcesForRound(CoopRoundStats &stats) {
-                EnsureCoopHomeStorage();
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                m_coop_cpu_source_candidates.clear();
-                std::unordered_set<index_t> selected_cpu_sources;
-
-                if (!m_coop_cpu_home_batch_enabled) {
-                    stats.full_frontier_d2h_ms = 0.0;
-                    stats.full_frontier_d2h_bytes = 0;
-                    stats.cpu_home_sources = m_coop_home_cpu_source_count;
-                    stats.gpu_home_sources = m_coop_home.size() >= m_coop_home_cpu_source_count
-                                                 ? m_coop_home.size() - m_coop_home_cpu_source_count
-                                                 : 0;
-                    stats.cpu_home_edges_est = m_coop_home_edges_est;
-                    return;
-                }
-
-                if (!m_coop_cpu_home_injected_sources.empty()) {
-                    uint64_t injected = 0;
-                    for (const index_t src : m_coop_cpu_home_injected_sources) {
-                        if (src >= host_pma.nnodes || !IsCpuHome(src)) {
-                            continue;
-                        }
-                        if (!selected_cpu_sources.insert(src).second) {
-                            continue;
-                        }
-                        const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                        if (degree == 0) {
-                            continue;
-                        }
-                        const uint8_t cached = host_pma.vertices_[src].cache ? 1 : 0;
-                        const uint64_t score = degree + (cached ? 0 : degree + 1);
-                        m_coop_cpu_source_candidates.push_back({src, 0, degree, cached, score, 1});
-                        injected++;
-                        stats.cpu_home_injected_sources++;
-                        stats.cpu_frontier_vertices++;
-                        stats.active_degree_sum += degree;
-                        if (cached) {
-                            stats.cpu_cached_source_vertices++;
-                            stats.cpu_cached_edges += degree;
-                        } else {
-                            stats.cpu_non_cached_source_vertices++;
-                            stats.cpu_non_cached_edges += degree;
-                        }
-                    }
-                    LOG("[COOP-HOME-INJECT] pending=%lu injected=%lu consumed=1\n",
-                        static_cast<unsigned long>(m_coop_cpu_home_injected_sources.size()),
-                        static_cast<unsigned long>(injected));
-                    m_coop_cpu_home_injected_sources.clear();
-                    m_coop_cpu_home_injected_edges_est = 0;
-                }
-
-                stats.full_frontier_d2h_ms = 0.0;
-                stats.full_frontier_d2h_bytes = 0;
-                stats.cpu_home_sources = m_coop_home_cpu_source_count;
-                stats.gpu_home_sources = m_coop_home.size() >= m_coop_home_cpu_source_count
-                                             ? m_coop_home.size() - m_coop_home_cpu_source_count
-                                             : 0;
-                stats.cpu_home_edges_est = m_coop_home_edges_est;
-                stats.cpu_home_active_sources = m_coop_cpu_source_candidates.size();
-            }
-
-            void PrepareInjectedCpuHomeSourcesForInitialAdd(CoopRoundStats &stats) {
-                if (m_coop_cpu_home_injected_sources.empty()) {
-                    return;
-                }
-                EnsureCoopHomeStorage();
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                m_coop_cpu_source_candidates.clear();
-                std::unordered_set<index_t> selected_cpu_sources;
-                uint64_t prepared = 0;
-                for (const index_t src : m_coop_cpu_home_injected_sources) {
-                    if (src >= host_pma.nnodes || !IsCpuHome(src)) {
-                        continue;
-                    }
-                    if (!selected_cpu_sources.insert(src).second) {
-                        continue;
-                    }
-                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                    if (degree == 0) {
-                        continue;
-                    }
-                    const uint8_t cached = host_pma.vertices_[src].cache ? 1 : 0;
-                    const uint64_t score = degree + (cached ? 0 : degree + 1);
-                    m_coop_cpu_source_candidates.push_back({src, 0, degree, cached, score, 1});
-                    prepared++;
-                }
-                if (prepared == 0) {
-                    return;
-                }
-                SyncCpuHomeFlagsToDevice(m_coop_cpu_home_injected_sources, static_cast<uint8_t>(CoopHome::CPU_HOME));
-                if (FLAGS_coop_home_skip_gpu_sources) {
-                    MarkCpuSourcesForGpuSkip(stats);
-                }
-                LOG("[COOP-HOME-INIT-SKIP] pending=%lu prepared=%lu owner_epoch=%u\n",
-                    static_cast<unsigned long>(m_coop_cpu_home_injected_sources.size()),
-                    static_cast<unsigned long>(prepared),
-                    m_coop_cpu_source_epoch);
-            }
-
-            void DrainCpuHomeBoundaryQueue(CoopRoundStats &stats) {
-                if (!m_coop_cpu_home_batch_enabled) {
-                    return;
-                }
-                if (m_coop_device_gpu_to_cpu_boundary_vertices.GetCount(*m_stream) == 0) {
-                    stats.gpu_to_cpu_boundary_bytes = 0;
-                    stats.gpu_to_cpu_boundary_items = 0;
-                    stats.gpu_to_cpu_boundary_unique = 0;
-                    return;
-                }
-
-                const uint32_t boundary_count = m_coop_device_gpu_to_cpu_boundary_vertices.GetCount(*m_stream);
-                if (boundary_count == 0) {
-                    return;
-                }
-
-                std::vector<index_t> boundary_vertices(boundary_count);
-                Stopwatch sw_d2h(true);
-                GROUTE_CUDA_CHECK(cudaMemcpy(boundary_vertices.data(),
-                                             m_coop_device_gpu_to_cpu_boundary_vertices.GetDeviceDataPtr(),
-                                             sizeof(index_t) * boundary_count,
-                                             cudaMemcpyDeviceToHost));
-                sw_d2h.stop();
-                stats.gpu_to_cpu_boundary_d2h_ms += sw_d2h.ms();
-                stats.gpu_to_cpu_boundary_bytes += sizeof(index_t) * boundary_count;
-                stats.gpu_to_cpu_boundary_items += boundary_count;
-
-                std::sort(boundary_vertices.begin(), boundary_vertices.end());
-                boundary_vertices.erase(std::unique(boundary_vertices.begin(), boundary_vertices.end()),
-                                        boundary_vertices.end());
-                stats.gpu_to_cpu_boundary_unique += boundary_vertices.size();
-
-                if (!boundary_vertices.empty()) {
-                    m_coop_cpu_home_injected_sources.insert(m_coop_cpu_home_injected_sources.end(),
-                                                            boundary_vertices.begin(),
-                                                            boundary_vertices.end());
-                    std::sort(m_coop_cpu_home_injected_sources.begin(),
-                              m_coop_cpu_home_injected_sources.end());
-                    m_coop_cpu_home_injected_sources.erase(
-                        std::unique(m_coop_cpu_home_injected_sources.begin(),
-                                    m_coop_cpu_home_injected_sources.end()),
-                        m_coop_cpu_home_injected_sources.end());
-                }
-            }
-
-            void CollectGpuRelaxDstUniqueStats(CoopRoundStats &stats) {
-                const uint32_t dst_count = m_coop_device_gpu_relax_dst_vertices.GetCount(*m_stream);
-                if (dst_count == 0) {
-                    return;
-                }
-
-                std::vector<index_t> dst_vertices(dst_count);
-                Stopwatch sw_d2h(true);
-                GROUTE_CUDA_CHECK(cudaMemcpy(dst_vertices.data(),
-                                             m_coop_device_gpu_relax_dst_vertices.GetDeviceDataPtr(),
-                                             sizeof(index_t) * dst_count,
-                                             cudaMemcpyDeviceToHost));
-                sw_d2h.stop();
-
-                stats.gpu_relax_dst_queue_items += dst_count;
-                stats.gpu_relax_dst_queue_bytes += sizeof(index_t) * dst_count;
-                stats.gpu_relax_dst_queue_d2h_ms += sw_d2h.ms();
-
-                std::sort(dst_vertices.begin(), dst_vertices.end());
-                dst_vertices.erase(std::unique(dst_vertices.begin(), dst_vertices.end()),
-                                   dst_vertices.end());
-
-                const auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                for (const index_t dst : dst_vertices) {
-                    if (dst >= host_pma.nnodes) {
-                        continue;
-                    }
-                    const uint64_t degree = host_pma.sync_vertices_[dst].degree;
-                    stats.gpu_relax_unique_dst++;
-                    stats.gpu_relax_unique_dst_degree_sum += degree;
-                    if (degree >= 32) {
-                        stats.gpu_relax_unique_dst_ge32_count++;
-                        stats.gpu_relax_unique_dst_ge32_sum += degree;
-                    }
-                    if (degree >= 128) {
-                        stats.gpu_relax_unique_dst_ge128_count++;
-                        stats.gpu_relax_unique_dst_ge128_sum += degree;
-                    }
-                    if (degree >= 512) {
-                        stats.gpu_relax_unique_dst_ge512_count++;
-                        stats.gpu_relax_unique_dst_ge512_sum += degree;
-                    }
-                    if (degree >= 1024) {
-                        stats.gpu_relax_unique_dst_ge1024_count++;
-                        stats.gpu_relax_unique_dst_ge1024_sum += degree;
-                    }
-                    if (dst < m_coop_home.size() &&
-                        m_coop_home[dst] == static_cast<uint8_t>(CoopHome::CPU_HOME)) {
-                        stats.gpu_relax_unique_dst_cpu_home_count++;
-                    }
-                    if (std::binary_search(m_coop_batch_touched_sources.begin(),
-                                           m_coop_batch_touched_sources.end(),
-                                           dst)) {
-                        stats.gpu_relax_unique_dst_batch_touched_count++;
-                    }
-                }
-            }
-
-            void PromoteBatchTouchedCpuHomeSources(CoopRoundStats *stats = nullptr) {
-                m_coop_cpu_home_injected_edges_est = 0;
-                if (m_coop_batch_touched_sources.empty()) {
-                    SyncBatchTouchedFlagsToDevice(m_coop_batch_touched_sources);
-                    return;
-                }
-                EnsureCoopHomeStorage();
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                std::sort(m_coop_batch_touched_sources.begin(), m_coop_batch_touched_sources.end());
-                m_coop_batch_touched_sources.erase(
-                    std::unique(m_coop_batch_touched_sources.begin(), m_coop_batch_touched_sources.end()),
-                    m_coop_batch_touched_sources.end());
-                SyncBatchTouchedFlagsToDevice(m_coop_batch_touched_sources);
-
-                uint64_t promoted = 0;
-                uint64_t considered = 0;
-                m_coop_cpu_home_injected_sources.clear();
-                for (const index_t src : m_coop_batch_touched_sources) {
-                    if (src >= host_pma.nnodes) {
-                        continue;
-                    }
-                    considered++;
-                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                    const uint8_t cached = host_pma.vertices_[src].cache ? 1 : 0;
-                    const bool was_cpu_home = IsCpuHome(src);
-                    if (TryPromoteCpuHome(src, degree, cached) && !was_cpu_home) {
-                        promoted++;
-                        m_coop_cpu_home_injected_sources.push_back(src);
-                        m_coop_cpu_home_injected_edges_est += degree;
-                    }
-                }
-                std::sort(m_coop_cpu_home_injected_sources.begin(),
-                          m_coop_cpu_home_injected_sources.end());
-                m_coop_cpu_home_injected_sources.erase(
-                    std::unique(m_coop_cpu_home_injected_sources.begin(),
-                                m_coop_cpu_home_injected_sources.end()),
-                    m_coop_cpu_home_injected_sources.end());
-                SyncCpuHomeFlagsToDevice(m_coop_cpu_home_injected_sources, static_cast<uint8_t>(CoopHome::CPU_HOME));
-                if (stats != nullptr) {
-                    stats->cpu_home_sources = m_coop_home_cpu_source_count;
-                    stats->gpu_home_sources = m_coop_home.size() >= m_coop_home_cpu_source_count
-                                                 ? m_coop_home.size() - m_coop_home_cpu_source_count
-                                                 : 0;
-                    stats->cpu_home_edges_est = m_coop_home_edges_est;
-                }
-                LOG("[COOP-HOME] batch_touched_sources=%lu considered=%lu promoted=%lu cpu_home_sources=%lu cpu_home_edges_est=%lu policy=%s min_degree=%d max_sources=%d\n",
-                    static_cast<unsigned long>(m_coop_batch_touched_sources.size()),
-                    static_cast<unsigned long>(considered),
-                    static_cast<unsigned long>(promoted),
-                    static_cast<unsigned long>(m_coop_home_cpu_source_count),
-                    static_cast<unsigned long>(m_coop_home_edges_est),
-                    FLAGS_coop_home_policy.c_str(),
-                    FLAGS_coop_home_min_degree,
-                    FLAGS_coop_home_max_sources);
-            }
-
-            void ApplyCpuHomeAdmissionForBatch() {
-                if (GetCoopMode() != CoopExecMode::HYBRID ||
-                    GetCoopSplitMode() != CoopSplitMode::CPU_HOME) {
-                    m_coop_cpu_home_batch_enabled = false;
-                    m_coop_cpu_home_injected_sources.clear();
-                    m_coop_cpu_home_injected_edges_est = 0;
-                    return;
-                }
-
-                const uint64_t min_injected_sources =
-                    static_cast<uint64_t>(std::max(FLAGS_coop_home_min_injected_sources, 0));
-                const uint64_t min_injected_edges =
-                    static_cast<uint64_t>(std::max(FLAGS_coop_home_min_injected_edges, 0));
-                const uint64_t injected_sources = m_coop_cpu_home_injected_sources.size();
-                const uint64_t injected_edges = m_coop_cpu_home_injected_edges_est;
-                m_coop_cpu_home_batch_enabled =
-                    injected_sources >= min_injected_sources &&
-                    injected_edges >= min_injected_edges;
-
-                LOG("[COOP-HOME-ADMISSION] enabled=%d reason=%s injected_sources=%lu injected_edges_est=%lu min_sources=%lu min_edges=%lu cpu_home_sources=%lu cpu_home_edges_est=%lu\n",
-                    m_coop_cpu_home_batch_enabled ? 1 : 0,
-                    m_coop_cpu_home_batch_enabled ? "cpu_home_admitted" : "cpu_home_disabled_low_work",
-                    static_cast<unsigned long>(injected_sources),
-                    static_cast<unsigned long>(injected_edges),
-                    static_cast<unsigned long>(min_injected_sources),
-                    static_cast<unsigned long>(min_injected_edges),
-                    static_cast<unsigned long>(m_coop_home_cpu_source_count),
-                    static_cast<unsigned long>(m_coop_home_edges_est));
-
-                if (!m_coop_cpu_home_batch_enabled) {
-                    m_coop_cpu_home_injected_sources.clear();
-                    m_coop_cpu_home_injected_edges_est = 0;
-                }
-            }
-
 
             template<typename DevicePtr>
-            void EnsureCoopDeviceCapacity(DevicePtr **device_buffer,
+            void EnsureInsertionDeviceCapacity(DevicePtr **device_buffer,
                                           size_t *capacity,
                                           size_t needed,
-                                          CoopRoundStats &stats) {
+                                          InsertionRoundStats &stats) {
                 if (needed <= *capacity) {
                     return;
                 }
@@ -1595,194 +473,10 @@ namespace sepgraph {
                 stats.allocation_ms += sw_alloc.ms();
             }
 
-            void EnsureCoopActiveStateCapacity(size_t needed, CoopRoundStats &stats) {
-                if (needed <= m_coop_device_active_state_capacity) {
-                    return;
-                }
-
-                Stopwatch sw_alloc(true);
-                if (m_coop_device_active_values != nullptr) {
-                    GROUTE_CUDA_CHECK(cudaFree(m_coop_device_active_values));
-                }
-                if (m_coop_device_active_buffers != nullptr) {
-                    GROUTE_CUDA_CHECK(cudaFree(m_coop_device_active_buffers));
-                }
-                GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_active_values,
-                                             sizeof(TValue) * needed));
-                GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_active_buffers,
-                                             sizeof(TBuffer) * needed));
-                m_coop_device_active_state_capacity = needed;
-                sw_alloc.stop();
-                stats.allocation_ms += sw_alloc.ms();
-            }
-
-            void EnsureCoopStateRequestCapacity(size_t needed, CoopRoundStats &stats) {
-                if (needed <= m_coop_device_state_request_capacity) {
-                    return;
-                }
-
-                Stopwatch sw_alloc(true);
-                if (m_coop_device_state_request_vertices != nullptr) {
-                    GROUTE_CUDA_CHECK(cudaFree(m_coop_device_state_request_vertices));
-                }
-                GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_state_request_vertices,
-                                             sizeof(index_t) * needed));
-                m_coop_device_state_request_capacity = needed;
-                sw_alloc.stop();
-                stats.allocation_ms += sw_alloc.ms();
-            }
-
-            void EnsureCoopShadowStorage() {
-                if (m_graph_datum == nullptr) {
-                    return;
-                }
-                const size_t nnodes = m_graph_datum->nnodes;
-                if (m_coop_shadow_valid.size() == nnodes) {
-                    return;
-                }
-                m_coop_shadow_values.resize(nnodes);
-                m_coop_shadow_buffers.resize(nnodes);
-                m_coop_shadow_valid.assign(nnodes, 0);
-            }
-
-            void FetchCoopStateForVertices(const std::vector<index_t> &vertices,
-                                           std::vector<TValue> &values,
-                                           std::vector<TBuffer> &buffers,
-                                           CoopRoundStats &stats,
-                                           bool count_as_delta_sync) {
-                if (vertices.empty()) {
-                    return;
-                }
-
-                GraphDatum &graph_datum = *m_graph_datum;
-                EnsureCoopActiveStateCapacity(vertices.size(), stats);
-                EnsureCoopStateRequestCapacity(vertices.size(), stats);
-                values.resize(vertices.size());
-                buffers.resize(vertices.size());
-
-                Stopwatch sw_h2d(true);
-                GROUTE_CUDA_CHECK(cudaMemcpy(m_coop_device_state_request_vertices,
-                                             vertices.data(),
-                                             sizeof(index_t) * vertices.size(),
-                                             cudaMemcpyHostToDevice));
-                sw_h2d.stop();
-                stats.state_request_h2d_ms += sw_h2d.ms();
-                stats.state_request_h2d_bytes += sizeof(index_t) * vertices.size();
-
-                dim3 grid_dims, block_dims;
-                KernelSizing(grid_dims, block_dims, vertices.size());
-                Stopwatch sw_d2h(true);
-                PackCpuActiveSourceState<TValue, TBuffer><<<grid_dims, block_dims>>>(
-                    m_coop_device_state_request_vertices,
-                    vertices.size(),
-                    graph_datum.GetValueDeviceObject(),
-                    graph_datum.GetBufferDeviceObject(),
-                    m_coop_device_active_values,
-                    m_coop_device_active_buffers);
-                GROUTE_CUDA_CHECK(cudaMemcpy(values.data(),
-                                             m_coop_device_active_values,
-                                             sizeof(TValue) * vertices.size(),
-                                             cudaMemcpyDeviceToHost));
-                GROUTE_CUDA_CHECK(cudaMemcpy(buffers.data(),
-                                             m_coop_device_active_buffers,
-                                             sizeof(TBuffer) * vertices.size(),
-                                             cudaMemcpyDeviceToHost));
-                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
-                sw_d2h.stop();
-
-                const uint64_t state_bytes = (sizeof(TValue) + sizeof(TBuffer)) * vertices.size();
-                if (count_as_delta_sync) {
-                    stats.delta_state_d2h_ms += sw_d2h.ms();
-                    stats.delta_state_d2h_bytes += state_bytes;
-                } else {
-                    stats.state_d2h_ms += sw_d2h.ms();
-                    stats.state_d2h_bytes += state_bytes;
-                }
-            }
-
-            void RefreshCoopShadowFromChangedQueue(CoopRoundStats &stats) {
-                const uint32_t changed_count = m_coop_device_changed_vertices.GetCount(*m_stream);
-                if (changed_count == 0) {
-                    return;
-                }
-
-                m_coop_changed_vertices.resize(changed_count);
-                Stopwatch sw_d2h(true);
-                GROUTE_CUDA_CHECK(cudaMemcpy(m_coop_changed_vertices.data(),
-                                             m_coop_device_changed_vertices.GetDeviceDataPtr(),
-                                             sizeof(index_t) * changed_count,
-                                             cudaMemcpyDeviceToHost));
-                sw_d2h.stop();
-                stats.dirty_queue_d2h_ms += sw_d2h.ms();
-                stats.dirty_queue_d2h_bytes += sizeof(index_t) * changed_count;
-
-                EnsureCoopShadowStorage();
-                std::sort(m_coop_changed_vertices.begin(), m_coop_changed_vertices.end());
-                m_coop_changed_vertices.erase(std::unique(m_coop_changed_vertices.begin(),
-                                                          m_coop_changed_vertices.end()),
-                                              m_coop_changed_vertices.end());
-                stats.shadow_dirty_vertices += m_coop_changed_vertices.size();
-
-                std::vector<TValue> values;
-                std::vector<TBuffer> buffers;
-                FetchCoopStateForVertices(m_coop_changed_vertices, values, buffers, stats, true);
-                for (size_t i = 0; i < m_coop_changed_vertices.size(); i++) {
-                    const index_t vertex = m_coop_changed_vertices[i];
-                    if (vertex < m_coop_shadow_valid.size()) {
-                        m_coop_shadow_values[vertex] = values[i];
-                        m_coop_shadow_buffers[vertex] = buffers[i];
-                        m_coop_shadow_valid[vertex] = 1;
-                    }
-                }
-                m_coop_changed_vertices.clear();
-            }
-
-            void SetCoopShadowInterestForCpuSegments(const std::vector<CoopSegmentOwner> &owners) {
-                if (m_coop_device_shadow_valid_flags == nullptr || m_graph_datum == nullptr) {
-                    return;
-                }
-
-                GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_shadow_valid_flags,
-                                             0,
-                                             sizeof(uint8_t) * std::max<uint32_t>(m_graph_datum->nnodes, 1)));
-                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                    if (owners[seg_idx] != CoopSegmentOwner::CPU) {
-                        continue;
-                    }
-                    const index_t seg_snode = m_groute_context->seg_snode[seg_idx];
-                    const index_t seg_enode = m_groute_context->seg_enode[seg_idx];
-                    if (seg_enode <= seg_snode) {
-                        continue;
-                    }
-                    dim3 grid_dims, block_dims;
-                    KernelSizing(grid_dims, block_dims, seg_enode - seg_snode);
-                    SetCoopShadowFlagRange<<<grid_dims, block_dims>>>(
-                        seg_snode,
-                        seg_enode,
-                        m_coop_device_shadow_valid_flags,
-                        1);
-                }
-                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
-            }
-
-            void ApplyCpuSourceCommitsToShadow(const std::vector<CpuSourceCommit<TValue>> &source_commits) {
-                if (source_commits.empty()) {
-                    return;
-                }
-
-                EnsureCoopShadowStorage();
-                for (const auto &commit : source_commits) {
-                    if (commit.src >= m_coop_shadow_valid.size() || !m_coop_shadow_valid[commit.src]) {
-                        continue;
-                    }
-                    m_coop_shadow_values[commit.src] = commit.value;
-                    m_coop_shadow_buffers[commit.src] = static_cast<TBuffer>(commit.value);
-                }
-            }
 
             template<typename Proposal>
             void CompressCpuRelaxProposals(std::vector<Proposal> &proposals,
-                                           CoopRoundStats &stats) {
+                                           InsertionRoundStats &stats) {
                 if (proposals.empty()) {
                     return;
                 }
@@ -1793,30 +487,30 @@ namespace sepgraph {
                     table_size <<= 1;
                 }
                 const index_t empty_key = std::numeric_limits<index_t>::max();
-                if (m_coop_compress_keys.size() < table_size) {
-                    m_coop_compress_keys.assign(table_size, empty_key);
-                    m_coop_compress_indices.resize(table_size);
-                    m_coop_compress_touched_slots.clear();
+                if (m_cpu_proposal_compress_keys.size() < table_size) {
+                    m_cpu_proposal_compress_keys.assign(table_size, empty_key);
+                    m_cpu_proposal_compress_indices.resize(table_size);
+                    m_cpu_proposal_compress_touched_slots.clear();
                 }
 
                 const size_t table_mask = table_size - 1;
-                m_coop_cpu_compressed_proposals.clear();
-                m_coop_cpu_compressed_proposals.reserve(proposals.size());
-                m_coop_compress_touched_slots.clear();
+                m_cpu_compressed_proposals.clear();
+                m_cpu_compressed_proposals.reserve(proposals.size());
+                m_cpu_proposal_compress_touched_slots.clear();
 
                 for (const auto &proposal : proposals) {
                     size_t slot = (static_cast<size_t>(proposal.dst) * 11400714819323198485ull) & table_mask;
                     while (true) {
-                        const index_t key = m_coop_compress_keys[slot];
+                        const index_t key = m_cpu_proposal_compress_keys[slot];
                         if (key == empty_key) {
-                            m_coop_compress_keys[slot] = proposal.dst;
-                            m_coop_compress_indices[slot] = m_coop_cpu_compressed_proposals.size();
-                            m_coop_compress_touched_slots.push_back(slot);
-                            m_coop_cpu_compressed_proposals.push_back(proposal);
+                            m_cpu_proposal_compress_keys[slot] = proposal.dst;
+                            m_cpu_proposal_compress_indices[slot] = m_cpu_compressed_proposals.size();
+                            m_cpu_proposal_compress_touched_slots.push_back(slot);
+                            m_cpu_compressed_proposals.push_back(proposal);
                             break;
                         }
                         if (key == proposal.dst) {
-                            Proposal &current = m_coop_cpu_compressed_proposals[m_coop_compress_indices[slot]];
+                            Proposal &current = m_cpu_compressed_proposals[m_cpu_proposal_compress_indices[slot]];
                             if (proposal.value < current.value ||
                                 (proposal.value == current.value && proposal.parent < current.parent)) {
                                 current = proposal;
@@ -1827,404 +521,69 @@ namespace sepgraph {
                     }
                 }
 
-                stats.cpu_unique_dst += m_coop_cpu_compressed_proposals.size();
-                stats.cpu_proposals_compressed += m_coop_cpu_compressed_proposals.size();
-                if (FLAGS_coop_compress_proposals) {
-                    proposals.swap(m_coop_cpu_compressed_proposals);
-                }
-                for (const size_t slot : m_coop_compress_touched_slots) {
-                    m_coop_compress_keys[slot] = empty_key;
+                proposals.swap(m_cpu_compressed_proposals);
+                for (const size_t slot : m_cpu_proposal_compress_touched_slots) {
+                    m_cpu_proposal_compress_keys[slot] = empty_key;
                 }
                 sw_compress.stop();
                 stats.proposal_compress_ms += sw_compress.ms();
             }
 
-            template<typename Proposal>
-            void GenerateCpuSSSPProposalsForSegment(index_t seg_idx,
-                                                    std::vector<Proposal> &proposals,
-                                                    std::vector<CpuSourceCommit<TValue>> &source_commits,
-                                                    CoopRoundStats &stats) {
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                GraphDatum &graph_datum = *m_graph_datum;
-                const uint32_t active_count = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream[seg_idx % FLAGS_n_stream]);
-                if (active_count == 0) {
-                    return;
-                }
-
-                index_t stream_id = seg_idx % FLAGS_n_stream;
-                Stopwatch sw_alloc(true);
-                m_coop_active_vertices.resize(active_count);
-                m_coop_active_values.resize(active_count);
-                m_coop_active_buffers.resize(active_count);
-                sw_alloc.stop();
-                stats.allocation_ms += sw_alloc.ms();
-
-                Stopwatch sw_d2h(true);
-                GROUTE_CUDA_CHECK(cudaMemcpyAsync(m_coop_active_vertices.data(),
-                                                  graph_datum.m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
-                                                  sizeof(index_t) * active_count,
-                                                  cudaMemcpyDeviceToHost,
-                                                  stream[stream_id].cuda_stream));
-                stream[stream_id].Sync();
-                sw_d2h.stop();
-                stats.d2h_frontier_ms += sw_d2h.ms();
-                stats.d2h_frontier_bytes += sizeof(index_t) * active_count;
-                stats.cpu_frontier_vertices += active_count;
-
-                EnsureCoopShadowStorage();
-                m_coop_state_request_vertices.clear();
-                m_coop_state_request_active_indices.clear();
-                for (uint32_t active_idx = 0; active_idx < active_count; active_idx++) {
-                    const index_t src = m_coop_active_vertices[active_idx];
-                    if (src < m_coop_shadow_valid.size() && m_coop_shadow_valid[src]) {
-                        const TValue shadow_value = m_coop_shadow_values[src];
-                        const TBuffer shadow_buffer = m_coop_shadow_buffers[src];
-                        if (shadow_buffer < shadow_value) {
-                            m_coop_active_values[active_idx] = shadow_value;
-                            m_coop_active_buffers[active_idx] = shadow_buffer;
-                            stats.shadow_hits++;
-                        } else {
-                            m_coop_state_request_vertices.push_back(src);
-                            m_coop_state_request_active_indices.push_back(active_idx);
-                            stats.shadow_misses++;
-                        }
-                    } else {
-                        m_coop_state_request_vertices.push_back(src);
-                        m_coop_state_request_active_indices.push_back(active_idx);
-                        stats.shadow_misses++;
-                    }
-                }
-
-                if (!m_coop_state_request_vertices.empty()) {
-                    std::vector<TValue> fetched_values;
-                    std::vector<TBuffer> fetched_buffers;
-                    FetchCoopStateForVertices(m_coop_state_request_vertices,
-                                              fetched_values,
-                                              fetched_buffers,
-                                              stats,
-                                              false);
-                    for (size_t i = 0; i < m_coop_state_request_vertices.size(); i++) {
-                        const index_t src = m_coop_state_request_vertices[i];
-                        const uint32_t active_idx = m_coop_state_request_active_indices[i];
-                        m_coop_active_values[active_idx] = fetched_values[i];
-                        m_coop_active_buffers[active_idx] = fetched_buffers[i];
-                        if (src < m_coop_shadow_valid.size()) {
-                            m_coop_shadow_values[src] = fetched_values[i];
-                            m_coop_shadow_buffers[src] = fetched_buffers[i];
-                            m_coop_shadow_valid[src] = 1;
-                        }
-                    }
-                    dim3 flag_grid_dims, flag_block_dims;
-                    KernelSizing(flag_grid_dims, flag_block_dims, m_coop_state_request_vertices.size());
-                    SetCoopShadowFlags<<<flag_grid_dims, flag_block_dims>>>(
-                        m_coop_device_state_request_vertices,
-                        m_coop_state_request_vertices.size(),
-                        m_coop_device_shadow_valid_flags,
-                        1);
-                    GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
-                }
-
-                Stopwatch sw_cpu(true);
-                const size_t proposals_before = proposals.size();
-                for (uint32_t active_idx = 0; active_idx < active_count; active_idx++) {
-                    const index_t src = m_coop_active_vertices[active_idx];
-                    const TValue src_value = m_coop_active_values[active_idx];
-                    const TBuffer src_buffer = m_coop_active_buffers[active_idx];
-                    if (src >= host_pma.nnodes) {
-                        continue;
-                    }
-
-                    if (src_buffer == static_cast<TBuffer>(std::numeric_limits<uint32_t>::max())) {
-                        continue;
-                    }
-
-                    source_commits.push_back({src, static_cast<TValue>(src_buffer)});
-                    if (src_value <= src_buffer) {
-                        continue;
-                    }
-
-                    const uint64_t edge_start = host_pma.sync_vertices_[src].index;
-                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                    stats.active_degree_sum += degree;
-                    if (FLAGS_coop_cpu_min_degree > 0 &&
-                        degree < static_cast<uint64_t>(FLAGS_coop_cpu_min_degree)) {
-                        continue;
-                    }
-                    stats.cpu_expanded_vertices++;
-                    stats.cpu_edge_visits += degree;
-                    stats.cpu_host_pma_edge_visits += degree;
-                    if (host_pma.vertices_[src].cache) {
-                        stats.cpu_cached_source_vertices++;
-                        stats.cpu_cached_edges += degree;
-                    } else {
-                        stats.cpu_non_cached_source_vertices++;
-                        stats.cpu_non_cached_edges += degree;
-                    }
-
-                    for (uint64_t edge_offset = 0; edge_offset < degree; edge_offset++) {
-                        const index_t dst = host_pma.edges_[edge_start + edge_offset];
-                        const TBuffer weight = static_cast<TBuffer>((src + dst) % 128 + 1);
-                        const TBuffer new_value = src_buffer + weight;
-                        if (dst < graph_datum.nnodes) {
-                            proposals.push_back({dst, new_value, src});
-                        }
-                    }
-                }
-                sw_cpu.stop();
-                stats.cpu_ms += sw_cpu.ms();
-                stats.cpu_proposals_generated = stats.cpu_edge_visits;
-                stats.cpu_proposals_survived += proposals.size() - proposals_before;
-            }
 
             template<typename Proposal>
-            void GenerateCpuSSSPProposalsForSources(std::vector<Proposal> &proposals,
-                                                    std::vector<CpuSourceCommit<TValue>> &source_commits,
-                                                    CoopRoundStats &stats) {
-                if (m_coop_cpu_source_candidates.empty()) {
-                    return;
-                }
-
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                GraphDatum &graph_datum = *m_graph_datum;
-                const uint32_t active_count = static_cast<uint32_t>(m_coop_cpu_source_candidates.size());
-
-                Stopwatch sw_alloc(true);
-                m_coop_active_vertices.resize(active_count);
-                m_coop_active_values.resize(active_count);
-                m_coop_active_buffers.resize(active_count);
-                sw_alloc.stop();
-                stats.allocation_ms += sw_alloc.ms();
-
-                for (uint32_t active_idx = 0; active_idx < active_count; active_idx++) {
-                    m_coop_active_vertices[active_idx] = m_coop_cpu_source_candidates[active_idx].src;
-                }
-
-                EnsureCoopShadowStorage();
-                m_coop_state_request_vertices.clear();
-                m_coop_state_request_active_indices.clear();
-                for (uint32_t active_idx = 0; active_idx < active_count; active_idx++) {
-                    const index_t src = m_coop_active_vertices[active_idx];
-                    if (src < m_coop_shadow_valid.size() && m_coop_shadow_valid[src]) {
-                        const TValue shadow_value = m_coop_shadow_values[src];
-                        const TBuffer shadow_buffer = m_coop_shadow_buffers[src];
-                        if (shadow_buffer < shadow_value) {
-                            m_coop_active_values[active_idx] = shadow_value;
-                            m_coop_active_buffers[active_idx] = shadow_buffer;
-                            stats.shadow_hits++;
-                        } else {
-                            m_coop_state_request_vertices.push_back(src);
-                            m_coop_state_request_active_indices.push_back(active_idx);
-                            stats.shadow_misses++;
-                        }
-                    } else {
-                        m_coop_state_request_vertices.push_back(src);
-                        m_coop_state_request_active_indices.push_back(active_idx);
-                        stats.shadow_misses++;
-                    }
-                }
-
-                if (!m_coop_state_request_vertices.empty()) {
-                    std::vector<TValue> fetched_values;
-                    std::vector<TBuffer> fetched_buffers;
-                    FetchCoopStateForVertices(m_coop_state_request_vertices,
-                                              fetched_values,
-                                              fetched_buffers,
-                                              stats,
-                                              false);
-                    for (size_t i = 0; i < m_coop_state_request_vertices.size(); i++) {
-                        const index_t src = m_coop_state_request_vertices[i];
-                        const uint32_t active_idx = m_coop_state_request_active_indices[i];
-                        m_coop_active_values[active_idx] = fetched_values[i];
-                        m_coop_active_buffers[active_idx] = fetched_buffers[i];
-                        if (src < m_coop_shadow_valid.size()) {
-                            m_coop_shadow_values[src] = fetched_values[i];
-                            m_coop_shadow_buffers[src] = fetched_buffers[i];
-                            m_coop_shadow_valid[src] = 1;
-                        }
-                    }
-                    dim3 flag_grid_dims, flag_block_dims;
-                    KernelSizing(flag_grid_dims, flag_block_dims, m_coop_state_request_vertices.size());
-                    SetCoopShadowFlags<<<flag_grid_dims, flag_block_dims>>>(
-                        m_coop_device_state_request_vertices,
-                        m_coop_state_request_vertices.size(),
-                        m_coop_device_shadow_valid_flags,
-                        1);
-                    GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
-                }
-
-                Stopwatch sw_cpu(true);
-                const size_t proposals_before = proposals.size();
-                for (uint32_t active_idx = 0; active_idx < active_count; active_idx++) {
-                    const index_t src = m_coop_active_vertices[active_idx];
-                    const TValue src_value = m_coop_active_values[active_idx];
-                    const TBuffer src_buffer = m_coop_active_buffers[active_idx];
-                    const bool force_expand = m_coop_cpu_source_candidates[active_idx].force_expand != 0;
-                    if (src >= host_pma.nnodes) {
-                        continue;
-                    }
-                    const TBuffer inf = static_cast<TBuffer>(std::numeric_limits<uint32_t>::max());
-                    TBuffer base_value = src_buffer < static_cast<TBuffer>(src_value)
-                                             ? src_buffer
-                                             : static_cast<TBuffer>(src_value);
-                    if (base_value == inf) {
-                        continue;
-                    }
-
-                    source_commits.push_back({src, static_cast<TValue>(base_value)});
-                    if (!force_expand && src_value <= src_buffer) {
-                        continue;
-                    }
-
-                    const uint64_t edge_start = host_pma.sync_vertices_[src].index;
-                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                    stats.cpu_expanded_vertices++;
-                    stats.cpu_edge_visits += degree;
-                    stats.cpu_host_pma_edge_visits += degree;
-
-                    for (uint64_t edge_offset = 0; edge_offset < degree; edge_offset++) {
-                        const index_t dst = host_pma.edges_[edge_start + edge_offset];
-                        const TBuffer weight = static_cast<TBuffer>((src + dst) % 128 + 1);
-                        const TBuffer new_value = base_value + weight;
-                        if (dst < graph_datum.nnodes) {
-                            proposals.push_back({dst, new_value, src});
-                        }
-                    }
-                }
-                sw_cpu.stop();
-                stats.cpu_ms += sw_cpu.ms();
-                stats.cpu_proposals_generated += stats.cpu_edge_visits;
-                stats.cpu_proposals_survived += proposals.size() - proposals_before;
-            }
-
-            template<typename Proposal>
-            void MergeCpuSSSPProposals(std::vector<Proposal> &proposals,
-                                       std::vector<CpuSourceCommit<TValue>> &source_commits,
-                                       CoopRoundStats &stats,
+            void CommitCpuBoundaryProposals(std::vector<Proposal> &proposals,
+                                       InsertionRoundStats &stats,
                                        groute::dev::Queue<index_t> changed_vertices) {
-                if (proposals.empty() && source_commits.empty()) {
+                if (proposals.empty()) {
                     return;
                 }
-                m_coop_device_cpu_success_dst_vertices.ResetAsync(m_stream->cuda_stream);
-
                 CompressCpuRelaxProposals(proposals, stats);
-                stats.cpu_proposals += proposals.size();
                 const size_t proposal_bytes = sizeof(Proposal) * proposals.size();
-                const size_t commit_bytes = sizeof(CpuSourceCommit<TValue>) * source_commits.size();
 
-                if (!proposals.empty()) {
-                    EnsureCoopDeviceCapacity(&m_coop_device_proposals,
-                                             &m_coop_device_proposal_capacity,
-                                             proposals.size(),
-                                             stats);
-                    if (m_coop_device_proposal_success_count == nullptr) {
-                        Stopwatch sw_alloc(true);
-                        GROUTE_CUDA_CHECK(cudaMalloc(&m_coop_device_proposal_success_count,
-                                                     sizeof(unsigned long long)));
-                        sw_alloc.stop();
-                        stats.allocation_ms += sw_alloc.ms();
-                    }
-                }
-                if (!source_commits.empty()) {
-                    EnsureCoopDeviceCapacity(&m_coop_device_commits,
-                                             &m_coop_device_commit_capacity,
-                                             source_commits.size(),
-                                             stats);
+                EnsureInsertionDeviceCapacity(&m_device_cpu_boundary_proposals,
+                                         &m_device_cpu_boundary_proposal_capacity,
+                                         proposals.size(),
+                                         stats);
+                if (m_device_cpu_proposal_success_count == nullptr) {
+                    Stopwatch sw_alloc(true);
+                    GROUTE_CUDA_CHECK(cudaMalloc(&m_device_cpu_proposal_success_count,
+                                                 sizeof(unsigned long long)));
+                    sw_alloc.stop();
+                    stats.allocation_ms += sw_alloc.ms();
                 }
 
                 Stopwatch sw_h2d(true);
-                if (!proposals.empty()) {
-                    GROUTE_CUDA_CHECK(cudaMemcpy(m_coop_device_proposals,
-                                                 proposals.data(),
-                                                 proposal_bytes,
-                                                 cudaMemcpyHostToDevice));
-                }
-                if (!source_commits.empty()) {
-                    GROUTE_CUDA_CHECK(cudaMemcpy(m_coop_device_commits,
-                                                 source_commits.data(),
-                                                 commit_bytes,
-                                                 cudaMemcpyHostToDevice));
-                }
+                GROUTE_CUDA_CHECK(cudaMemcpy(m_device_cpu_boundary_proposals,
+                                             proposals.data(),
+                                             proposal_bytes,
+                                             cudaMemcpyHostToDevice));
                 sw_h2d.stop();
                 stats.h2d_proposal_ms += sw_h2d.ms();
-                stats.h2d_proposal_bytes += proposal_bytes + commit_bytes;
 
                 dim3 grid_dims, block_dims;
                 Stopwatch sw_merge(true);
-                if (!source_commits.empty()) {
-                    KernelSizing(grid_dims, block_dims, source_commits.size());
-                    MergeCpuSourceCommits<TValue><<<grid_dims, block_dims>>>(m_coop_device_commits,
-                                                                              source_commits.size(),
-                                                                              m_graph_datum->GetValueDeviceObject());
-                }
-                if (!proposals.empty()) {
-                    GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_proposal_success_count,
-                                                 0,
-                                                 sizeof(unsigned long long)));
-                    KernelSizing(grid_dims, block_dims, proposals.size());
-                    MergeCpuRelaxProposals<TBuffer><<<grid_dims, block_dims>>>(m_coop_device_proposals,
-                                                                               proposals.size(),
-                                                                               m_graph_datum->GetBufferDeviceObject(),
-                                                                               m_graph_datum->GetParentDeviceObject(),
-                                                                               m_graph_datum->m_wl_bitmap_out_high.DeviceObject(),
-                                                                               changed_vertices,
-                                                                               m_coop_device_cpu_success_dst_vertices.DeviceObject(),
-                                                                               m_coop_device_shadow_valid_flags,
-                                                                               m_coop_device_proposal_success_count);
-                }
+                GROUTE_CUDA_CHECK(cudaMemset(m_device_cpu_proposal_success_count,
+                                             0,
+                                             sizeof(unsigned long long)));
+                KernelSizing(grid_dims, block_dims, proposals.size());
+                MergeCpuRelaxProposals<TBuffer><<<grid_dims, block_dims>>>(m_device_cpu_boundary_proposals,
+                                                                           proposals.size(),
+                                                                           m_graph_datum->GetBufferDeviceObject(),
+                                                                           m_graph_datum->GetParentDeviceObject(),
+                                                                           m_graph_datum->m_wl_bitmap_out_high.DeviceObject(),
+                                                                           changed_vertices,
+                                                                           m_device_cpu_proposal_success_count);
                 GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
-                if (!proposals.empty()) {
-                    unsigned long long success_count = 0;
-                    GROUTE_CUDA_CHECK(cudaMemcpy(&success_count,
-                                                 m_coop_device_proposal_success_count,
-                                                 sizeof(unsigned long long),
-                                                 cudaMemcpyDeviceToHost));
-                    stats.cpu_proposals_success += success_count;
-                }
+                unsigned long long success_count = 0;
+                GROUTE_CUDA_CHECK(cudaMemcpy(&success_count,
+                                             m_device_cpu_proposal_success_count,
+                                             sizeof(unsigned long long),
+                                             cudaMemcpyDeviceToHost));
+                stats.cpu_proposals_success += success_count;
                 sw_merge.stop();
                 stats.merge_ms += sw_merge.ms();
             }
 
-            template<typename Proposal>
-            void FilterCpuRelaxProposalsByCurrentDstBuffer(std::vector<Proposal> &proposals,
-                                                           CoopPacketDryRunStats &packet) {
-                if (proposals.empty()) {
-                    return;
-                }
-
-                Stopwatch sw_filter(true);
-                packet.merge_prefilter_input_proposals += proposals.size();
-
-                std::vector<index_t> dst_vertices;
-                dst_vertices.reserve(proposals.size());
-                for (const auto &proposal : proposals) {
-                    dst_vertices.push_back(proposal.dst);
-                }
-
-                CoopRoundStats dst_stats;
-                std::vector<TValue> dst_values;
-                std::vector<TBuffer> dst_buffers;
-                FetchCoopStateForVertices(dst_vertices,
-                                          dst_values,
-                                          dst_buffers,
-                                          dst_stats,
-                                          false);
-                packet.merge_prefilter_probe_bytes +=
-                    dst_stats.state_request_h2d_bytes + dst_stats.state_d2h_bytes;
-
-                std::vector<Proposal> filtered;
-                filtered.reserve(proposals.size());
-                for (size_t i = 0; i < proposals.size(); i++) {
-                    if (proposals[i].value < dst_buffers[i]) {
-                        filtered.push_back(proposals[i]);
-                    }
-                }
-                packet.merge_prefilter_kept_proposals += filtered.size();
-                packet.merge_prefilter_dropped_proposals +=
-                    proposals.size() - filtered.size();
-                proposals.swap(filtered);
-                sw_filter.stop();
-                packet.merge_prefilter_ms += sw_filter.ms();
-            }
 
             public:
             Engine(AlgoType algo_type) :
@@ -2236,105 +595,68 @@ namespace sepgraph {
                 m_groute_context = std::unique_ptr<utils::traversal::Context<Algo>>
                 (new utils::traversal::Context<Algo>(1));
 
-		        //create stream /*CODE by ax range 118 to 121*/
+                //create stream /*CODE by ax range 118 to 121*/
                 for(int i = 0; i < FLAGS_n_stream; i++)
                 {
                     stream[i] = m_groute_context->CreateStream(dev_id);
                 }
-		
+
         m_stream = std::unique_ptr<groute::Stream>(new groute::Stream(dev_id));
     }
 
     ~Engine() {
-        EmitCoopOwnedSummary("engine_destructor");
-        if (m_coop_device_proposals != nullptr) {
-            cudaFree(m_coop_device_proposals);
-            m_coop_device_proposals = nullptr;
+        if (m_device_gpu_repair_offsets != nullptr) {
+            cudaFree(m_device_gpu_repair_offsets);
+            m_device_gpu_repair_offsets = nullptr;
         }
-        if (m_coop_device_commits != nullptr) {
-            cudaFree(m_coop_device_commits);
-            m_coop_device_commits = nullptr;
+        if (m_device_gpu_repair_sources != nullptr) {
+            cudaFree(m_device_gpu_repair_sources);
+            m_device_gpu_repair_sources = nullptr;
         }
-        if (m_coop_device_cpu_source_candidates != nullptr) {
-            cudaFree(m_coop_device_cpu_source_candidates);
-            m_coop_device_cpu_source_candidates = nullptr;
+        if (m_device_gpu_repair_changed != nullptr) {
+            cudaFree(m_device_gpu_repair_changed);
+            m_device_gpu_repair_changed = nullptr;
         }
-        if (m_coop_device_proposal_success_count != nullptr) {
-            cudaFree(m_coop_device_proposal_success_count);
-            m_coop_device_proposal_success_count = nullptr;
+        if (m_device_partition_end_nodes != nullptr) {
+            cudaFree(m_device_partition_end_nodes);
+            m_device_partition_end_nodes = nullptr;
         }
-        if (m_coop_device_gpu_skipped_cpu_sources != nullptr) {
-            cudaFree(m_coop_device_gpu_skipped_cpu_sources);
-            m_coop_device_gpu_skipped_cpu_sources = nullptr;
+        if (m_device_partition_owners != nullptr) {
+            cudaFree(m_device_partition_owners);
+            m_device_partition_owners = nullptr;
         }
-        if (m_coop_device_gpu_relax_success_count != nullptr) {
-            cudaFree(m_coop_device_gpu_relax_success_count);
-            m_coop_device_gpu_relax_success_count = nullptr;
+        if (m_device_node_state_epoch != nullptr) {
+            cudaFree(m_device_node_state_epoch);
+            m_device_node_state_epoch = nullptr;
         }
-        if (m_coop_device_gpu_relax_cpu_home_success_count != nullptr) {
-            cudaFree(m_coop_device_gpu_relax_cpu_home_success_count);
-            m_coop_device_gpu_relax_cpu_home_success_count = nullptr;
+        if (m_device_seed_owner_reject_count != nullptr) {
+            cudaFree(m_device_seed_owner_reject_count);
+            m_device_seed_owner_reject_count = nullptr;
         }
-        if (m_coop_device_gpu_relax_dst_degree_sum != nullptr) {
-            cudaFree(m_coop_device_gpu_relax_dst_degree_sum);
-            m_coop_device_gpu_relax_dst_degree_sum = nullptr;
+        if (m_device_gpu_to_cpu_boundary_values != nullptr) {
+            cudaFree(m_device_gpu_to_cpu_boundary_values);
+            m_device_gpu_to_cpu_boundary_values = nullptr;
         }
-        if (m_coop_device_gpu_relax_dst_high_degree_count != nullptr) {
-            cudaFree(m_coop_device_gpu_relax_dst_high_degree_count);
-            m_coop_device_gpu_relax_dst_high_degree_count = nullptr;
+        if (m_device_gpu_to_cpu_boundary_parents != nullptr) {
+            cudaFree(m_device_gpu_to_cpu_boundary_parents);
+            m_device_gpu_to_cpu_boundary_parents = nullptr;
         }
-        if (m_coop_device_gpu_relax_dst_high_degree_sum != nullptr) {
-            cudaFree(m_coop_device_gpu_relax_dst_high_degree_sum);
-            m_coop_device_gpu_relax_dst_high_degree_sum = nullptr;
+        if (m_device_cpu_boundary_proposals != nullptr) {
+            cudaFree(m_device_cpu_boundary_proposals);
+            m_device_cpu_boundary_proposals = nullptr;
         }
-        if (m_coop_device_gpu_relax_dst_batch_touched_count != nullptr) {
-            cudaFree(m_coop_device_gpu_relax_dst_batch_touched_count);
-            m_coop_device_gpu_relax_dst_batch_touched_count = nullptr;
+        if (m_device_cpu_proposal_success_count != nullptr) {
+            cudaFree(m_device_cpu_proposal_success_count);
+            m_device_cpu_proposal_success_count = nullptr;
         }
-        if (m_coop_device_cpu_source_owner_epoch != nullptr) {
-            cudaFree(m_coop_device_cpu_source_owner_epoch);
-            m_coop_device_cpu_source_owner_epoch = nullptr;
-        }
-        if (m_coop_device_cpu_home_flags != nullptr) {
-            cudaFree(m_coop_device_cpu_home_flags);
-            m_coop_device_cpu_home_flags = nullptr;
-        }
-        if (m_coop_device_batch_touched_flags != nullptr) {
-            cudaFree(m_coop_device_batch_touched_flags);
-            m_coop_device_batch_touched_flags = nullptr;
-        }
-        if (m_coop_device_active_values != nullptr) {
-            cudaFree(m_coop_device_active_values);
-            m_coop_device_active_values = nullptr;
-        }
-        if (m_coop_device_active_buffers != nullptr) {
-            cudaFree(m_coop_device_active_buffers);
-            m_coop_device_active_buffers = nullptr;
-        }
-        if (m_coop_device_state_request_vertices != nullptr) {
-            cudaFree(m_coop_device_state_request_vertices);
-            m_coop_device_state_request_vertices = nullptr;
-        }
-        if (m_coop_device_shadow_valid_flags != nullptr) {
-            cudaFree(m_coop_device_shadow_valid_flags);
-            m_coop_device_shadow_valid_flags = nullptr;
-        }
-        if (m_coop_device_seg_enodes != nullptr) {
-            cudaFree(m_coop_device_seg_enodes);
-            m_coop_device_seg_enodes = nullptr;
-        }
-        if (m_coop_device_dirty_segments != nullptr) {
-            cudaFree(m_coop_device_dirty_segments);
-            m_coop_device_dirty_segments = nullptr;
+        if (m_device_cpu_destination_flags != nullptr) {
+            cudaFree(m_device_cpu_destination_flags);
+            m_device_cpu_destination_flags = nullptr;
         }
     }
 
     void SetOptions(EngineOptions &engine_options) {
         m_engine_options = engine_options;
-    }
-
-    void SetCoopMechanismBatch(uint64_t batch_id) {
-        m_coop_current_batch = batch_id;
     }
 
     index_t GetNodeNum(){
@@ -2344,7 +666,7 @@ namespace sepgraph {
                 GraphDatum &graph_datum = *m_graph_datum;
                 auto &app_inst = *m_app_inst;
                 groute::Stream &stream_s = *m_stream;
-                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes); 
+                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 const auto &hvcsr = m_vcsr_dev_graph_allocator->HostObject();
                 dim3 grid_dims, block_dims;
@@ -2381,7 +703,7 @@ namespace sepgraph {
                 GraphDatum &graph_datum = *m_graph_datum;
                 auto &app_inst = *m_app_inst;
                 groute::Stream &stream_s = *m_stream;
-                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes); 
+                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 const auto &hvcsr = m_vcsr_dev_graph_allocator->HostObject();
                 dim3 grid_dims, block_dims;
@@ -2424,12 +746,12 @@ namespace sepgraph {
                 graph_datum.ensure_candidate_vertex();
                 extrac.stop();
                 LOG("candidate v time: %f ms (excluded)\n", extrac.ms());
-                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes); 
+                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 // const auto &hvcsr = m_vcsr_dev_graph_allocator->HostObject();
                 dim3 grid_dims, block_dims;
                 KernelSizing(grid_dims, block_dims, work_source.get_size());
-                     Stopwatch search_rebuild(true);   
+                     Stopwatch search_rebuild(true);
                 kernel::search_batch<< < grid_dims, block_dims, 0, stream_s.cuda_stream >> > (app_inst,
                 vcsr_graph,
                 work_source,
@@ -2439,7 +761,7 @@ namespace sepgraph {
                 stream_s.Sync();
                 search_rebuild.stop();
                 LOG("search_rebuild v time: %f ms (excluded)\n", search_rebuild.ms());
-                cudaDeviceSynchronize();         
+                cudaDeviceSynchronize();
             }
 
             void LoadCache(){
@@ -2452,13 +774,13 @@ namespace sepgraph {
                 for(index_t i = 0; i < FLAGS_SEGMENT; i++){
                     next_policy[i] = m_policy_decision_maker.GetInitPolicy();
                 }
-                Stopwatch sw_load(true); 
+                Stopwatch sw_load(true);
                 index_t seg_snode,seg_enode;
                 index_t stream_id;
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                     stream_id = seg_idx % FLAGS_n_stream;
                     seg_snode = m_groute_context->seg_snode[seg_idx];
-                    seg_enode = m_groute_context->seg_enode[seg_idx];  
+                    seg_enode = m_groute_context->seg_enode[seg_idx];
                         RebuildWorklist_delta(app_inst,vcsr_graph,
                         graph_datum,
                         stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
@@ -2477,13 +799,13 @@ namespace sepgraph {
                 GraphDatum &graph_datum = *m_graph_datum;
                 bool zcflag = true;
                 m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-		        index_t seg_snode,seg_enode;
+                index_t seg_snode,seg_enode;
                 uint64_t seg_sedge_csr,seg_nedges_csr;
                 index_t stream_id;
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-    		        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-    		        seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
-    		        stream_id = seg_idx % FLAGS_n_stream;
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
+                    stream_id = seg_idx % FLAGS_n_stream;
                     const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                     if(algo_variant[seg_idx] == AlgoVariant::Zero_Copy){
                         m_vcsr_dev_graph_allocator->SwitchZC();
@@ -2493,7 +815,7 @@ namespace sepgraph {
                         //    type_device,
                            graph_datum,
                            m_engine_options,
-                           stream[stream_id]); 
+                           stream[stream_id]);
                     }
                }
                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
@@ -2504,55 +826,83 @@ namespace sepgraph {
         void LoadGraph() {
       Stopwatch sw_load(true);
       groute::graphs::host::PMAGraph &vcsr_graph = m_groute_context->host_pma_small;
+      if (FLAGS_SEGMENT <= 0 ||
+          FLAGS_SEGMENT > static_cast<int32_t>(GraphDatum::kMaxSegments)) {
+          LOG("[SEGMENT-ERROR] configured=%d valid_range=[1,%u]\n",
+              FLAGS_SEGMENT,
+              GraphDatum::kMaxSegments);
+          std::exit(EXIT_FAILURE);
+      }
       index_t m_nsegs = FLAGS_SEGMENT;
       uint64_t seg_sedge_csr, seg_eedge_csr;
       index_t seg_snode,seg_enode, seg_nnodes;
       uint64_t seg_nedges_csr;
       uint64_t seg_nedges = round_up(vcsr_graph.elem_capacity, m_nsegs);
-	  uint64_t seg_nedges_csr_max = 0;  //dev memory		    
-	  uint64_t edge_num = 0;		    
-	  index_t node_id = 0;
-	  uint64_t out_degree;
-	  std::vector<index_t> nnodes_num;
-	  seg_snode = node_id;
-	  m_groute_context->seg_snode[0] = seg_snode;
+      uint64_t seg_nedges_csr_max = 0;  //dev memory
+      uint64_t edge_num = 0;
+      index_t node_id = 0;
+      uint64_t out_degree;
+      std::vector<index_t> nnodes_num;
+      seg_snode = node_id;
+      m_groute_context->seg_snode[0] = seg_snode;
       vcsr_graph.sync_vertices_[vcsr_graph.nnodes].index =  vcsr_graph.elem_capacity;
       for(index_t seg_idx = 0; node_id < vcsr_graph.nnodes ; seg_idx++){
+          if (seg_idx >= static_cast<index_t>(FLAGS_SEGMENT)) {
+              LOG("[SEGMENT-ERROR] generated_more_than_configured configured=%d node=%u\n",
+                  FLAGS_SEGMENT,
+                  node_id);
+              std::abort();
+          }
           m_groute_context->seg_snode[seg_idx] = node_id;
-          while(edge_num < seg_nedges){
+          while(edge_num < seg_nedges && node_id < vcsr_graph.nnodes){
             out_degree = vcsr_graph.end_edge(node_id) - vcsr_graph.begin_edge(node_id);
             edge_num = edge_num + out_degree;
-            if(node_id < vcsr_graph.nnodes){
-                node_id ++;
-            }else{
-                break;
-            }
+            node_id++;
            }
            if(node_id == vcsr_graph.nnodes){
-                seg_enode = node_id ; 
+                seg_enode = node_id ;
             }
            else{
-                seg_enode = node_id;	    
+                seg_enode = node_id;
            }
             seg_nnodes = seg_enode - seg_snode;
 
             m_running_info.nnodes_seg[seg_idx] = seg_nnodes;
             nnodes_num.push_back(seg_nnodes);
-            
-            m_groute_context->seg_enode[seg_idx] = seg_enode;	
+
+            m_groute_context->seg_enode[seg_idx] = seg_enode;
             seg_sedge_csr = vcsr_graph.sync_vertices_[seg_snode].index;
-            seg_eedge_csr = vcsr_graph.sync_vertices_[seg_enode].index;                
+            seg_eedge_csr = vcsr_graph.sync_vertices_[seg_enode].index;
             seg_nedges_csr = seg_eedge_csr - seg_sedge_csr;
 
             m_running_info.total_workload_seg[seg_idx] = seg_nedges_csr;
             seg_nedges_csr_max = max(seg_nedges_csr_max,seg_nedges_csr);
 
-            m_groute_context->seg_sedge_csr[seg_idx] = seg_sedge_csr; 
+            m_groute_context->seg_sedge_csr[seg_idx] = seg_sedge_csr;
             m_groute_context->seg_nedge_csr[seg_idx] = seg_nedges_csr;
 
             // LOG("seg_idx : %d, seg_snode : %d,seg_enode : %d, seg_sedge_csr : %d,seg_eedge_csr : %d, seg_nedge_csr : %d\n", seg_idx, seg_snode, seg_enode, m_groute_context->seg_sedge_csr[seg_idx], seg_eedge_csr, m_groute_context->seg_nedge_csr[seg_idx]);
             edge_num = 0;
-            seg_snode = node_id;		     
+              seg_snode = node_id;
+            }
+
+        if (nnodes_num.size() > static_cast<size_t>(FLAGS_SEGMENT)) {
+            LOG("[SEGMENT-ERROR] generated=%llu configured=%d\n",
+                static_cast<unsigned long long>(nnodes_num.size()),
+                FLAGS_SEGMENT);
+            std::abort();
+        }
+        while (nnodes_num.size() < static_cast<size_t>(FLAGS_SEGMENT)) {
+            const index_t seg_idx = static_cast<index_t>(nnodes_num.size());
+            const index_t empty_node = vcsr_graph.nnodes;
+            const uint64_t empty_edge = vcsr_graph.sync_vertices_[empty_node].index;
+            m_groute_context->seg_snode[seg_idx] = empty_node;
+            m_groute_context->seg_enode[seg_idx] = empty_node;
+            m_groute_context->seg_sedge_csr[seg_idx] = empty_edge;
+            m_groute_context->seg_nedge_csr[seg_idx] = 0;
+            m_running_info.nnodes_seg[seg_idx] = 0;
+            m_running_info.total_workload_seg[seg_idx] = 0;
+            nnodes_num.push_back(0);
         }
 
         m_groute_context->segment_ct = FLAGS_SEGMENT;
@@ -2563,57 +913,44 @@ namespace sepgraph {
         LOG("seg_nedges_csr_max = %d\n",seg_nedges_csr_max);
         m_vcsr_dev_graph_allocator = std::unique_ptr<groute::graphs::single::PMAGraphAllocator>(new groute::graphs::single::PMAGraphAllocator(vcsr_graph,seg_nedges_csr_max));
 
+        if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
+            const uint32_t hardware_workers = std::thread::hardware_concurrency();
+            const uint32_t reverse_workers = std::max<uint32_t>(
+                1, std::min<uint32_t>(20, hardware_workers == 0 ? 1 : hardware_workers));
+            Stopwatch sw_reverse_index(true);
+            m_reverse_index.Build(vcsr_graph, reverse_workers);
+            sw_reverse_index.stop();
+            LOG("[CPU-REVERSE-INDEX] base_edges=%llu workers=%u build_ms=%.3f overlay_edges=0\n",
+                static_cast<unsigned long long>(m_reverse_index.BaseEdgeCount()),
+                reverse_workers,
+                sw_reverse_index.ms());
+        }
+
         m_graph_datum = std::unique_ptr<GraphDatum>(new GraphDatum(vcsr_graph,seg_nedges_csr_max,nnodes_num));
-        if (m_coop_device_shadow_valid_flags != nullptr) {
-            GROUTE_CUDA_CHECK(cudaFree(m_coop_device_shadow_valid_flags));
-            m_coop_device_shadow_valid_flags = nullptr;
+        m_device_affected_vertices = std::move(groute::Queue<index_t>(
+            std::max<uint32_t>(vcsr_graph.nnodes, 1)));
+        m_device_affected_vertices.ResetAsync(m_stream->cuda_stream);
+        if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
+            GROUTE_CUDA_CHECK(cudaMalloc(
+                reinterpret_cast<void **>(&m_device_gpu_repair_changed),
+                sizeof(unsigned int)));
         }
-        GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_shadow_valid_flags,
-                                     sizeof(uint8_t) * std::max<uint32_t>(vcsr_graph.nnodes, 1)));
-        GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_shadow_valid_flags,
-                                     0,
-                                     sizeof(uint8_t) * std::max<uint32_t>(vcsr_graph.nnodes, 1)));
-        if (m_coop_device_seg_enodes != nullptr) {
-            GROUTE_CUDA_CHECK(cudaFree(m_coop_device_seg_enodes));
-            m_coop_device_seg_enodes = nullptr;
-        }
-        GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_seg_enodes,
-                                     sizeof(index_t) * std::max<int>(FLAGS_SEGMENT, 1)));
-        GROUTE_CUDA_CHECK(cudaMemcpy(m_coop_device_seg_enodes,
-                                     m_groute_context->seg_enode,
-                                     sizeof(index_t) * FLAGS_SEGMENT,
-                                     cudaMemcpyHostToDevice));
-        if (m_coop_device_dirty_segments != nullptr) {
-            GROUTE_CUDA_CHECK(cudaFree(m_coop_device_dirty_segments));
-            m_coop_device_dirty_segments = nullptr;
-        }
-        GROUTE_CUDA_CHECK(cudaMalloc((void **)&m_coop_device_dirty_segments,
-                                     sizeof(uint8_t) * std::max<int>(FLAGS_SEGMENT, 1)));
-        m_coop_dirty_segments.assign(FLAGS_SEGMENT, 0);
+        m_stream->Sync();
         const uint64_t changed_queue_capacity_u64 =
             std::max<uint64_t>(std::max<uint64_t>(vcsr_graph.nnodes, 1),
                                std::min<uint64_t>(vcsr_graph.elem_capacity,
                                                   seg_nedges_csr_max * std::max<uint32_t>(FLAGS_n_stream, 1)));
-        m_coop_device_changed_vertices =
+        m_device_insertion_changed_vertices =
             std::move(groute::Queue<index_t>(static_cast<uint32_t>(
                 std::min<uint64_t>(changed_queue_capacity_u64,
                                    std::numeric_limits<uint32_t>::max()))));
-        m_coop_device_gpu_to_cpu_boundary_vertices =
+        m_device_gpu_to_cpu_boundary_vertices =
             std::move(groute::Queue<index_t>(static_cast<uint32_t>(
                 std::min<uint64_t>(std::max<uint64_t>(vcsr_graph.nnodes, 1),
                                    std::numeric_limits<uint32_t>::max()))));
-        m_coop_device_gpu_relax_dst_vertices =
-            std::move(groute::Queue<index_t>(static_cast<uint32_t>(
-                std::min<uint64_t>(changed_queue_capacity_u64,
-                                   std::numeric_limits<uint32_t>::max()))));
-        m_coop_device_cpu_success_dst_vertices =
-            std::move(groute::Queue<index_t>(static_cast<uint32_t>(
-                std::min<uint64_t>(changed_queue_capacity_u64,
-                                   std::numeric_limits<uint32_t>::max()))));
-        m_coop_device_gpu_to_cpu_boundary_vertices.ResetAsync(m_stream->cuda_stream);
-        m_coop_device_gpu_relax_dst_vertices.ResetAsync(m_stream->cuda_stream);
-        m_coop_device_cpu_success_dst_vertices.ResetAsync(m_stream->cuda_stream);
+        m_device_gpu_to_cpu_boundary_vertices.ResetAsync(m_stream->cuda_stream);
         m_stream->Sync();
+        PrepareCpuOwnerRuntimeStorage();
 
         sw_load.stop();
 
@@ -2629,15 +966,15 @@ namespace sepgraph {
     /*
         * Init Graph Value and buffer fields
         */
-    
+
         void InitGraph(UnusedData &...data) {
             Stopwatch sw_init(true);
-            
+
             m_app_inst = std::unique_ptr<AppImplDeviceObject>(new AppImplDeviceObject(data...));
             groute::Stream &stream_s = *m_stream;
             GraphDatum &graph_datum = *m_graph_datum;
             const auto &dev_vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
-            const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes); 
+            const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
             dim3 grid_dims, block_dims;
 
             m_app_inst->m_vcsr_graph = dev_vcsr_graph;
@@ -2665,7 +1002,7 @@ namespace sepgraph {
             for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                 stream_id = seg_idx % FLAGS_n_stream;
                 seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-                seg_enode = m_groute_context->seg_enode[seg_idx];  
+                seg_enode = m_groute_context->seg_enode[seg_idx];
                     RebuildArrayWorklist(app_inst,
                     graph_datum,
                     stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
@@ -2679,7 +1016,7 @@ namespace sepgraph {
 
             sw_init.stop();
 
-            LOG("InitGraph: %f ms (excluded)\n", sw_init.ms());	
+            LOG("InitGraph: %f ms (excluded)\n", sw_init.ms());
         }
 
         void SaveToJson() {
@@ -2791,7 +1128,7 @@ namespace sepgraph {
 
             //traditional graph processing
             void Start(index_t priority_detal = 0) {
-                
+
                 GraphDatum &graph_datum = *m_graph_datum;
                 graph_datum.priority_detal = priority_detal;
                 AlgoVariant next_policy[FLAGS_SEGMENT];
@@ -2820,7 +1157,7 @@ namespace sepgraph {
                         convergence = true;
                         LOG("Max iterations reached\n");
                   }
-                    
+
                 }
                sw_total.stop();
                m_running_info.time_total = sw_total.ms();
@@ -2859,7 +1196,7 @@ namespace sepgraph {
                         // for(auto j = 0; j<  dev_deg ;j++){
                         //     printf("src %d cache_dst %d  ",i,graph_datum.host_cache[start_d+j]);
                         //     printf("hot_dst %d\n",vcsr_graph.edges_[start_h+j]);
-                                
+
                         // }
                         if(size>=graph_datum.num_of_cache){
                             printf("node %d d_start %d size %d\n",i,start_d,dev_deg);
@@ -2872,7 +1209,7 @@ namespace sepgraph {
                             if(vcsr_graph.edges_[start_h+j]!=graph_datum.host_cache[start_d+j]){
                                 printf("src %d cache_dst %d  ",i,graph_datum.host_cache[start_d+j]);
                                 printf("hot_dst %d\n",vcsr_graph.edges_[start_h+j]);
-                                
+
                             }
                         }
                     }
@@ -2903,7 +1240,7 @@ namespace sepgraph {
                         // for(auto j = 0; j<  dev_deg ;j++){
                         //     printf("src %d cache_dst %d  ",i,graph_datum.host_cache[start_d+j]);
                         //     printf("hot_dst %d\n",vcsr_graph.edges_[start_h+j]);
-                                
+
                         // }
                         if(size>=graph_datum.num_of_cache){
                             printf("node %d d_start %d size %d\n",i,start_d,dev_deg);
@@ -2916,7 +1253,7 @@ namespace sepgraph {
                             if(vcsr_graph.edges_[start_h+j]!=graph_datum.host_cache_l3[start_d+j]){
                                 printf("src %d cache_dst %d  ",i,graph_datum.host_cache_l3[start_d+j]);
                                 printf("hot_dst %d\n",vcsr_graph.edges_[start_h+j]);
-                                
+
                             }
                         }
                     }
@@ -2954,7 +1291,7 @@ namespace sepgraph {
                             num_of_dst++;}
                     }
                     if(vcsr_graph.vertices_[i].cache){
-                        
+
                         uint64_t start_h = vcsr_graph.sync_vertices_[i].index;
                         uint32_t hot_deg = vcsr_graph.sync_vertices_[i].degree;
                         uint64_t start_d = vcsr_graph.vertices_[i].virtual_start;
@@ -2965,7 +1302,7 @@ namespace sepgraph {
                         for(auto j = 0; j<  dev_deg ;j++){
                             printf("src %d cache_dst %d  ",i,graph_datum.host_cache[start_d+j]);
                             printf("hot_dst %d\n",vcsr_graph.edges_[start_h+j]);
-                                
+
                         }
                         if(size>=graph_datum.num_of_cache){
                             printf("node %d d_start %d size %d\n",i,start_d,dev_deg);
@@ -2978,7 +1315,7 @@ namespace sepgraph {
                             if(vcsr_graph.edges_[start_h+j]!=graph_datum.host_cache[start_d+j]){
                                 printf("src %d cache_dst %d  ",i,graph_datum.host_cache[start_d+j]);
                                 printf("hot_dst %d\n",vcsr_graph.edges_[start_h+j]);
-                                
+
                             }
                         }
                     }
@@ -3041,11 +1378,11 @@ namespace sepgraph {
             // const groute::graphs::host::CSRGraph &ValidateGraph() const {
             //     return m_groute_context->host_validate_graph;
             // }
-        
+
             const groute::graphs::host::PMAGraph &PMAGraph() const {
                 return m_groute_context->host_pma_small;
             }
-            
+
             const GraphDatum &GetGraphDatum() const {
                 return *m_graph_datum;
             }
@@ -3057,17 +1394,17 @@ namespace sepgraph {
                 bool zcflag = true;
                 Stopwatch sw_execution(true);
                 m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-		        uint64_t seg_sedge_csr,seg_nedges_csr;
-		        index_t seg_snode,seg_enode;
+                uint64_t seg_sedge_csr,seg_nedges_csr;
+                index_t seg_snode,seg_enode;
                 // m_groute_context->segment_ct = FLAGS_SEGMENT;
                 index_t stream_id;
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-    		        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-    		        seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
-    		        seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
-    		        seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx]; 
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
+                    seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
+                    seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx];
 
-    		        stream_id = seg_idx % FLAGS_n_stream;
+                    stream_id = seg_idx % FLAGS_n_stream;
 
                     const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                     if(algo_variant[seg_idx] == AlgoVariant::Zero_Copy){
@@ -3077,37 +1414,11 @@ namespace sepgraph {
                            vcsr_graph,
                            graph_datum,
                             m_engine_options,
-                           stream[stream_id],
-                           GetCoopMode() == CoopExecMode::HYBRID &&
-                               GetCoopSplitMode() == CoopSplitMode::CPU_HOME &&
-                               FLAGS_coop_home_skip_gpu_sources
-                               ? m_coop_device_cpu_source_owner_epoch
-                               : nullptr,
-                           GetCoopMode() == CoopExecMode::HYBRID &&
-                               GetCoopSplitMode() == CoopSplitMode::CPU_HOME &&
-                               FLAGS_coop_home_skip_gpu_sources
-                               ? m_coop_cpu_source_epoch
-                               : 0,
-                           GetCoopMode() == CoopExecMode::HYBRID &&
-                               GetCoopSplitMode() == CoopSplitMode::CPU_HOME &&
-                               FLAGS_coop_home_skip_gpu_sources
-                               ? m_coop_device_gpu_skipped_cpu_sources
-                               : nullptr); 
+                           stream[stream_id]);
                     }
                }
                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
                      stream[stream_idx].Sync();
-               }
-               if (GetCoopMode() == CoopExecMode::HYBRID &&
-                   GetCoopSplitMode() == CoopSplitMode::CPU_HOME &&
-                   FLAGS_coop_home_skip_gpu_sources &&
-                   m_coop_device_gpu_skipped_cpu_sources != nullptr) {
-                   unsigned long long skipped = 0;
-                   GROUTE_CUDA_CHECK(cudaMemcpy(&skipped,
-                                                m_coop_device_gpu_skipped_cpu_sources,
-                                                sizeof(unsigned long long),
-                                                cudaMemcpyDeviceToHost));
-                   LOG("[COOP-HOME-INIT-SKIP] gpu_skipped_cpu_sources=%llu\n", skipped);
                }
                sw_execution.stop();
                LOG("part add edge time: %f ms (excluded)\n", sw_execution.ms());
@@ -3123,20 +1434,20 @@ namespace sepgraph {
                 GraphDatum &graph_datum = *m_graph_datum;
                 bool zcflag = true;
                 m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-		        uint64_t seg_sedge_csr,seg_nedges_csr;
-		        index_t seg_snode,seg_enode;
+                uint64_t seg_sedge_csr,seg_nedges_csr;
+                index_t seg_snode,seg_enode;
                 index_t seg_idx_new;
 
                 m_groute_context->segment_ct = FLAGS_SEGMENT;
                 index_t stream_id;
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
 
-    		        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-    		        seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
-    		        seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
-    		        seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx]; 
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
+                    seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
+                    seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx];
 
-    		        stream_id = seg_idx % FLAGS_n_stream;
+                    stream_id = seg_idx % FLAGS_n_stream;
 
                     const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                     if(algo_variant[seg_idx] == AlgoVariant::Zero_Copy){
@@ -3146,7 +1457,7 @@ namespace sepgraph {
                            vcsr_graph,type_device,
                            graph_datum,
                            m_engine_options,
-                           stream[stream_id]); 
+                           stream[stream_id]);
                     }
                }
                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
@@ -3161,20 +1472,20 @@ namespace sepgraph {
                 GraphDatum &graph_datum = *m_graph_datum;
                 bool zcflag = true;
                 m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-		        uint64_t seg_sedge_csr,seg_nedges_csr;
-		        index_t seg_snode,seg_enode;
+                uint64_t seg_sedge_csr,seg_nedges_csr;
+                index_t seg_snode,seg_enode;
                 index_t seg_idx_new;
 
                 m_groute_context->segment_ct = FLAGS_SEGMENT;
                 index_t stream_id;
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
 
-    		        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-    		        seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
-    		        seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
-    		        seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx]; 
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
+                    seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
+                    seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx];
 
-    		        stream_id = seg_idx % FLAGS_n_stream;
+                    stream_id = seg_idx % FLAGS_n_stream;
 
                     const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                     if(algo_variant[seg_idx] == AlgoVariant::Zero_Copy){
@@ -3184,7 +1495,7 @@ namespace sepgraph {
                            vcsr_graph,type_device,
                            graph_datum,
                            m_engine_options,
-                           stream[stream_id]); 
+                           stream[stream_id]);
                     }
                }
                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
@@ -3192,32 +1503,32 @@ namespace sepgraph {
                }
             }
 
-            
+
             void ExecutePolicy_Com(AlgoVariant *algo_variant) {
                 auto &app_inst = *m_app_inst;
                 // auto &vcsr_graph_host = m_vcsr_dev_graph_allocator->HostObject();
                 GraphDatum &graph_datum = *m_graph_datum;
                 bool zcflag = true;
                 m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-		        uint64_t seg_sedge_csr,seg_nedges_csr;
-		        index_t seg_snode,seg_enode;
+                uint64_t seg_sedge_csr,seg_nedges_csr;
+                index_t seg_snode,seg_enode;
                 Stopwatch sw_execution(true);
                 index_t stream_id;
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-    		        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-    		        seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
-    		        seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
-    		        seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx];
-    		        stream_id = seg_idx % FLAGS_n_stream;
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
+                    seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
+                    seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx];
+                    stream_id = seg_idx % FLAGS_n_stream;
                     const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                     if(algo_variant[seg_idx] == AlgoVariant::Zero_Copy){
                         m_vcsr_dev_graph_allocator->SwitchZC();
                         zcflag = true;
                         RunSyncCom(app_inst,seg_snode,seg_enode,seg_sedge_csr,seg_idx,zcflag,
-                           vcsr_graph,
-                           graph_datum,
-                           m_engine_options,
-                           stream[stream_id]); 
+                               vcsr_graph,
+                               graph_datum,
+                               m_engine_options,
+                           stream[stream_id]);
                     }
                }
                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
@@ -3256,7 +1567,7 @@ namespace sepgraph {
                 GraphDatum &graph_datum = *m_graph_datum;
                 auto &app_inst = *m_app_inst;
                 groute::Stream &stream_s = *m_stream;
-                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes); 
+                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 const auto &hvcsr = m_vcsr_dev_graph_allocator->HostObject();
                 dim3 grid_dims, block_dims;
@@ -3281,6 +1592,9 @@ namespace sepgraph {
                     this->added_edges_h[i].u = src_add;
                     this->added_edges_h[i].v = dst_add;
                     this->added_edges_h[i].w = (dst_add+src_add)%128 + 1;
+                    if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
+                        m_reverse_index.ApplyInsert(src_add, dst_add);
+                    }
                     vcsr_graph.insert(src_add, dst_add, (src_add + dst_add)%128 + 1);
                 }
             }
@@ -3307,6 +1621,9 @@ namespace sepgraph {
                     this->del_edges_h[i].u = src_del;
                     this->del_edges_h[i].v = dst_del;
                     this->del_edges_h[i].w = (src_del+dst_del)%128+1;
+                    if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
+                        m_reverse_index.ApplyDelete(src_del, dst_del);
+                    }
                 }
                 update_tree_del(local_begin,NumOfSnapShots);
             }
@@ -3337,6 +1654,9 @@ namespace sepgraph {
                 LOG("del size %d \n",work_size[1]);
                 GROUTE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&(this->del_edges_d), (void *)(this->del_edges_h), 0));
                 GROUTE_CUDA_CHECK(cudaMemcpy(this->work_size_d, &work_size[0], 2 * sizeof(uint32_t),cudaMemcpyHostToDevice));
+                if (size == 0) {
+                    return;
+                }
                 // LOG("DEBUG pr 1.3.2 \n");
 
                 KernelSizing(grid_dims, block_dims, size);
@@ -3347,7 +1667,7 @@ namespace sepgraph {
                 this->work_size_d);
                 stream_s.Sync();
                 // LOG("DEBUG pr 1.3.5 \n");
-                
+
             }
 
             void read_add(std::pair<index_t,index_t> &local_begin,index_t &NumOfSnapShots){
@@ -3357,15 +1677,12 @@ namespace sepgraph {
                 GraphDatum &graph_datum = *m_graph_datum;
                 auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 index_t size = load_update.m_batch_size[NumOfSnapShots].first;
-                m_coop_batch_touched_sources.clear();
-                m_coop_batch_touched_sources.reserve(size);
                 for(index_t i = local_begin.first; i < local_begin.first+size; i++){
                     index_t src_add = load_update.added_edges_w[i].u;
                     index_t dst_add = load_update.added_edges_w[i].v;
                     this->added_edges_h[i].u = src_add;
                     this->added_edges_h[i].v = dst_add;
                     this->added_edges_h[i].w = (src_add+dst_add)%128+1;
-                    m_coop_batch_touched_sources.push_back(src_add);
                     // printf("host add edge %d %d\n",src_add,dst_add);
                 }
                 // LOG("DEBUG pr 1.2 \n");
@@ -3374,10 +1691,15 @@ namespace sepgraph {
                 uint32_t work_size[2];
                 work_size[0] = local_begin.first;
                 work_size[1] = size;
+                m_insertion_seed_begin = work_size[0];
+                m_insertion_seed_count = work_size[1];
                 // LOG("add start %d \n",work_size[0]);
                 // LOG("add size %d \n",work_size[1]);
                 bool del =false;
                 GROUTE_CUDA_CHECK(cudaMemcpy(this->work_size_d, &work_size[0], 2 * sizeof(uint32_t),cudaMemcpyHostToDevice));
+                if (size == 0) {
+                    return;
+                }
                 KernelSizing(grid_dims, block_dims, size);
                 kernel::reset_pr_del_edges<<< grid_dims, block_dims, 0, stream_s.cuda_stream >>>(app_inst,vcsr_graph,this->added_edges_d,this->work_size_d);
                 stream_s.Sync();
@@ -3393,7 +1715,7 @@ namespace sepgraph {
                 groute::Stream &stream_s = *m_stream;
                 auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 type[0] = -1;
-                
+
                 GROUTE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&this->type_device, (void *)this->type, 0));
                 index_t seg_snode,seg_enode;
                 index_t stream_id;
@@ -3401,7 +1723,7 @@ namespace sepgraph {
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                     stream_id = seg_idx % FLAGS_n_stream;
                     seg_snode = m_groute_context->seg_snode[seg_idx];
-                    seg_enode = m_groute_context->seg_enode[seg_idx];  
+                    seg_enode = m_groute_context->seg_enode[seg_idx];
                         RebuildWorklist_AllVertices(app_inst,
                         graph_datum,
                         stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
@@ -3428,7 +1750,7 @@ namespace sepgraph {
                 // for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                 //     stream_id = seg_idx % FLAGS_n_stream;
                 //     seg_snode = m_groute_context->seg_snode[seg_idx];
-                //     seg_enode = m_groute_context->seg_enode[seg_idx];  
+                //     seg_enode = m_groute_context->seg_enode[seg_idx];
                 //         RebuildWorklist_AllVertices(app_inst,
                 //         graph_datum,
                 //         stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
@@ -3438,13 +1760,13 @@ namespace sepgraph {
                 //     stream[stream_idx].Sync();
                 // }
                 // ExecutePolicy_MF_Cache(next_policy,type_device);
-                 
-               
+
+
             }
             void ResetCacheMiss(){
                 GraphDatum &graph_datum = *m_graph_datum;
                 groute::Stream &stream_s = *m_stream;
-                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes); 
+                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
                 dim3 grid_dims, block_dims;
                 KernelSizing(grid_dims, block_dims, work_source.get_size());
             kernel::reset_cache
@@ -3454,11 +1776,11 @@ namespace sepgraph {
             stream_s.Sync();
                 graph_datum.ResetCacheMiss();
             }
-            
+
             void Resettransfer(){
                 GraphDatum &graph_datum = *m_graph_datum;
                 groute::Stream &stream_s = *m_stream;
-                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes); 
+                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
                 dim3 grid_dims, block_dims;
                 KernelSizing(grid_dims, block_dims, work_source.get_size());
             kernel::reset_cache
@@ -3509,7 +1831,7 @@ namespace sepgraph {
                 for(index_t i = 0; i < FLAGS_SEGMENT; i++){
                     next_policy[i] = m_policy_decision_maker.GetInitPolicy();
                 }
-                
+
                 auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
 
                 //update graph on the cpu
@@ -3517,13 +1839,9 @@ namespace sepgraph {
                 cudaDeviceSynchronize();
                 read_add(local_begin,NumOfSnapShots);
                 cudaDeviceSynchronize();
-                
+
                 add_edge_pr(local_begin,NumOfSnapShots);
                 del_edge_pr(local_begin,NumOfSnapShots);
-                if (GetCoopMode() == CoopExecMode::HYBRID &&
-                    GetCoopSplitMode() == CoopSplitMode::CPU_HOME) {
-                    PromoteBatchTouchedCpuHomeSources();
-                }
                 local_begin.second += load_update.m_batch_size[NumOfSnapShots].second;
                 local_begin.first += load_update.m_batch_size[NumOfSnapShots].first;
 
@@ -3531,7 +1849,7 @@ namespace sepgraph {
                 type[0] = 1;
                 float time_total = 0;
                 GROUTE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&this->type_device, (void *)this->type, 0));
-                
+
                 //incremental computation
                 Stopwatch sw_execution(true);
                 ExecutePolicy_MF(next_policy,type_device);
@@ -3542,7 +1860,7 @@ namespace sepgraph {
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                     stream_id = seg_idx % FLAGS_n_stream;
                     seg_snode = m_groute_context->seg_snode[seg_idx];
-                    seg_enode = m_groute_context->seg_enode[seg_idx];  
+                    seg_enode = m_groute_context->seg_enode[seg_idx];
                         RebuildArrayWorklistINC(app_inst,
                         graph_datum,
                         stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
@@ -3564,12 +1882,12 @@ namespace sepgraph {
                 //   GatherTransfer();
                   current_rount++;
                   sw_execution_round.stop();
-                  time_total +=sw_execution_round.ms();	   
+                  time_total +=sw_execution_round.ms();
                   PostComputationBW_Inc();
                   if (current_rount == 100 ) {//FLAGS_max_iteration
                         convergence = true;
                         LOG("Max iterations reached\n");
-                  } 
+                  }
                 }
                 // sw_execution.stop();
 
@@ -3588,15 +1906,15 @@ namespace sepgraph {
                 GraphDatum &graph_datum = *m_graph_datum;
                 bool zcflag = true;
                 m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-		        uint64_t seg_sedge_csr,seg_nedges_csr;
-		        index_t seg_snode,seg_enode;
+                uint64_t seg_sedge_csr,seg_nedges_csr;
+                index_t seg_snode,seg_enode;
                 Stopwatch sw_execution(true);
                 index_t stream_id;
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                     stream_id = seg_idx % FLAGS_n_stream;
                     seg_snode = m_groute_context->seg_snode[seg_idx];
-                    seg_enode = m_groute_context->seg_enode[seg_idx];  
+                    seg_enode = m_groute_context->seg_enode[seg_idx];
                         RebuildArrayWorklist_identify(app_inst,vcsr_graph,
                         graph_datum,
                         stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
@@ -3606,18 +1924,18 @@ namespace sepgraph {
                }
                cudaDeviceSynchronize();
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-    		        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-    		        seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
-    		        seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
-    		        seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx];
-    		        stream_id = seg_idx % FLAGS_n_stream;
-                    
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
+                    seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
+                    seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx];
+                    stream_id = seg_idx % FLAGS_n_stream;
+
                     m_vcsr_dev_graph_allocator->SwitchZC();
                     zcflag = true;
                     RunSyncCom(app_inst,seg_snode,seg_enode,seg_sedge_csr,seg_idx,zcflag,
-                        vcsr_graph,
-                        graph_datum,
-                        m_engine_options,
+                               vcsr_graph,
+                               graph_datum,
+                               m_engine_options,
                         stream[stream_id]);
                }
                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
@@ -3626,12 +1944,12 @@ namespace sepgraph {
                cudaDeviceSynchronize();
                m_vcsr_dev_graph_allocator->HostRiverElement();
                dim3 grid_dims, block_dims;
-               const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.num_of_cache); 
+               const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.num_of_cache);
                KernelSizing(grid_dims, block_dims, work_source.get_size());
                 kernel::copy_cache<< < grid_dims, block_dims, 0, stream_s.cuda_stream >> > (graph_datum.cache_edges_l1,graph_datum.cache_edges_com,work_source);
                 stream_s.Sync();
                 cudaDeviceSynchronize();
-                const auto &work_source_flush_vertex = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes); 
+                const auto &work_source_flush_vertex = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
                 KernelSizing(grid_dims, block_dims, work_source_flush_vertex.get_size());
                 kernel::copy_index<< < grid_dims, block_dims, 0, stream_s.cuda_stream >> > (app_inst,
                     vcsr_graph,
@@ -3647,13 +1965,13 @@ namespace sepgraph {
                 GraphDatum &graph_datum = *m_graph_datum;
                 bool zcflag = true;
                 m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-                
-		        uint64_t seg_sedge_csr,seg_nedges_csr;
-		        index_t seg_snode,seg_enode;
+
+                uint64_t seg_sedge_csr,seg_nedges_csr;
+                index_t seg_snode,seg_enode;
                 Stopwatch sw_execution(true);
                 index_t stream_id;
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
-                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes); 
+                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
                 dim3 grid_dims, block_dims;
                 KernelSizing(grid_dims, block_dims, work_source.get_size());
                 kernel::flush_cache<< < grid_dims, block_dims, 0, stream_s.cuda_stream >> > (app_inst,
@@ -3674,18 +1992,18 @@ namespace sepgraph {
                 bool zcflag = true;
                 Stopwatch sw_execution(true);
                 m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-		        uint64_t seg_sedge_csr,seg_nedges_csr;
-		        index_t seg_snode,seg_enode;
+                uint64_t seg_sedge_csr,seg_nedges_csr;
+                index_t seg_snode,seg_enode;
 
                 m_groute_context->segment_ct = FLAGS_SEGMENT;
                 index_t seg_exc = 0;
                 index_t stream_id;
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-    		        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-    		        seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
-    		        seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
-    		        seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx]; 
-    		        stream_id = seg_idx % FLAGS_n_stream;
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
+                    seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
+                    seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx];
+                    stream_id = seg_idx % FLAGS_n_stream;
                     const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                     if(algo_variant[seg_idx] == AlgoVariant::Zero_Copy){
                         m_vcsr_dev_graph_allocator->SwitchZC();
@@ -3694,7 +2012,7 @@ namespace sepgraph {
                            vcsr_graph,
                            graph_datum,
                            m_engine_options,
-                           stream[stream_id]); 
+                           stream[stream_id]);
                     }
                     // act_num+= graph_datum.m_wl_array_in[seg_idx];
                }
@@ -3703,7 +2021,7 @@ namespace sepgraph {
                }
 
             //    PostComputationBW_Inc();
-               
+
             //    sw_round.stop();
 
             }
@@ -3723,9 +2041,9 @@ namespace sepgraph {
                 Stopwatch sw_rebuild(true);
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                     stream_id = seg_idx % FLAGS_n_stream;
-			        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-			        seg_enode = m_groute_context->seg_enode[seg_idx];  
-			        RebuildArrayWorklistINC(app_inst,
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];
+                    RebuildArrayWorklistINC(app_inst,
                         graph_datum,
                         stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
                 }
@@ -3737,14 +2055,14 @@ namespace sepgraph {
                 uint64_t active_count_overall = 0;
                 m_running_info.time_overhead_rebuild_worklist += sw_rebuild.ms();
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-                    stream_id = seg_idx % FLAGS_n_stream; 
+                    stream_id = seg_idx % FLAGS_n_stream;
                     index_t active_count = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream[stream_id]);
-		            graph_datum.seg_active_num[seg_idx] = active_count;
+                    graph_datum.seg_active_num[seg_idx] = active_count;
 
-		            m_running_info.input_active_count_seg[seg_idx] = active_count;
+                    m_running_info.input_active_count_seg[seg_idx] = active_count;
 
-		            uint32_t work_size = active_count;
-		            dim3 grid_dims, block_dims;
+                    uint32_t work_size = active_count;
+                    dim3 grid_dims, block_dims;
                     // active_count_overall+=work_size;
 
                 }
@@ -3753,7 +2071,7 @@ namespace sepgraph {
                 m_running_info.time_overhead_wl_unique += sw_unique.ms();
 
           }
-            
+
             void del_topo(index_t &local_begin){
                 Loader &load_update = *m_load_update;
                 groute::graphs::host::PMAGraph &vcsr_graph  = m_vcsr_dev_graph_allocator->m_origin_graph;
@@ -3775,14 +2093,223 @@ namespace sepgraph {
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                     stream_id = seg_idx % FLAGS_n_stream;
                     seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-                    seg_enode = m_groute_context->seg_enode[seg_idx];  
+                    seg_enode = m_groute_context->seg_enode[seg_idx];
                         RebuildArrayWorklist_reset_delta(app_inst,vcsr_graph,
                         graph_datum,
                         stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
-                }    
+                }
                 for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
                    stream[stream_idx].Sync();
                 }
+            }
+
+            void BeginInsertionEpoch(index_t batch) {
+                Stopwatch sw_epoch_prepare(true);
+                GraphDatum &graph_datum = *m_graph_datum;
+                if (m_device_partition_end_nodes == nullptr) {
+                    std::vector<index_t> segment_end_nodes(FLAGS_SEGMENT);
+                    for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                        segment_end_nodes[seg] = m_groute_context->seg_enode[seg];
+                    }
+                    m_partition_owners.assign(
+                        FLAGS_SEGMENT,
+                        static_cast<uint8_t>(PartitionOwner::GPU));
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_partition_end_nodes),
+                        sizeof(index_t) * FLAGS_SEGMENT));
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_partition_owners),
+                        sizeof(uint8_t) * FLAGS_SEGMENT));
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_node_state_epoch),
+                        sizeof(uint32_t) * graph_datum.nnodes));
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_seed_owner_reject_count),
+                        sizeof(unsigned long long)));
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        m_device_partition_end_nodes,
+                        segment_end_nodes.data(),
+                        sizeof(index_t) * FLAGS_SEGMENT,
+                        cudaMemcpyHostToDevice));
+                    GROUTE_CUDA_CHECK(cudaMemset(
+                        m_device_node_state_epoch,
+                        0,
+                        sizeof(uint32_t) * graph_datum.nnodes));
+                }
+
+                if (m_insertion_epoch_active) {
+                    LOG("[DUAL-RUNTIME] protocol_error=nested_epoch active_epoch=%u\n",
+                        m_insertion_epoch);
+                    std::abort();
+                }
+                ++m_insertion_epoch;
+                if (m_insertion_epoch == 0) {
+                    GROUTE_CUDA_CHECK(cudaMemset(
+                        m_device_node_state_epoch,
+                        0,
+                        sizeof(uint32_t) * graph_datum.nnodes));
+                    m_insertion_epoch = 1;
+                }
+
+                Stopwatch sw_owner_plan(true);
+                uint64_t owner_flag_bytes = 0;
+                for (const index_t seg : m_cpu_owned_segments) {
+                    const index_t begin = m_groute_context->seg_snode[seg];
+                    const index_t end = m_groute_context->seg_enode[seg];
+                    owner_flag_bytes += end - begin;
+                    std::fill(m_node_cpu_owner.begin() + begin,
+                              m_node_cpu_owner.begin() + end, 0);
+                    GROUTE_CUDA_CHECK(cudaMemset(
+                        m_device_cpu_destination_flags + begin,
+                        0,
+                        end - begin));
+                }
+                m_cpu_owned_segments.clear();
+                std::fill(m_partition_owners.begin(),
+                          m_partition_owners.end(),
+                          static_cast<uint8_t>(PartitionOwner::GPU));
+                const index_t cpu_capacity =
+                    static_cast<index_t>(FLAGS_sssp_cpu_partition_capacity);
+                std::vector<std::pair<uint32_t, index_t>> ranked_segments;
+                ranked_segments.reserve(FLAGS_SEGMENT);
+                std::vector<uint32_t> seed_counts(FLAGS_SEGMENT, 0);
+                for (index_t offset = 0; offset < m_insertion_seed_count; ++offset) {
+                    const index_t dst =
+                        added_edges_h[m_insertion_seed_begin + offset].v;
+                    const index_t *position = std::upper_bound(
+                        m_groute_context->seg_enode,
+                        m_groute_context->seg_enode + FLAGS_SEGMENT,
+                        dst);
+                    if (position != m_groute_context->seg_enode + FLAGS_SEGMENT) {
+                        ++seed_counts[position - m_groute_context->seg_enode];
+                    }
+                }
+                for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                    ranked_segments.push_back({seed_counts[seg], seg});
+                }
+                std::sort(ranked_segments.begin(), ranked_segments.end(),
+                          [](const std::pair<uint32_t, index_t> &lhs,
+                             const std::pair<uint32_t, index_t> &rhs) {
+                              return lhs.first != rhs.first
+                                  ? lhs.first > rhs.first
+                                  : lhs.second < rhs.second;
+                          });
+                for (index_t ordinal = 0; ordinal < cpu_capacity; ++ordinal) {
+                    const index_t seg = ranked_segments[ordinal].second;
+                    m_partition_owners[seg] =
+                        static_cast<uint8_t>(PartitionOwner::CPU);
+                    m_cpu_owned_segments.push_back(seg);
+                }
+                m_insertion_seed_partitions.assign(FLAGS_SEGMENT, 0);
+                for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                    if (seed_counts[seg] != 0 &&
+                        m_partition_owners[seg] ==
+                            static_cast<uint8_t>(PartitionOwner::GPU)) {
+                        m_insertion_seed_partitions[seg] = 1;
+                    }
+                }
+                for (const index_t seg : m_cpu_owned_segments) {
+                    const index_t begin = m_groute_context->seg_snode[seg];
+                    const index_t end = m_groute_context->seg_enode[seg];
+                    const size_t count = end - begin;
+                    owner_flag_bytes += count;
+                    std::fill(m_node_cpu_owner.begin() + begin,
+                              m_node_cpu_owner.begin() + end, 1);
+                    GROUTE_CUDA_CHECK(cudaMemset(
+                        m_device_cpu_destination_flags + begin,
+                        1,
+                        count));
+                }
+                sw_owner_plan.stop();
+                if (cpu_capacity != 0) {
+                    Stopwatch sw_cpu_state_d2h(true);
+                    uint64_t cpu_state_d2h_bytes = 0;
+                    for (const index_t seg : m_cpu_owned_segments) {
+                        const index_t begin = m_groute_context->seg_snode[seg];
+                        const index_t end = m_groute_context->seg_enode[seg];
+                        const size_t count = end - begin;
+                        cpu_state_d2h_bytes +=
+                            (sizeof(TValue) + sizeof(TBuffer) + sizeof(index_t)) * count;
+                        GROUTE_CUDA_CHECK(cudaMemcpy(
+                            m_cpu_node_values.data() + begin,
+                            graph_datum.GetValueDeviceObject() + begin,
+                            sizeof(TValue) * count, cudaMemcpyDeviceToHost));
+                        GROUTE_CUDA_CHECK(cudaMemcpy(
+                            m_cpu_node_buffers.data() + begin,
+                            graph_datum.GetBufferDeviceObject() + begin,
+                            sizeof(TBuffer) * count, cudaMemcpyDeviceToHost));
+                        GROUTE_CUDA_CHECK(cudaMemcpy(
+                            m_cpu_node_parents.data() + begin,
+                            graph_datum.GetParentDeviceObject() + begin,
+                            sizeof(index_t) * count, cudaMemcpyDeviceToHost));
+                    }
+                    sw_cpu_state_d2h.stop();
+                    m_device_gpu_to_cpu_boundary_vertices.ResetAsync(
+                        m_stream->cuda_stream);
+                    m_stream->Sync();
+                    LOG("[DUAL-RUNTIME-PREP] batch=%u epoch=%u cpu_partitions=%u owner_flag_bytes=%llu cpu_state_d2h_bytes=%llu owner_plan_ms=%.3f cpu_state_d2h_ms=%.3f\n",
+                        batch,
+                        m_insertion_epoch,
+                        cpu_capacity,
+                        static_cast<unsigned long long>(owner_flag_bytes),
+                        static_cast<unsigned long long>(cpu_state_d2h_bytes),
+                        sw_owner_plan.ms(),
+                        sw_cpu_state_d2h.ms());
+                }
+                m_cpu_frontier.clear();
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_device_partition_owners,
+                    m_partition_owners.data(),
+                    sizeof(uint8_t) * FLAGS_SEGMENT,
+                    cudaMemcpyHostToDevice));
+                GROUTE_CUDA_CHECK(cudaMemset(
+                    m_device_seed_owner_reject_count,
+                    0,
+                    sizeof(unsigned long long)));
+                m_insertion_epoch_active = true;
+                m_insertion_convergence_round = 0;
+                sw_epoch_prepare.stop();
+                LOG("[DUAL-RUNTIME-BEGIN] batch=%u epoch=%u gpu_partitions=%d cpu_partitions=%u cpu_capacity=%u epoch_prepare_ms=%.3f\n",
+                    batch,
+                    m_insertion_epoch,
+                    FLAGS_SEGMENT - cpu_capacity,
+                    cpu_capacity,
+                    cpu_capacity,
+                    sw_epoch_prepare.ms());
+            }
+
+            void EndInsertionEpoch(index_t batch) {
+                if (!m_insertion_epoch_active) {
+                    return;
+                }
+                uint64_t local_active = 0;
+                for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                    local_active += m_graph_datum->seg_active_num[seg];
+                }
+                unsigned long long rejected_seeds = 0;
+                const uint32_t boundary_active =
+                    m_device_gpu_to_cpu_boundary_vertices.GetCount(*m_stream);
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    &rejected_seeds,
+                    m_device_seed_owner_reject_count,
+                    sizeof(unsigned long long),
+                    cudaMemcpyDeviceToHost));
+                if (rejected_seeds != 0 || local_active != 0 ||
+                    boundary_active != 0 || !m_cpu_frontier.empty()) {
+                    LOG("[DUAL-RUNTIME] protocol_error=epoch_not_quiescent epoch=%u rejected=%llu local_active=%llu boundary=%u cpu_frontier=%zu\n",
+                        m_insertion_epoch,
+                        rejected_seeds,
+                        static_cast<unsigned long long>(local_active),
+                        boundary_active,
+                        m_cpu_frontier.size());
+                    std::abort();
+                }
+                m_insertion_epoch_active = false;
+                LOG("[DUAL-RUNTIME-END] batch=%u epoch=%u seed_owner_rejects=%llu local_active=%llu\n",
+                    batch,
+                    m_insertion_epoch,
+                    rejected_seeds,
+                    static_cast<unsigned long long>(local_active));
             }
 
             void update_tree_add(std::pair<index_t,index_t> &local_begin,index_t &NumOfSnapShots){
@@ -3797,75 +2324,108 @@ namespace sepgraph {
                 for(index_t i = 0; i < FLAGS_SEGMENT; i++){
                     next_policy[i] = m_policy_decision_maker.GetInitPolicy();
                 }
-                // just update the vertex
+                Stopwatch sw_update_reset(true);
                 read_del(local_begin,NumOfSnapShots);
                 cudaDeviceSynchronize();
                 read_add(local_begin,NumOfSnapShots);
                 cudaDeviceSynchronize();
+                sw_update_reset.stop();
+
+                Stopwatch sw_pma_insert(true);
                 add_edge_pr(local_begin,NumOfSnapShots);
-                del_edge_pr(local_begin,NumOfSnapShots);
+                sw_pma_insert.stop();
                 local_begin.second += load_update.m_batch_size[NumOfSnapShots].second;
                 local_begin.first += load_update.m_batch_size[NumOfSnapShots].first;
+
+                Stopwatch sw_allocator_reload(true);
                 m_vcsr_dev_graph_allocator->ReloadAllocator();
-                if (GetCoopMode() == CoopExecMode::HYBRID &&
-                    GetCoopSplitMode() == CoopSplitMode::CPU_HOME &&
-                    (FLAGS_coop_home_skip_gpu_sources || FLAGS_coop_home_diagnostic_launch)) {
-                    CoopRoundStats init_skip_stats;
-                    m_coop_cpu_home_batch_enabled = true;
-                    PromoteBatchTouchedCpuHomeSources(&init_skip_stats);
-                    ApplyCpuHomeAdmissionForBatch();
-                    if (m_coop_cpu_home_batch_enabled) {
-                        PrepareInjectedCpuHomeSourcesForInitialAdd(init_skip_stats);
-                    }
+                sw_allocator_reload.stop();
+                if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
+                    BeginInsertionEpoch(NumOfSnapShots);
                 }
                 index_t seg_snode,seg_enode;
                 index_t stream_id;
                 float add_time = 0;
                 Stopwatch sw_load(true);
-                for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
-                    stream_id = seg_idx % FLAGS_n_stream;
-                    seg_snode = m_groute_context->seg_snode[seg_idx];
-                    seg_enode = m_groute_context->seg_enode[seg_idx];  
+                if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
+                    const index_t add_size = load_update.m_batch_size[NumOfSnapShots].first;
+                    if (add_size > 0) {
+                        dim3 grid_dims, block_dims;
+                        KernelSizing(grid_dims, block_dims, add_size);
+                        SeedAddedEdgeFrontier<TValue><<<grid_dims,
+                                                       block_dims,
+                                                       0,
+                                                       stream_s.cuda_stream>>>(
+                            this->added_edges_d,
+                            this->work_size_d,
+                            graph_datum.GetValueDeviceObject(),
+                            graph_datum.GetBufferDeviceObject(),
+                            graph_datum.GetParentDeviceObject(),
+                            std::numeric_limits<TValue>::max(),
+                            graph_datum.m_wl_bitmap_out_high.DeviceObject(),
+                            m_device_partition_end_nodes,
+                            m_device_partition_owners,
+                            FLAGS_SEGMENT,
+                            m_insertion_epoch,
+                            m_device_node_state_epoch,
+                            m_device_seed_owner_reject_count,
+                            m_device_gpu_to_cpu_boundary_values,
+                            m_device_gpu_to_cpu_boundary_parents,
+                            m_device_gpu_to_cpu_boundary_vertices.DeviceObject());
+                        stream_s.Sync();
+                    }
+                    LOG("[SSSP-SEED-FRONTIER] batch=%u added_edges=%u mode=direct_added_edge\n",
+                        NumOfSnapShots,
+                        add_size);
+                } else {
+                    for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
+                        stream_id = seg_idx % FLAGS_n_stream;
+                        seg_snode = m_groute_context->seg_snode[seg_idx];
+                        seg_enode = m_groute_context->seg_enode[seg_idx];
                         RebuildWorklist_AllVertices(app_inst,
-                        graph_datum,
-                        stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
+                            graph_datum,
+                            stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
+                    }
+                    for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
+                        stream[stream_idx].Sync();
+                    }
+                    ExecutePolicy_All(next_policy);
                 }
-                std::cout<<"sssp active all node "<<vcsr_graph.nnodes<<std::endl;
-                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
-                    stream[stream_idx].Sync();
-                }
-                // LOG("DEBUG1 \n");
-                // PreComputationBW();
-                ExecutePolicy_All(next_policy);
-                // GatherTransfer();
                 sw_load.stop();
                 add_time+=sw_load.ms();
-                // GatherCacheMiss();
-                // GatherTransfer();
+                Stopwatch sw_initial_rebuild(true);
                 cudaDeviceSynchronize();
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                     stream_id = seg_idx % FLAGS_n_stream;
-			        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-			        seg_enode = m_groute_context->seg_enode[seg_idx];  
-			        RebuildArrayWorklist(app_inst,
+                    if (m_insertion_epoch_active &&
+                        !m_insertion_seed_partitions[seg_idx]) {
+                        graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(
+                            stream[stream_id].cuda_stream);
+                        graph_datum.seg_active_num[seg_idx] = 0;
+                        m_running_info.input_active_count_seg[seg_idx] = 0;
+                        continue;
+                    }
+                    seg_snode = m_groute_context->seg_snode[seg_idx];
+                    seg_enode = m_groute_context->seg_enode[seg_idx];
+                    RebuildArrayWorklist(app_inst,
                         graph_datum,
-                        stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
+                        stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx,
+                        m_insertion_epoch_active ? m_device_node_state_epoch : nullptr,
+                        m_insertion_epoch);
                 }
                 for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
                     stream[stream_idx].Sync();
                 }
                 RefreshSegmentActiveCountsFromQueues();
+                sw_initial_rebuild.stop();
                 // LOG("DEBUG2 \n");
                 bool convergence = false;
                 m_running_info.current_round = 0;
                 Stopwatch sw_con(true);
                 while(!convergence){
                 //   PreComputationBW();
-                  if (GetCoopMode() == CoopExecMode::OFF) {
-                      ExecutePolicy_Converge(next_policy);
-                  } else {
-                      ExecutePolicy_Converge_Coop(next_policy);
-                  }
+                  ExecutePolicy_Converge(next_policy);
+                  ++m_insertion_convergence_round;
                 //   GatherTransfer();
                 //   ExecutePolicy_SC(next_policy);
                   int convergence_check = 0;
@@ -3874,19 +2434,193 @@ namespace sepgraph {
                            convergence_check++;
                        }
                    }
-                  if(convergence_check == FLAGS_SEGMENT){
+                  const uint32_t boundary_active =
+                      FLAGS_sssp_cpu_partition_capacity == 0
+                          ? 0
+                          : m_device_gpu_to_cpu_boundary_vertices.GetCount(*m_stream);
+                  if(convergence_check == FLAGS_SEGMENT &&
+                     m_cpu_frontier.empty() && boundary_active == 0){
                         convergence = true;
                   }
-                  if (m_running_info.current_round == 100 ) {//FLAGS_max_iteration
-                        convergence = true;
-                        LOG("Max iterations reached\n");
-                  } 
+                  if (m_insertion_convergence_round > graph_datum.nnodes) {
+                        LOG("[DUAL-RUNTIME] protocol_error=non_quiescent epoch=%u rounds=%llu bound=%u\n",
+                            m_insertion_epoch,
+                            static_cast<unsigned long long>(m_insertion_convergence_round),
+                            graph_datum.nnodes);
+                        std::abort();
+                  }
                 }
                 sw_con.stop();
+                if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
+                    EndInsertionEpoch(NumOfSnapShots);
+                }
                 add_time+=sw_con.ms();
+                LOG("[INSERTION-STAGE] batch=%u reset_ms=%.3f pma_insert_ms=%.3f allocator_reload_ms=%.3f initial_rebuild_ms=%.3f seed_ms=%.3f converge_ms=%.3f\n",
+                    NumOfSnapShots,
+                    sw_update_reset.ms(),
+                    sw_pma_insert.ms(),
+                    sw_allocator_reload.ms(),
+                    sw_initial_rebuild.ms(),
+                    sw_load.ms(),
+                    sw_con.ms());
                 LOG("total add time: %f ms (excluded)\n", add_time);
                 // GatherCacheMiss();
                 // GatherTransfer();
+            }
+
+            void CollectDeletionAffectedVertices(index_t batch) {
+                Stopwatch sw_d2h(true);
+                const uint32_t affected_count =
+                    m_device_affected_vertices.GetCount(*m_stream);
+                m_affected_vertices.resize(affected_count);
+                if (affected_count != 0) {
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        m_affected_vertices.data(),
+                        m_device_affected_vertices.GetDeviceDataPtr(),
+                        sizeof(index_t) * affected_count,
+                        cudaMemcpyDeviceToHost));
+                }
+                sw_d2h.stop();
+
+                std::vector<uint8_t> active_partitions(FLAGS_SEGMENT, 0);
+                for (const index_t node : m_affected_vertices) {
+                    const index_t *begin = m_groute_context->seg_enode;
+                    const index_t *end = begin + FLAGS_SEGMENT;
+                    const index_t *position = std::upper_bound(begin, end, node);
+                    if (position != end) {
+                        active_partitions[position - begin] = 1;
+                    }
+                }
+                const uint32_t active_partition_count = static_cast<uint32_t>(
+                    std::count(active_partitions.begin(), active_partitions.end(), uint8_t{1}));
+                const uint64_t metadata_device_bytes =
+                    static_cast<uint64_t>(m_graph_datum->nnodes) * sizeof(index_t);
+                LOG("[B2-AFFECTED][batch %u] vertices=%u active_partitions=%u d2h_bytes=%llu d2h_ms=%.3f metadata_device_bytes=%llu\n",
+                    batch,
+                    affected_count,
+                    active_partition_count,
+                    static_cast<unsigned long long>(sizeof(index_t) * affected_count),
+                    sw_d2h.ms(),
+                    static_cast<unsigned long long>(metadata_device_bytes));
+            }
+
+            void EnsureGpuAffectedRepairCapacity(size_t affected_count,
+                                                  size_t source_count) {
+                if (affected_count > m_device_gpu_repair_offset_capacity) {
+                    if (m_device_gpu_repair_offsets != nullptr) {
+                        GROUTE_CUDA_CHECK(cudaFree(m_device_gpu_repair_offsets));
+                    }
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_gpu_repair_offsets),
+                        sizeof(uint64_t) * (affected_count + 1)));
+                    m_device_gpu_repair_offset_capacity = affected_count;
+                }
+                if (source_count > m_device_gpu_repair_source_capacity) {
+                    if (m_device_gpu_repair_sources != nullptr) {
+                        GROUTE_CUDA_CHECK(cudaFree(m_device_gpu_repair_sources));
+                    }
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_gpu_repair_sources),
+                        sizeof(index_t) * source_count));
+                    m_device_gpu_repair_source_capacity = source_count;
+                }
+            }
+
+            void RunGpuAffectedRepair(index_t batch) {
+                if (m_affected_vertices.empty()) {
+                    LOG("[B2-GPU-REPAIR][batch %u] affected=0\n", batch);
+                    return;
+                }
+
+                Stopwatch sw_topology(true);
+                m_reverse_index.MaterializeIncoming(
+                    m_affected_vertices,
+                    m_gpu_repair_incoming_offsets,
+                    m_gpu_repair_incoming_sources);
+                sw_topology.stop();
+
+                Stopwatch sw_allocate(true);
+                EnsureGpuAffectedRepairCapacity(m_affected_vertices.size(),
+                                                m_gpu_repair_incoming_sources.size());
+                sw_allocate.stop();
+
+                Stopwatch sw_h2d(true);
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_device_gpu_repair_offsets,
+                    m_gpu_repair_incoming_offsets.data(),
+                    sizeof(uint64_t) * m_gpu_repair_incoming_offsets.size(),
+                    cudaMemcpyHostToDevice));
+                if (!m_gpu_repair_incoming_sources.empty()) {
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        m_device_gpu_repair_sources,
+                        m_gpu_repair_incoming_sources.data(),
+                        sizeof(index_t) * m_gpu_repair_incoming_sources.size(),
+                        cudaMemcpyHostToDevice));
+                }
+                sw_h2d.stop();
+
+                GraphDatum &graph_datum = *m_graph_datum;
+                dim3 grid_dims, block_dims;
+                KernelSizing(grid_dims, block_dims, m_affected_vertices.size());
+                Stopwatch sw_closure(true);
+                unsigned int changed = 0;
+                uint32_t iterations = 0;
+                do {
+                    GROUTE_CUDA_CHECK(cudaMemset(
+                        m_device_gpu_repair_changed, 0, sizeof(unsigned int)));
+                    GpuAffectedPullRelax<AppImplDeviceObject, TValue, TBuffer>
+                        <<<grid_dims, block_dims>>>(
+                            *m_app_inst,
+                            m_device_affected_vertices.GetDeviceDataPtr(),
+                            static_cast<uint32_t>(m_affected_vertices.size()),
+                            m_device_gpu_repair_offsets,
+                            m_device_gpu_repair_sources,
+                            graph_datum.GetValueDeviceObject(),
+                            graph_datum.GetBufferDeviceObject(),
+                            graph_datum.GetParentDeviceObject(),
+                            std::numeric_limits<TValue>::max(),
+                            m_device_gpu_repair_changed);
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        &changed,
+                        m_device_gpu_repair_changed,
+                        sizeof(unsigned int),
+                        cudaMemcpyDeviceToHost));
+                    ++iterations;
+                    if (iterations > m_affected_vertices.size() + 1) {
+                        LOG("[B2-GPU-REPAIR] protocol_error=no_convergence batch=%u iterations=%u affected=%llu\n",
+                            batch,
+                            iterations,
+                            static_cast<unsigned long long>(m_affected_vertices.size()));
+                        std::abort();
+                    }
+                } while (changed != 0);
+                FinalizeGpuAffectedRepair<TValue, TBuffer><<<grid_dims, block_dims>>>(
+                    m_device_affected_vertices.GetDeviceDataPtr(),
+                    static_cast<uint32_t>(m_affected_vertices.size()),
+                    graph_datum.GetValueDeviceObject(),
+                    graph_datum.GetBufferDeviceObject(),
+                    graph_datum.m_node_reset_datum);
+                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+                sw_closure.stop();
+
+                const uint64_t h2d_bytes =
+                    sizeof(uint64_t) * m_gpu_repair_incoming_offsets.size() +
+                    sizeof(index_t) * m_gpu_repair_incoming_sources.size();
+                const uint64_t device_bytes =
+                    sizeof(uint64_t) * (m_device_gpu_repair_offset_capacity + 1) +
+                    sizeof(index_t) * m_device_gpu_repair_source_capacity +
+                    sizeof(unsigned int);
+                LOG("[B2-GPU-REPAIR][batch %u] affected=%llu incoming_edges=%llu topology_ms=%.3f allocation_ms=%.3f h2d_bytes=%llu h2d_ms=%.3f iterations=%u closure_ms=%.3f device_bytes=%llu\n",
+                    batch,
+                    static_cast<unsigned long long>(m_affected_vertices.size()),
+                    static_cast<unsigned long long>(m_gpu_repair_incoming_sources.size()),
+                    sw_topology.ms(),
+                    sw_allocate.ms(),
+                    static_cast<unsigned long long>(h2d_bytes),
+                    sw_h2d.ms(),
+                    iterations,
+                    sw_closure.ms(),
+                    static_cast<unsigned long long>(device_bytes));
             }
 
             void update_tree_del(std::pair<index_t,index_t> &local_begin,index_t &NumOfSnapShots){
@@ -3895,58 +2629,95 @@ namespace sepgraph {
                 Loader &load_update = *m_load_update;
                 groute::Stream &stream_s = *m_stream;
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
-                AlgoVariant next_policy[FLAGS_SEGMENT];
-                for(index_t i = 0; i < FLAGS_SEGMENT; i++){
-                    next_policy[i] = m_policy_decision_maker.GetInitPolicy();
-                }
-                // m_vcsr_dev_graph_allocator->ReloadAllocator();
                 GROUTE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&(this->del_edges_d), (void *)(this->del_edges_h), 0));
                 dim3 grid_dims, block_dims;
                 uint32_t work_size[2];
                 index_t start = local_begin.second;
                 index_t size = load_update.m_batch_size[NumOfSnapShots].second;
+                m_device_affected_vertices.ResetAsync(stream_s.cuda_stream);
+                m_affected_vertices.clear();
+                GROUTE_CUDA_CHECK(cudaMemsetAsync(graph_datum.m_node_reset_datum,
+                                                  0,
+                                                  sizeof(bool) * graph_datum.nnodes,
+                                                  stream_s.cuda_stream));
+                if (size == 0) {
+                    stream_s.Sync();
+                    LOG("[B2-GPU-REPAIR][batch %u] affected=0 reason=no_deleted_edges\n",
+                        NumOfSnapShots);
+                    return;
+                }
                 work_size[0] = start;
                 work_size[1] = size;
                 GROUTE_CUDA_CHECK(cudaMemcpy(this->work_size_d, &work_size[0], 2 * sizeof(uint32_t),cudaMemcpyHostToDevice));
-                //(1) you need reset the parent, value, buffer of deleted edge dst, 如果删除边的源点是终点的parent
                 KernelSizing(grid_dims, block_dims, size);
-                // Stopwatch sw_load(true);
                 Stopwatch sw_del(true);
-                kernel::reset_del_edges<<< grid_dims, block_dims, 0, stream_s.cuda_stream >>>(app_inst,vcsr_graph,graph_datum.GetParentDeviceObject(),graph_datum.GetValueDeviceObject(),graph_datum.GetBufferDeviceObject(),graph_datum.cache_edges_l1,graph_datum.cache_edges_l2,this->del_edges_d,this->work_size_d,graph_datum.m_node_reset_datum);
-                stream_s.Sync(); 
-                cudaDeviceSynchronize();
-                index_t seg_snode,seg_enode;
-                index_t stream_id;
-                for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
-                    stream_id = seg_idx % FLAGS_n_stream;
-                    seg_snode = m_groute_context->seg_snode[seg_idx];
-                    seg_enode = m_groute_context->seg_enode[seg_idx];  
-                        // RebuildArrayWorklistAdd(app_inst,vcsr_graph,
-                        RebuildArrayWorklistDel(app_inst,vcsr_graph,
+                Stopwatch sw_reset_seed(true);
+                kernel::reset_del_edges<<<grid_dims, block_dims, 0, stream_s.cuda_stream>>>(
+                    app_inst,
+                    graph_datum.GetParentDeviceObject(),
+                    graph_datum.GetValueDeviceObject(),
+                    graph_datum.GetBufferDeviceObject(),
+                    this->del_edges_d,
+                    this->work_size_d,
+                    graph_datum.m_node_reset_datum,
+                    m_device_affected_vertices.DeviceObject());
+                stream_s.Sync();
+                sw_reset_seed.stop();
+
+                m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
+                m_vcsr_dev_graph_allocator->SwitchZC();
+                Stopwatch sw_invalidation(true);
+                uint32_t frontier_begin = 0;
+                uint32_t frontier_end = m_device_affected_vertices.GetCount(stream_s);
+                uint32_t invalidation_rounds = 0;
+                while (frontier_begin < frontier_end) {
+                    const uint32_t frontier_count = frontier_end - frontier_begin;
+                    RunSyncPushDDB_del(
+                        app_inst,
+                        true,
+                        vcsr_graph,
                         graph_datum,
-                        stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
+                        m_device_affected_vertices.GetDeviceDataPtr() + frontier_begin,
+                        frontier_count,
+                        m_device_affected_vertices.DeviceObject(),
+                        m_engine_options,
+                        stream_s);
+                    stream_s.Sync();
+                    const uint32_t new_end =
+                        m_device_affected_vertices.GetCount(stream_s);
+                    if (new_end < frontier_end || new_end > graph_datum.nnodes) {
+                        LOG("[B2-INVALIDATION] protocol_error=invalid_queue_size batch=%u previous=%u current=%u nnodes=%u\n",
+                            NumOfSnapShots, frontier_end, new_end, graph_datum.nnodes);
+                        std::abort();
+                    }
+                    frontier_begin = frontier_end;
+                    frontier_end = new_end;
+                    ++invalidation_rounds;
                 }
-                bool convergence = false;
-                m_running_info.current_round = 0;
-                while(!convergence){
-                  PreComputationBW();
-                  ExecutePolicy_del_con(next_policy);
-                //   GatherTransfer();
-                  int convergence_check = 0;
-                  for(index_t seg_id = 0; seg_id < FLAGS_SEGMENT; seg_id++){
-                       if(m_running_info.input_active_count_seg[seg_id] == 0){
-                           convergence_check++;
-                       }
-                   }
-                  if(convergence_check == FLAGS_SEGMENT){
-                        convergence = true;
-                  }
-                  if (m_running_info.current_round == 100 ) {//FLAGS_max_iteration
-                        convergence = true;
-                        LOG("Max iterations reached\n");
-                  } 
+                sw_invalidation.stop();
+                CollectDeletionAffectedVertices(NumOfSnapShots);
+                Stopwatch sw_physical_delete(true);
+                del_edge_pr(local_begin, NumOfSnapShots);
+                sw_physical_delete.stop();
+                Stopwatch sw_repair(true);
+                if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
+                    RunGpuAffectedRepair(NumOfSnapShots);
                 }
+                sw_repair.stop();
                 sw_del.stop();
+                const double attributed_ms =
+                    sw_reset_seed.ms() + sw_invalidation.ms() +
+                    sw_physical_delete.ms() + sw_repair.ms();
+                LOG("[P0-DELETE-ATTR][batch %u] repair_executor=gpu affected=%u invalidation_rounds=%u reset_seed_ms=%.3f initial_rebuild_ms=0.000 invalidation_ms=%.3f pma_delete_ms=%.3f repair_wall_ms=%.3f residual_ms=%.3f total_ms=%.3f\n",
+                    NumOfSnapShots,
+                    static_cast<uint32_t>(m_affected_vertices.size()),
+                    invalidation_rounds,
+                    sw_reset_seed.ms(),
+                    sw_invalidation.ms(),
+                    sw_physical_delete.ms(),
+                    sw_repair.ms(),
+                    sw_del.ms() - attributed_ms,
+                    sw_del.ms());
                 LOG("删除 time: %f ms (excluded)\n", sw_del.ms());
                 // GatherCacheMiss();
                 // GatherTransfer();
@@ -4041,59 +2812,16 @@ namespace sepgraph {
                                 }
 
 
-            void PreComputationBW() {// Reorganizing nothing, just reset the round and record the workload. 
+            void PreComputationBW() {// Reorganizing nothing, just reset the round and record the workload.
                 const int dev_id = 0;
                 const groute::Stream &stream = m_groute_context->CreateStream(dev_id);
                 GraphDatum &graph_datum = *m_graph_datum;
                 m_running_info.current_round++;
-                graph_datum.m_current_round.set_val_H2DAsync(m_running_info.current_round, stream.cuda_stream);                
+                graph_datum.m_current_round.set_val_H2DAsync(m_running_info.current_round, stream.cuda_stream);
 
                 stream.Sync();
             }
 
-
-            void ExecutePolicy_del_con(AlgoVariant *algo_variant) {
-                // LOG("------ExecutePolicy_del------\n");
-                auto &app_inst = *m_app_inst;
-                // auto &vcsr_graph_host = m_vcsr_dev_graph_allocator->HostObject();
-                GraphDatum &graph_datum = *m_graph_datum;
-                bool zcflag = true;
-                m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-                Stopwatch sw_execution(true);
-		        uint64_t seg_sedge_csr,seg_nedges_csr;
-		        index_t seg_snode,seg_enode;
-                index_t seg_idx_new;
-
-                m_groute_context->segment_ct = FLAGS_SEGMENT;
-
-                index_t stream_id;
-                for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-
-    		        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-    		        seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
-    		        seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
-    		        seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx]; 
-
-    		        stream_id = seg_idx % FLAGS_n_stream;
-
-                    const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
-                    if(algo_variant[seg_idx] == AlgoVariant::Zero_Copy){
-                        m_vcsr_dev_graph_allocator->SwitchZC();
-                        RunSyncPushDDB_del(app_inst,seg_snode,seg_enode,seg_sedge_csr,seg_idx,zcflag,
-                           vcsr_graph,
-                           graph_datum,
-                           m_engine_options,
-                           stream[stream_id]); 
-                    }
-                }
-                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
-                        stream[stream_idx].Sync();
-                }
-               PostComputationBW_del();
-               sw_execution.stop();
-            //    LOG("iter once for del time: %f ms (excluded)\n", sw_execution.ms());
-
-            }
 
             void ExecutePolicy_add(AlgoVariant *algo_variant) {
                 // LOG("------ExecutePolicy_ADD------\n");
@@ -4102,8 +2830,8 @@ namespace sepgraph {
                 GraphDatum &graph_datum = *m_graph_datum;
                 bool zcflag = true;
                 m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-		        uint64_t seg_sedge_csr,seg_nedges_csr;
-		        index_t seg_snode,seg_enode;
+                uint64_t seg_sedge_csr,seg_nedges_csr;
+                index_t seg_snode,seg_enode;
                 index_t seg_idx_new;
 
                 m_groute_context->segment_ct = FLAGS_SEGMENT;
@@ -4111,12 +2839,12 @@ namespace sepgraph {
 
                 index_t stream_id;
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-    		        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-    		        seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
-    		        seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
-    		        seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx]; 
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
+                    seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
+                    seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx];
 
-    		        stream_id = seg_idx % FLAGS_n_stream;
+                    stream_id = seg_idx % FLAGS_n_stream;
 
                     const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                     if(algo_variant[seg_idx] == AlgoVariant::Zero_Copy){
@@ -4128,7 +2856,7 @@ namespace sepgraph {
                            vcsr_graph,
                            graph_datum,
                            m_engine_options,
-                           stream[stream_id]); 
+                           stream[stream_id]);
                     }
                }
                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
@@ -4138,2072 +2866,373 @@ namespace sepgraph {
                LOG("插入刷新缓存 time: %f ms (excluded)\n", sw_execution.ms());
             }
 
+            void StageGpuToCpuBoundary(InsertionRoundStats &stats) {
+                if (!m_insertion_epoch_active ||
+                    FLAGS_sssp_cpu_partition_capacity == 0) return;
+
+                GraphDatum &graph_datum = *m_graph_datum;
+                const TBuffer infinity = std::numeric_limits<TBuffer>::max();
+                const uint32_t boundary_count =
+                    m_device_gpu_to_cpu_boundary_vertices.GetCount(*m_stream);
+                m_cpu_boundary_proposals.clear();
+                if (boundary_count != 0) {
+                    EnsureInsertionDeviceCapacity(&m_device_cpu_boundary_proposals,
+                                             &m_device_cpu_boundary_proposal_capacity,
+                                             boundary_count,
+                                             stats);
+                    dim3 grid_dims, block_dims;
+                    KernelSizing(grid_dims, block_dims, boundary_count);
+                    GatherAndResetBoundary<TBuffer><<<grid_dims, block_dims>>>(
+                        m_device_gpu_to_cpu_boundary_vertices.GetDeviceDataPtr(),
+                        boundary_count,
+                        m_device_gpu_to_cpu_boundary_values,
+                        m_device_gpu_to_cpu_boundary_parents,
+                        m_device_cpu_boundary_proposals,
+                        infinity);
+                    m_cpu_boundary_proposals.resize(boundary_count);
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        m_cpu_boundary_proposals.data(),
+                        m_device_cpu_boundary_proposals,
+                        sizeof(CpuRelaxProposal<TBuffer>) * boundary_count,
+                        cudaMemcpyDeviceToHost));
+                    m_device_gpu_to_cpu_boundary_vertices.ResetAsync(
+                        m_stream->cuda_stream);
+                    m_stream->Sync();
+                    stats.gpu_to_cpu_boundary_items += boundary_count;
+                    stats.gpu_to_cpu_boundary_bytes +=
+                        sizeof(CpuRelaxProposal<TBuffer>) * boundary_count;
+                }
+
+                for (const auto &proposal : m_cpu_boundary_proposals) {
+                    if (proposal.value == infinity) continue;
+                    if (proposal.dst >= graph_datum.nnodes ||
+                        !m_node_cpu_owner[proposal.dst]) {
+                        LOG("[DUAL-RUNTIME] protocol_error=gpu_to_cpu_owner_violation epoch=%u dst=%u\n",
+                            m_insertion_epoch, proposal.dst);
+                        std::abort();
+                    }
+                    const TBuffer current = std::min(
+                        static_cast<TBuffer>(m_cpu_node_values[proposal.dst]),
+                        m_cpu_node_buffers[proposal.dst]);
+                    if (proposal.value < current) {
+                        m_cpu_node_values[proposal.dst] =
+                            static_cast<TValue>(proposal.value);
+                        m_cpu_node_buffers[proposal.dst] = proposal.value;
+                        m_cpu_node_parents[proposal.dst] = proposal.parent;
+                        m_cpu_frontier.push_back(proposal.dst);
+                    }
+                }
+            }
+
+            void RunCpuOwnedClosureHost(
+                    InsertionRoundStats &stats,
+                    std::vector<CpuRelaxProposal<TBuffer>> &gpu_boundary) {
+                Stopwatch sw_cpu_owner(true);
+                GraphDatum &graph_datum = *m_graph_datum;
+                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
+                const TBuffer infinity = std::numeric_limits<TBuffer>::max();
+                while (!m_cpu_frontier.empty()) {
+                    const size_t wave_size = m_cpu_frontier.size();
+                    ++stats.cpu_closure_rounds;
+                    for (size_t wave_offset = 0; wave_offset < wave_size; ++wave_offset) {
+                        const index_t src = m_cpu_frontier.front();
+                        m_cpu_frontier.pop_front();
+                        const TBuffer src_value = m_cpu_node_buffers[src];
+                        const uint64_t edge_start = host_pma.sync_vertices_[src].index;
+                        const uint64_t degree = host_pma.sync_vertices_[src].degree;
+                        ++stats.cpu_expanded_vertices;
+                        stats.cpu_edge_visits += degree;
+                        for (uint64_t offset = 0; offset < degree; ++offset) {
+                            const index_t dst = host_pma.edges_[edge_start + offset];
+                            if (dst >= graph_datum.nnodes) continue;
+                            const uint64_t candidate_wide =
+                                static_cast<uint64_t>(src_value) +
+                                static_cast<uint64_t>((src + dst) % 128 + 1);
+                            if (candidate_wide >= static_cast<uint64_t>(infinity)) continue;
+                            const TBuffer candidate = static_cast<TBuffer>(candidate_wide);
+                            if (m_node_cpu_owner[dst]) {
+                                const TBuffer current = std::min(
+                                    static_cast<TBuffer>(m_cpu_node_values[dst]),
+                                    m_cpu_node_buffers[dst]);
+                                if (candidate < current) {
+                                    m_cpu_node_values[dst] = static_cast<TValue>(candidate);
+                                    m_cpu_node_buffers[dst] = candidate;
+                                    m_cpu_node_parents[dst] = src;
+                                    m_cpu_frontier.push_back(dst);
+                                    ++stats.cpu_local_relax_success;
+                                }
+                            } else {
+                                gpu_boundary.push_back({dst, candidate, src});
+                            }
+                        }
+                    }
+                }
+                sw_cpu_owner.stop();
+                stats.cpu_service_ms += sw_cpu_owner.ms();
+            }
+
+            void CommitCpuOwnedClosure(
+                    std::vector<CpuRelaxProposal<TBuffer>> &gpu_boundary,
+                    bool cpu_closure_ran,
+                    InsertionRoundStats &stats) {
+                GraphDatum &graph_datum = *m_graph_datum;
+                if (!cpu_closure_ran) return;
+                for (const index_t seg : m_cpu_owned_segments) {
+                    const index_t begin = m_groute_context->seg_snode[seg];
+                    const index_t end = m_groute_context->seg_enode[seg];
+                    const size_t count = end - begin;
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        graph_datum.GetValueDeviceObject() + begin,
+                        m_cpu_node_values.data() + begin,
+                        sizeof(TValue) * count, cudaMemcpyHostToDevice));
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        graph_datum.GetBufferDeviceObject() + begin,
+                        m_cpu_node_buffers.data() + begin,
+                        sizeof(TBuffer) * count, cudaMemcpyHostToDevice));
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        graph_datum.GetParentDeviceObject() + begin,
+                        m_cpu_node_parents.data() + begin,
+                        sizeof(index_t) * count, cudaMemcpyHostToDevice));
+                }
+
+                for (const auto &proposal : gpu_boundary) {
+                    if (proposal.dst >= graph_datum.nnodes ||
+                        m_node_cpu_owner[proposal.dst]) {
+                        LOG("[DUAL-RUNTIME] protocol_error=cpu_to_gpu_owner_violation epoch=%u dst=%u\n",
+                            m_insertion_epoch, proposal.dst);
+                        std::abort();
+                    }
+                }
+                if (!gpu_boundary.empty()) {
+                    CommitCpuBoundaryProposals(gpu_boundary,
+                                          stats,
+                                          m_device_insertion_changed_vertices.DeviceObject());
+                }
+                stats.cpu_to_gpu_boundary_proposals += gpu_boundary.size();
+                stats.cpu_to_gpu_boundary_bytes +=
+                    sizeof(CpuRelaxProposal<TBuffer>) * gpu_boundary.size();
+            }
+
             void ExecutePolicy_Converge(AlgoVariant *algo_variant) {
-                // printf("conver iter\n");
                 auto &app_inst = *m_app_inst;
-                auto &vcsr_graph_host = m_vcsr_dev_graph_allocator->HostObject();
                 GraphDatum &graph_datum = *m_graph_datum;
                 bool zcflag = true;
                 Stopwatch sw_execution(true);
                 m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-		        uint64_t seg_sedge_csr,seg_nedges_csr;
-		        index_t seg_snode,seg_enode;
+                uint64_t seg_sedge_csr;
+                index_t seg_snode,seg_enode;
 
                 m_groute_context->segment_ct = FLAGS_SEGMENT;
-                // vcsr_graph_host
-                index_t seg_exc = 0;
 
+                uint64_t active_sources = 0;
+                uint64_t active_edge_span_upper_bound = 0;
+                uint32_t active_partitions = 0;
+                uint32_t kernel_launches = 0;
+                InsertionRoundStats cpu_stats;
+                StageGpuToCpuBoundary(cpu_stats);
+                const bool cpu_closure_ran = !m_cpu_frontier.empty();
+                std::vector<CpuRelaxProposal<TBuffer>> gpu_boundary;
+                m_device_insertion_changed_vertices.ResetAsync(m_stream->cuda_stream);
+                m_stream->Sync();
+                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; ++seg_idx) {
+                    if (graph_datum.seg_active_num[seg_idx] == 0) {
+                        continue;
+                    }
+                    active_sources += graph_datum.seg_active_num[seg_idx];
+                    active_edge_span_upper_bound +=
+                        m_groute_context->seg_nedge_csr[seg_idx];
+                    active_partitions++;
+                }
                 index_t stream_id;
-                // LOG("debug 1\n");
+                using RoundClock = std::chrono::steady_clock;
+                RoundClock::time_point gpu_start;
+                RoundClock::time_point gpu_end;
+                RoundClock::time_point cpu_start;
+                RoundClock::time_point cpu_end;
+                const auto gpu_submit_start = RoundClock::now();
+                std::thread cpu_worker;
+                const auto launch_cpu_worker = [&]() {
+                    if (!cpu_closure_ran || cpu_worker.joinable()) return;
+                    cpu_worker = std::thread([&]() {
+                        cpu_start = RoundClock::now();
+                        RunCpuOwnedClosureHost(cpu_stats, gpu_boundary);
+                        cpu_end = RoundClock::now();
+                    });
+                };
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-    		        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-    		        seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
-    		        seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
-    		        seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx]; 
+                    if (graph_datum.seg_active_num[seg_idx] == 0) {
+                        continue;
+                    }
+                    if (m_insertion_epoch_active &&
+                        m_partition_owners[seg_idx] ==
+                            static_cast<uint8_t>(PartitionOwner::CPU)) {
+                        LOG("[DUAL-RUNTIME] protocol_error=cpu_owner_in_gpu_worklist epoch=%u segment=%u\n",
+                            m_insertion_epoch, seg_idx);
+                        std::abort();
+                    }
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];                                    // end node
+                    seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];                            // start edge
 
-    		        stream_id = seg_idx % FLAGS_n_stream;
+                    stream_id = seg_idx % FLAGS_n_stream;
 
                     const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                     if(algo_variant[seg_idx] == AlgoVariant::Zero_Copy){
+                        if (kernel_launches == 0) {
+                            gpu_start = RoundClock::now();
+                        }
                         m_vcsr_dev_graph_allocator->SwitchZC();
                         zcflag = true;
                         RunSyncPushDDB_Delta(app_inst,seg_snode,seg_enode,seg_sedge_csr,seg_idx,zcflag,
                            vcsr_graph,
                            graph_datum,
-                           m_engine_options,
-                           stream[stream_id]); 
+                               m_engine_options,
+                               stream[stream_id],
+                               m_device_insertion_changed_vertices.DeviceObject(),
+                               m_insertion_epoch_active,
+                               m_insertion_epoch_active ? m_device_cpu_destination_flags : nullptr,
+                               m_insertion_epoch_active
+                                   ? m_device_gpu_to_cpu_boundary_vertices.DeviceObject()
+                                   : groute::dev::Queue<index_t>(nullptr, nullptr, 0),
+                               m_insertion_epoch_active
+                               ? m_device_gpu_to_cpu_boundary_values : nullptr,
+                           m_insertion_epoch_active
+                               ? m_device_gpu_to_cpu_boundary_parents : nullptr);
+                        kernel_launches++;
+                        launch_cpu_worker();
                     }
                }
+               const auto gpu_submit_end = RoundClock::now();
+               if (kernel_launches != 0) {
+                   cpu_stats.gpu_submit_ms =
+                       std::chrono::duration<double, std::milli>(
+                           gpu_submit_end - gpu_submit_start).count();
+               }
+
+               launch_cpu_worker();
                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
                      stream[stream_idx].Sync();
                }
+               gpu_end = RoundClock::now();
+               if (cpu_worker.joinable()) {
+                   cpu_worker.join();
+               }
+               const auto joined_at = RoundClock::now();
+
+               if (kernel_launches != 0) {
+                   cpu_stats.gpu_service_ms =
+                       std::chrono::duration<double, std::milli>(
+                           gpu_end - gpu_start).count();
+               }
+               if (cpu_closure_ran && kernel_launches != 0) {
+                   const auto overlap_start = std::max(cpu_start, gpu_start);
+                   const auto overlap_end = std::min(cpu_end, gpu_end);
+                   if (overlap_end > overlap_start) {
+                       cpu_stats.overlap_ms =
+                           std::chrono::duration<double, std::milli>(
+                               overlap_end - overlap_start).count();
+                   }
+                   cpu_stats.concurrent = cpu_stats.overlap_ms > 0.0;
+                   if (cpu_end > gpu_end) {
+                       cpu_stats.gpu_wait_ms =
+                           std::chrono::duration<double, std::milli>(
+                               joined_at - gpu_end).count();
+                   } else if (gpu_end > cpu_end) {
+                       cpu_stats.cpu_wait_ms =
+                           std::chrono::duration<double, std::milli>(
+                               gpu_end - cpu_end).count();
+                   }
+               }
+
+               CommitCpuOwnedClosure(gpu_boundary, cpu_closure_ran, cpu_stats);
+               StageGpuToCpuBoundary(cpu_stats);
 
                PostComputationBW();
-               
+               sw_execution.stop();
+               const uint64_t reported_round = m_insertion_epoch_active
+                   ? m_insertion_convergence_round + 1
+                   : m_running_info.current_round;
+               if (FLAGS_verbose) {
+                   uint64_t next_active_sources = 0;
+                   uint32_t next_active_partitions = 0;
+                   for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; ++seg_idx) {
+                       next_active_sources += graph_datum.seg_active_num[seg_idx];
+                       next_active_partitions +=
+                           graph_datum.seg_active_num[seg_idx] == 0 ? 0 : 1;
+                   }
+                   LOG("[P0-FRONTIER][insert] state_round=%llu active_sources=%llu active_partitions=%u active_edge_span_upper_bound=%llu kernel_launches=%u post_rebuild_partitions=%d next_active_sources=%llu next_active_partitions=%u round_wall_ms=%.3f\n",
+                       static_cast<unsigned long long>(reported_round),
+                       static_cast<unsigned long long>(active_sources),
+                       active_partitions,
+                       static_cast<unsigned long long>(active_edge_span_upper_bound),
+                       kernel_launches,
+                       m_insertion_epoch_active
+                           ? m_last_insertion_dirty_partitions
+                           : static_cast<uint32_t>(FLAGS_SEGMENT),
+                       static_cast<unsigned long long>(next_active_sources),
+                       next_active_partitions,
+                       sw_execution.ms());
+               }
+               LOG("[DUAL-RUNTIME-ROUND] epoch=%u round=%llu gpu_kernels=%u gpu_vertices=%llu gpu_edge_span_upper_bound=%llu cpu_vertices=%llu cpu_edges=%llu cpu_closure_rounds=%llu cpu_local_relax=%llu gpu_to_cpu_items=%llu gpu_to_cpu_bytes=%llu cpu_to_gpu_items=%llu cpu_to_gpu_bytes=%llu cpu_to_gpu_success=%llu gpu_submit_ms=%.3f gpu_service_ms=%.3f cpu_service_ms=%.3f overlap_ms=%.3f cpu_wait_ms=%.3f gpu_wait_ms=%.3f concurrent=%d proposal_alloc_ms=%.3f proposal_compress_ms=%.3f proposal_h2d_ms=%.3f proposal_merge_ms=%.3f dirty_partitions=%u barriers=1 wall_ms=%.3f\n",
+                   m_insertion_epoch,
+                   static_cast<unsigned long long>(reported_round),
+                   kernel_launches,
+                   static_cast<unsigned long long>(active_sources),
+                   static_cast<unsigned long long>(active_edge_span_upper_bound),
+                   static_cast<unsigned long long>(cpu_stats.cpu_expanded_vertices),
+                   static_cast<unsigned long long>(cpu_stats.cpu_edge_visits),
+                   static_cast<unsigned long long>(cpu_stats.cpu_closure_rounds),
+                   static_cast<unsigned long long>(cpu_stats.cpu_local_relax_success),
+                   static_cast<unsigned long long>(cpu_stats.gpu_to_cpu_boundary_items),
+                   static_cast<unsigned long long>(cpu_stats.gpu_to_cpu_boundary_bytes),
+                   static_cast<unsigned long long>(cpu_stats.cpu_to_gpu_boundary_proposals),
+                   static_cast<unsigned long long>(cpu_stats.cpu_to_gpu_boundary_bytes),
+                   static_cast<unsigned long long>(cpu_stats.cpu_proposals_success),
+                   cpu_stats.gpu_submit_ms,
+                   cpu_stats.gpu_service_ms,
+                   cpu_stats.cpu_service_ms,
+                   cpu_stats.overlap_ms,
+                   cpu_stats.cpu_wait_ms,
+                   cpu_stats.gpu_wait_ms,
+                   cpu_stats.concurrent ? 1 : 0,
+                   cpu_stats.allocation_ms,
+                   cpu_stats.proposal_compress_ms,
+                   cpu_stats.h2d_proposal_ms,
+                   cpu_stats.merge_ms,
+                   m_last_insertion_dirty_partitions,
+                   sw_execution.ms());
+
             //    sw_round.stop();
 
             }
 
-            void RunCpuOverlapProbeDryRun(CoopOverlapProbeStats &probe) {
-                Stopwatch sw_probe(true);
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                std::vector<index_t> touched = m_coop_batch_touched_sources;
-                std::sort(touched.begin(), touched.end());
-                touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
-
-                probe.candidate_sources = touched.size();
-                probe.edge_budget = static_cast<uint64_t>(std::max(FLAGS_coop_overlap_probe_edge_budget, 0));
-                const uint64_t max_sources =
-                    static_cast<uint64_t>(std::max(FLAGS_coop_overlap_probe_max_sources, 0));
-                uint64_t checksum = 1469598103934665603ull;
-
-                for (const index_t src : touched) {
-                    if (max_sources > 0 && probe.selected_sources >= max_sources) {
-                        break;
-                    }
-                    if (probe.edge_budget > 0 && probe.edge_visits >= probe.edge_budget) {
-                        break;
-                    }
-                    if (src >= host_pma.nnodes) {
-                        continue;
-                    }
-
-                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                    if (degree == 0) {
-                        continue;
-                    }
-                    if (FLAGS_coop_cpu_min_degree > 0 &&
-                        degree < static_cast<uint64_t>(FLAGS_coop_cpu_min_degree)) {
-                        continue;
-                    }
-
-                    probe.selected_sources++;
-                    if (host_pma.vertices_[src].cache) {
-                        probe.cached_sources++;
-                    } else {
-                        probe.non_cached_sources++;
-                    }
-
-                    const uint64_t edge_start = host_pma.sync_vertices_[src].index;
-                    uint64_t edges_to_read = degree;
-                    if (probe.edge_budget > 0) {
-                        edges_to_read = std::min(edges_to_read, probe.edge_budget - probe.edge_visits);
-                    }
-                    for (uint64_t edge_offset = 0; edge_offset < edges_to_read; edge_offset++) {
-                        const index_t dst = host_pma.edges_[edge_start + edge_offset];
-                        checksum ^= static_cast<uint64_t>(src) + 0x9e3779b97f4a7c15ull +
-                                    (static_cast<uint64_t>(dst) << 6) + (checksum >> 2);
-                    }
-                    probe.edge_visits += edges_to_read;
-                    probe.structural_proposals += edges_to_read;
-                }
-
-                probe.dst_checksum = checksum;
-                probe.host_pma_read_bytes =
-                    probe.edge_visits * sizeof(index_t) +
-                    probe.selected_sources *
-                        (sizeof(host_pma.sync_vertices_[0]) + sizeof(host_pma.vertices_[0]));
-                sw_probe.stop();
-                probe.cpu_wall_ms = sw_probe.ms();
-            }
-
-            void LaunchGpuDeltaAndSync(AlgoVariant *algo_variant,
-                                       double &gpu_launch_submit_ms,
-                                       double &gpu_sync_wait_ms,
-                                       uint32_t &gpu_kernel_launches) {
-                LaunchGpuDeltaAndSyncWithSkip(algo_variant,
-                                              nullptr,
-                                              0,
-                                              nullptr,
-                                              gpu_launch_submit_ms,
-                                              gpu_sync_wait_ms,
-                                              gpu_kernel_launches);
-            }
-
-            void LaunchGpuDeltaAndSyncWithSkip(AlgoVariant *algo_variant,
-                                               const uint32_t *cpu_source_owner_epoch,
-                                               uint32_t cpu_source_epoch,
-                                               unsigned long long *gpu_skipped_cpu_sources,
-                                               double &gpu_launch_submit_ms,
-                                               double &gpu_sync_wait_ms,
-                                               uint32_t &gpu_kernel_launches,
-                                               groute::dev::Queue<index_t> gpu_relax_dst_vertices =
-                                                   groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                                               unsigned long long *gpu_relax_dst_degree_sum = nullptr) {
-                auto &app_inst = *m_app_inst;
-                GraphDatum &graph_datum = *m_graph_datum;
-                bool zcflag = true;
-                m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-                uint64_t seg_sedge_csr;
-                index_t seg_snode, seg_enode;
-                index_t stream_id;
-                gpu_kernel_launches = 0;
-
-                m_groute_context->segment_ct = FLAGS_SEGMENT;
-
-                std::vector<index_t> active_gpu_segments;
-                active_gpu_segments.reserve(FLAGS_SEGMENT);
-                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                    const uint64_t active_count = graph_datum.seg_active_num[seg_idx];
-                    if (active_count > 0 && algo_variant[seg_idx] == AlgoVariant::Zero_Copy) {
-                        active_gpu_segments.push_back(seg_idx);
-                    }
-                }
-
-                Stopwatch sw_launch(true);
-                for (const index_t seg_idx : active_gpu_segments) {
-                    seg_snode = m_groute_context->seg_snode[seg_idx];
-                    seg_enode = m_groute_context->seg_enode[seg_idx];
-                    seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];
-                    stream_id = seg_idx % FLAGS_n_stream;
-
-                    const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
-                    m_vcsr_dev_graph_allocator->SwitchZC();
-                    zcflag = true;
-                    if (cpu_source_owner_epoch == nullptr) {
-                        RunSyncPushDDB_Delta(app_inst,
-                                             seg_snode,
-                                             seg_enode,
-                                             seg_sedge_csr,
-                                             seg_idx,
-                                             zcflag,
-                                             vcsr_graph,
-                                             graph_datum,
-                                             m_engine_options,
-                                             stream[stream_id],
-                                             groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                                             nullptr,
-                                             false,
-                                             nullptr,
-                                             0,
-                                             nullptr,
-                                             nullptr,
-                                             groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                                             groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                                             nullptr,
-                                             nullptr,
-                                             nullptr,
-                                             nullptr,
-                                             nullptr,
-                                             nullptr,
-                                             nullptr,
-                                             0,
-                                             static_cast<uint32_t>(graph_datum.seg_active_num[seg_idx]));
-                    } else {
-                        RunSyncPushDDB_Delta(app_inst,
-                                             seg_snode,
-                                             seg_enode,
-                                             seg_sedge_csr,
-                                             seg_idx,
-                                             zcflag,
-                                             vcsr_graph,
-                                             graph_datum,
-                                             m_engine_options,
-                                             stream[stream_id],
-                                             m_coop_device_changed_vertices.DeviceObject(),
-                                             m_coop_device_shadow_valid_flags,
-                                             true,
-                                             cpu_source_owner_epoch,
-                                             cpu_source_epoch,
-                                             gpu_skipped_cpu_sources,
-                                             nullptr,
-                                             groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                                             gpu_relax_dst_vertices,
-                                             nullptr,
-                                             nullptr,
-                                             gpu_relax_dst_degree_sum,
-                                             nullptr,
-                                             nullptr,
-                                             nullptr,
-                                             nullptr,
-                                             0,
-                                             static_cast<uint32_t>(graph_datum.seg_active_num[seg_idx]));
-                    }
-                    gpu_kernel_launches++;
-                }
-                sw_launch.stop();
-                gpu_launch_submit_ms = sw_launch.ms();
-
-                Stopwatch sw_sync(true);
-                for (index_t stream_idx = 0; stream_idx < FLAGS_n_stream; stream_idx++) {
-                    stream[stream_idx].Sync();
-                }
-                sw_sync.stop();
-                gpu_sync_wait_ms = sw_sync.ms();
-            }
-
-            void ExecutePolicy_Converge_OverlapProbe(AlgoVariant *algo_variant,
-                                                     uint64_t coop_seq,
-                                                     uint32_t coop_round,
-                                                     const char *split_mode_name) {
-                CoopOverlapProbeStats probe;
-                std::thread cpu_probe_thread([this, &probe]() {
-                    RunCpuOverlapProbeDryRun(probe);
-                });
-
-                double gpu_launch_submit_ms = 0.0;
-                double gpu_sync_wait_ms = 0.0;
-                uint32_t gpu_kernel_launches = 0;
-                LaunchGpuDeltaAndSync(algo_variant,
-                                      gpu_launch_submit_ms,
-                                      gpu_sync_wait_ms,
-                                      gpu_kernel_launches);
-
-                if (cpu_probe_thread.joinable()) {
-                    cpu_probe_thread.join();
-                }
-
-                const double overlap_window_ms = gpu_launch_submit_ms + gpu_sync_wait_ms;
-                const double hidden_ms = std::min(probe.cpu_wall_ms, overlap_window_ms);
-                const double exposed_ms = probe.cpu_wall_ms > overlap_window_ms
-                                              ? probe.cpu_wall_ms - overlap_window_ms
-                                              : 0.0;
-                const double hidden_ratio = probe.cpu_wall_ms > 0.0
-                                                ? hidden_ms / probe.cpu_wall_ms
-                                                : 0.0;
-
-                LOG("[COOP-OVERLAP] seq=%lu round=%u split_mode=%s phase=9A_read_only_probe candidate_sources=%lu selected_sources=%lu cached_sources=%lu non_cached_sources=%lu edge_visits=%lu structural_proposals=%lu host_pma_read_bytes=%lu edge_budget=%lu cpu_wall_ms=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f overlap_window_ms=%f cpu_overlap_hidden_ms=%f cpu_overlap_exposed_ms=%f hidden_ratio=%f gpu_kernel_launches=%u dst_checksum=%lu note=no_device_state_change\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    split_mode_name,
-                    probe.candidate_sources,
-                    probe.selected_sources,
-                    probe.cached_sources,
-                    probe.non_cached_sources,
-                    probe.edge_visits,
-                    probe.structural_proposals,
-                    probe.host_pma_read_bytes,
-                    probe.edge_budget,
-                    probe.cpu_wall_ms,
-                    gpu_launch_submit_ms,
-                    gpu_sync_wait_ms,
-                    overlap_window_ms,
-                    hidden_ms,
-                    exposed_ms,
-                    hidden_ratio,
-                    gpu_kernel_launches,
-                    probe.dst_checksum);
-
-                PostComputationBW();
-            }
-
-            void RunCpuPacketDryRun(const std::vector<index_t> &sources,
-                                    const std::vector<TValue> &source_values,
-                                    const std::vector<TBuffer> &source_buffers,
-                                    std::vector<CpuRelaxProposal<TBuffer>> &proposals,
-                                    CoopPacketDryRunStats &packet,
-                                    std::vector<uint64_t> *edges_read_per_source = nullptr) {
-                Stopwatch sw_cpu(true);
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                GraphDatum &graph_datum = *m_graph_datum;
-                uint64_t checksum = 1469598103934665603ull;
-                if (edges_read_per_source != nullptr) {
-                    edges_read_per_source->assign(sources.size(), 0);
-                }
-
-                for (size_t i = 0; i < sources.size(); i++) {
-                    if (packet.edge_budget > 0 && packet.edge_visits >= packet.edge_budget) {
-                        break;
-                    }
-                    const index_t src = sources[i];
-                    if (src >= host_pma.nnodes) {
-                        continue;
-                    }
-                    const TBuffer inf = static_cast<TBuffer>(std::numeric_limits<uint32_t>::max());
-                    const TBuffer src_buffer = source_buffers[i];
-                    const TValue src_value = source_values[i];
-                    TBuffer base_value = src_buffer < static_cast<TBuffer>(src_value)
-                                             ? src_buffer
-                                             : static_cast<TBuffer>(src_value);
-                    if (base_value == inf) {
-                        continue;
-                    }
-                    packet.reachable_sources++;
-                    if (src_buffer >= static_cast<TBuffer>(src_value)) {
-                        continue;
-                    }
-                    packet.active_sources++;
-
-                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                    if (degree == 0) {
-                        continue;
-                    }
-                    const uint64_t edge_start = host_pma.sync_vertices_[src].index;
-                    uint64_t edges_to_read = degree;
-                    if (packet.edge_budget > 0) {
-                        edges_to_read = std::min(edges_to_read, packet.edge_budget - packet.edge_visits);
-                    }
-                    if (host_pma.vertices_[src].cache) {
-                        packet.cached_active_sources++;
-                        packet.cached_edges += edges_to_read;
-                    } else {
-                        packet.non_cached_active_sources++;
-                        packet.non_cached_edges += edges_to_read;
-                    }
-                    for (uint64_t edge_offset = 0; edge_offset < edges_to_read; edge_offset++) {
-                        const index_t dst = host_pma.edges_[edge_start + edge_offset];
-                        if (dst >= graph_datum.nnodes) {
-                            continue;
-                        }
-                        const TBuffer weight = static_cast<TBuffer>((src + dst) % 128 + 1);
-                        const TBuffer new_value = base_value + weight;
-                        proposals.push_back({dst, new_value, src});
-                        checksum ^= static_cast<uint64_t>(dst) + 0x9e3779b97f4a7c15ull +
-                                    (static_cast<uint64_t>(new_value) << 6) + (checksum >> 2);
-                    }
-                    if (edges_read_per_source != nullptr) {
-                        (*edges_read_per_source)[i] = edges_to_read;
-                    }
-                    packet.edge_visits += edges_to_read;
-                    packet.generated_proposals += edges_to_read;
-                }
-
-                packet.proposal_checksum = checksum;
-                packet.host_pma_read_bytes =
-                    packet.edge_visits * sizeof(index_t) +
-                    packet.selected_sources *
-                        (sizeof(host_pma.sync_vertices_[0]) + sizeof(host_pma.vertices_[0]));
-                sw_cpu.stop();
-                packet.cpu_wall_ms = sw_cpu.ms();
-            }
-
-            void SelectCpuPacketSources(CoopPacketDryRunStats &packet,
-                                        std::vector<index_t> &packet_sources,
-                                        uint64_t &selected_edge_est) {
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                packet.edge_budget = static_cast<uint64_t>(std::max(FLAGS_coop_packet_edge_budget, 0));
-                const uint64_t max_sources =
-                    static_cast<uint64_t>(std::max(FLAGS_coop_packet_max_sources, 0));
-                selected_edge_est = 0;
-                const std::string source_policy = FLAGS_coop_packet_source_policy;
-                auto record_selected_source = [&](const index_t src, const uint64_t degree) {
-                    packet_sources.push_back(src);
-                    selected_edge_est += degree;
-                    if (host_pma.vertices_[src].cache) {
-                        packet.cached_sources++;
-                    } else {
-                        packet.non_cached_sources++;
-                    }
-                };
-                auto try_select_source = [&](const index_t src) {
-                    packet.candidate_sources++;
-                    if (max_sources > 0 && packet_sources.size() >= max_sources) {
-                        return false;
-                    }
-                    if (packet.edge_budget > 0 && selected_edge_est >= packet.edge_budget) {
-                        return false;
-                    }
-                    if (src >= host_pma.nnodes) {
-                        return true;
-                    }
-                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                    if (degree == 0) {
-                        return true;
-                    }
-                    if (FLAGS_coop_cpu_min_degree > 0 &&
-                        degree < static_cast<uint64_t>(FLAGS_coop_cpu_min_degree)) {
-                        return true;
-                    }
-                    if (packet.edge_budget > 0 &&
-                        selected_edge_est + degree > packet.edge_budget) {
-                        return false;
-                    }
-                    record_selected_source(src, degree);
-                    return true;
-                };
-                auto try_select_ranked_source = [&](const index_t src, const uint64_t degree) {
-                    if (max_sources > 0 && packet_sources.size() >= max_sources) {
-                        return false;
-                    }
-                    if (packet.edge_budget > 0 && selected_edge_est >= packet.edge_budget) {
-                        return false;
-                    }
-                    if (packet.edge_budget > 0 &&
-                        selected_edge_est + degree > packet.edge_budget) {
-                        return true;
-                    }
-                    record_selected_source(src, degree);
-                    return true;
-                };
-
-                const bool ranked_active_policy =
-                    source_policy == "degree_desc" ||
-                    source_policy == "noncached_degree" ||
-                    source_policy == "cache_aware" ||
-                    source_policy == "history_success" ||
-                    source_policy == "hybrid_score";
-
-                if (source_policy == "active_frontier" || ranked_active_policy) {
-                    GraphDatum &graph_datum = *m_graph_datum;
-                    for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                        const uint64_t active_count =
-                            static_cast<uint64_t>(graph_datum.seg_active_num[seg_idx]);
-                        packet.frontier_active_sources += active_count;
-                        if (active_count > 0) {
-                            packet.active_segments++;
-                        }
-                    }
-                    if (ranked_active_policy) {
-                        struct PacketSourceRank {
-                            index_t src;
-                            uint64_t degree;
-                            uint8_t cached;
-                            uint64_t order;
-                            double score;
-                        };
-                        std::vector<index_t> active_sources;
-                        active_sources.reserve(static_cast<size_t>(packet.frontier_active_sources));
-                        for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                            const index_t stream_id = seg_idx % FLAGS_n_stream;
-                            const uint32_t active_count =
-                                static_cast<uint32_t>(graph_datum.seg_active_num[seg_idx]);
-                            if (active_count == 0) {
-                                continue;
-                            }
-                            const size_t old_size = active_sources.size();
-                            active_sources.resize(old_size + active_count);
-                            GROUTE_CUDA_CHECK(cudaMemcpyAsync(
-                                active_sources.data() + old_size,
-                                graph_datum.m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
-                                sizeof(index_t) * active_count,
-                                cudaMemcpyDeviceToHost,
-                                stream[stream_id].cuda_stream));
-                            stream[stream_id].Sync();
-                        }
-                        std::sort(active_sources.begin(), active_sources.end());
-                        active_sources.erase(std::unique(active_sources.begin(), active_sources.end()),
-                                             active_sources.end());
-
-                        std::vector<PacketSourceRank> ranked_sources;
-                        ranked_sources.reserve(active_sources.size());
-                        uint64_t order = 0;
-                        for (const index_t src : active_sources) {
-                            packet.candidate_sources++;
-                            if (src >= host_pma.nnodes) {
-                                continue;
-                            }
-                            const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                            if (degree == 0) {
-                                continue;
-                            }
-                            if (FLAGS_coop_cpu_min_degree > 0 &&
-                                degree < static_cast<uint64_t>(FLAGS_coop_cpu_min_degree)) {
-                                continue;
-                            }
-                            const uint8_t cached = host_pma.vertices_[src].cache ? 1 : 0;
-                            const double degree_score = std::log2(static_cast<double>(degree) + 1.0);
-                            const double uncached_edges =
-                                cached ? 0.0 : static_cast<double>(degree);
-                            double score = degree_score;
-                            if (source_policy == "degree_desc") {
-                                score = static_cast<double>(degree);
-                            } else if (source_policy == "noncached_degree") {
-                                score = (cached ? 0.0 : 1000000000.0) +
-                                        static_cast<double>(degree);
-                            } else if (source_policy == "cache_aware") {
-                                score = (cached ? 0.0 : 1000000000.0) +
-                                        8.0 * degree_score +
-                                        0.25 * uncached_edges;
-                            } else {
-                                score = (cached ? 0.0 : 1000000000.0) +
-                                        8.0 * degree_score +
-                                        0.25 * uncached_edges;
-                            }
-                            ranked_sources.push_back({src, degree, cached, order++, score});
-                        }
-                        if (source_policy == "history_success") {
-                            LOG("[COOP-PACKET-WARN] source_policy=history_success has no per-source success history yet; using hybrid_score_without_history\n");
-                        }
-                        std::sort(ranked_sources.begin(),
-                                  ranked_sources.end(),
-                                  [](const PacketSourceRank &a, const PacketSourceRank &b) {
-                                      if (a.score != b.score) {
-                                          return a.score > b.score;
-                                      }
-                                      if (a.degree != b.degree) {
-                                          return a.degree > b.degree;
-                                      }
-                                      return a.order < b.order;
-                                  });
-                        for (const auto &candidate : ranked_sources) {
-                            if (!try_select_ranked_source(candidate.src, candidate.degree)) {
-                                break;
-                            }
-                        }
-                        packet.selected_sources = packet_sources.size();
-                        return;
-                    }
-                    for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                        if (max_sources > 0 && packet_sources.size() >= max_sources) {
-                            break;
-                        }
-                        if (packet.edge_budget > 0 && selected_edge_est >= packet.edge_budget) {
-                            break;
-                        }
-                        const index_t stream_id = seg_idx % FLAGS_n_stream;
-                        const uint32_t active_count =
-                            static_cast<uint32_t>(graph_datum.seg_active_num[seg_idx]);
-                        if (active_count == 0) {
-                            continue;
-                        }
-                        std::vector<index_t> active_vertices(active_count);
-                        GROUTE_CUDA_CHECK(cudaMemcpyAsync(
-                            active_vertices.data(),
-                            graph_datum.m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
-                            sizeof(index_t) * active_count,
-                            cudaMemcpyDeviceToHost,
-                            stream[stream_id].cuda_stream));
-                        stream[stream_id].Sync();
-                        for (const index_t src : active_vertices) {
-                            if (!try_select_source(src)) {
-                                break;
-                            }
-                        }
-                    }
-                    std::sort(packet_sources.begin(), packet_sources.end());
-                    packet_sources.erase(std::unique(packet_sources.begin(), packet_sources.end()),
-                                         packet_sources.end());
-                    packet.selected_sources = packet_sources.size();
-                } else {
-                    if (source_policy != "batch_touched") {
-                        LOG("[COOP-PACKET-WARN] unknown_source_policy=%s fallback=batch_touched\n",
-                            source_policy.c_str());
-                    }
-                    std::vector<index_t> touched = m_coop_batch_touched_sources;
-                    std::sort(touched.begin(), touched.end());
-                    touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
-                    for (const index_t src : touched) {
-                        if (!try_select_source(src)) {
-                            break;
-                        }
-                    }
-                    packet.selected_sources = packet_sources.size();
-                }
-            }
-
-            void ExecutePolicy_Converge_PacketDryRun(AlgoVariant *algo_variant,
-                                                     uint64_t coop_seq,
-                                                     uint32_t coop_round,
-                                                     const char *split_mode_name) {
-                CoopPacketDryRunStats packet;
-
-                std::vector<index_t> packet_sources;
-                uint64_t selected_edge_est = 0;
-                SelectCpuPacketSources(packet, packet_sources, selected_edge_est);
-                const std::string source_policy = FLAGS_coop_packet_source_policy;
-
-                CoopRoundStats state_stats;
-                std::vector<TValue> source_values;
-                std::vector<TBuffer> source_buffers;
-                if (!packet_sources.empty()) {
-                    FetchCoopStateForVertices(packet_sources,
-                                              source_values,
-                                              source_buffers,
-                                              state_stats,
-                                              false);
-                }
-                packet.source_state_snapshots = packet_sources.size();
-                packet.state_snapshot_bytes =
-                    state_stats.state_request_h2d_bytes + state_stats.state_d2h_bytes;
-                packet.source_state_snapshot_ms =
-                    state_stats.state_request_h2d_ms + state_stats.state_d2h_ms;
-
-                std::vector<CpuRelaxProposal<TBuffer>> proposals;
-                proposals.reserve(packet.edge_budget > 0
-                                      ? static_cast<size_t>(packet.edge_budget)
-                                      : static_cast<size_t>(selected_edge_est));
-                RunCpuPacketDryRun(packet_sources,
-                                   source_values,
-                                   source_buffers,
-                                   proposals,
-                                   packet);
-
-                CoopRoundStats compress_stats;
-                CompressCpuRelaxProposals(proposals, compress_stats);
-                packet.compressed_proposals = proposals.size();
-                packet.compressed_unique_dst = proposals.size();
-                packet.proposal_compress_ms = compress_stats.proposal_compress_ms;
-
-                std::vector<index_t> dst_vertices;
-                if (!proposals.empty()) {
-                    dst_vertices.reserve(proposals.size());
-                    for (const auto &proposal : proposals) {
-                        dst_vertices.push_back(proposal.dst);
-                    }
-                    CoopRoundStats pre_dst_stats;
-                    std::vector<TValue> pre_dst_values;
-                    std::vector<TBuffer> pre_dst_buffers;
-                    FetchCoopStateForVertices(dst_vertices,
-                                              pre_dst_values,
-                                              pre_dst_buffers,
-                                              pre_dst_stats,
-                                              false);
-                    auto &probe_host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                    for (size_t i = 0; i < proposals.size(); i++) {
-                        if (proposals[i].value < pre_dst_buffers[i]) {
-                            packet.estimated_success_before_gpu++;
-                            const index_t dst = proposals[i].dst;
-                            if (dst < probe_host_pma.nnodes) {
-                                const uint64_t dst_degree =
-                                    probe_host_pma.sync_vertices_[dst].degree;
-                                packet.expected_avoided_gpu_edges += dst_degree;
-                                if (dst_degree >= 32) {
-                                    packet.dst_ge32_count++;
-                                    packet.dst_ge32_sum += dst_degree;
-                                }
-                                if (dst_degree >= 128) {
-                                    packet.dst_ge128_count++;
-                                    packet.dst_ge128_sum += dst_degree;
-                                }
-                                if (dst_degree >= 512) {
-                                    packet.dst_ge512_count++;
-                                    packet.dst_ge512_sum += dst_degree;
-                                }
-                                if (dst_degree >= 1024) {
-                                    packet.dst_ge1024_count++;
-                                    packet.dst_ge1024_sum += dst_degree;
-                                }
-                            }
-                        }
-                    }
-                    packet.pre_dst_state_probe_bytes =
-                        pre_dst_stats.state_request_h2d_bytes + pre_dst_stats.state_d2h_bytes;
-                    packet.pre_dst_state_probe_ms =
-                        pre_dst_stats.state_request_h2d_ms + pre_dst_stats.state_d2h_ms;
-                    packet.dst_state_probe_bytes += packet.pre_dst_state_probe_bytes;
-                    packet.dst_state_probe_ms += packet.pre_dst_state_probe_ms;
-                }
-
-                if (FLAGS_coop_packet_diagnostic_merge && !proposals.empty()) {
-                    CoopRoundStats merge_stats;
-                    std::vector<CpuSourceCommit<TValue>> no_source_commits;
-                    Stopwatch sw_merge_wall(true);
-                    MergeCpuSSSPProposals(proposals,
-                                          no_source_commits,
-                                          merge_stats,
-                                          m_coop_device_changed_vertices.DeviceObject());
-                    sw_merge_wall.stop();
-                    packet.diagnostic_merge_success = merge_stats.cpu_proposals_success;
-                    packet.diagnostic_merge_h2d_bytes = merge_stats.h2d_proposal_bytes;
-                    packet.diagnostic_merge_h2d_ms = merge_stats.h2d_proposal_ms;
-                    packet.diagnostic_merge_kernel_ms = merge_stats.merge_ms;
-                    packet.diagnostic_merge_wall_ms = sw_merge_wall.ms();
-                }
-
-                double gpu_launch_submit_ms = 0.0;
-                double gpu_sync_wait_ms = 0.0;
-                uint32_t gpu_kernel_launches = 0;
-                LaunchGpuDeltaAndSync(algo_variant,
-                                      gpu_launch_submit_ms,
-                                      gpu_sync_wait_ms,
-                                      gpu_kernel_launches);
-
-                if (!proposals.empty()) {
-                    CoopRoundStats dst_stats;
-                    std::vector<TValue> dst_values;
-                    std::vector<TBuffer> dst_buffers;
-                    FetchCoopStateForVertices(dst_vertices,
-                                              dst_values,
-                                              dst_buffers,
-                                              dst_stats,
-                                              false);
-                    for (size_t i = 0; i < proposals.size(); i++) {
-                        if (proposals[i].value < dst_buffers[i]) {
-                            packet.estimated_success_after_gpu++;
-                        }
-                    }
-                    packet.post_dst_state_probe_bytes =
-                        dst_stats.state_request_h2d_bytes + dst_stats.state_d2h_bytes;
-                    packet.post_dst_state_probe_ms =
-                        dst_stats.state_request_h2d_ms + dst_stats.state_d2h_ms;
-                    packet.dst_state_probe_bytes += packet.post_dst_state_probe_bytes;
-                    packet.dst_state_probe_ms += packet.post_dst_state_probe_ms;
-                }
-                if (packet.estimated_success_before_gpu > packet.estimated_success_after_gpu) {
-                    packet.pre_after_success_gap =
-                        packet.estimated_success_before_gpu - packet.estimated_success_after_gpu;
-                }
-
-                const double overlap_window_ms = gpu_launch_submit_ms + gpu_sync_wait_ms;
-                const double pre_gpu_probe_ms =
-                    packet.cpu_wall_ms + packet.proposal_compress_ms + packet.pre_dst_state_probe_ms;
-                const double hidden_ms = 0.0;
-                const double exposed_ms = pre_gpu_probe_ms;
-                const double hidden_ratio = 0.0;
-
-                LOG("[COOP-PACKET-DRYRUN] seq=%lu round=%u split_mode=%s phase=9C_packet_dry_run source_policy=%s candidate_sources=%lu selected_sources=%lu source_state_snapshots=%lu reachable_sources=%lu active_sources=%lu cached_sources=%lu non_cached_sources=%lu edge_visits=%lu generated_proposals=%lu compressed_proposals=%lu estimated_success_after_gpu=%lu estimated_success_before_gpu=%lu compressed_unique_dst=%lu pre_after_success_gap=%lu expected_avoided_gpu_edges=%lu dst_ge32_count=%lu dst_ge32_sum=%lu dst_ge128_count=%lu dst_ge128_sum=%lu dst_ge512_count=%lu dst_ge512_sum=%lu dst_ge1024_count=%lu dst_ge1024_sum=%lu diagnostic_merge_enabled=%d diagnostic_merge_success=%lu diagnostic_merge_h2d_bytes=%lu diagnostic_merge_h2d_ms=%f diagnostic_merge_kernel_ms=%f diagnostic_merge_wall_ms=%f host_pma_read_bytes=%lu state_snapshot_bytes=%lu dst_state_probe_bytes=%lu pre_dst_state_probe_bytes=%lu post_dst_state_probe_bytes=%lu edge_budget=%lu source_state_snapshot_ms=%f cpu_wall_ms=%f proposal_compress_ms=%f dst_state_probe_ms=%f pre_dst_state_probe_ms=%f post_dst_state_probe_ms=%f pre_gpu_probe_ms=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f overlap_window_ms=%f cpu_overlap_hidden_ms=%f cpu_overlap_exposed_ms=%f hidden_ratio=%f gpu_kernel_launches=%u proposal_checksum=%lu note=%s\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    split_mode_name,
-                    source_policy.c_str(),
-                    packet.candidate_sources,
-                    packet.selected_sources,
-                    packet.source_state_snapshots,
-                    packet.reachable_sources,
-                    packet.active_sources,
-                    packet.cached_sources,
-                    packet.non_cached_sources,
-                    packet.edge_visits,
-                    packet.generated_proposals,
-                    packet.compressed_proposals,
-                    packet.estimated_success_after_gpu,
-                    packet.estimated_success_before_gpu,
-                    packet.compressed_unique_dst,
-                    packet.pre_after_success_gap,
-                    packet.expected_avoided_gpu_edges,
-                    packet.dst_ge32_count,
-                    packet.dst_ge32_sum,
-                    packet.dst_ge128_count,
-                    packet.dst_ge128_sum,
-                    packet.dst_ge512_count,
-                    packet.dst_ge512_sum,
-                    packet.dst_ge1024_count,
-                    packet.dst_ge1024_sum,
-                    FLAGS_coop_packet_diagnostic_merge ? 1 : 0,
-                    packet.diagnostic_merge_success,
-                    packet.diagnostic_merge_h2d_bytes,
-                    packet.diagnostic_merge_h2d_ms,
-                    packet.diagnostic_merge_kernel_ms,
-                    packet.diagnostic_merge_wall_ms,
-                    packet.host_pma_read_bytes,
-                    packet.state_snapshot_bytes,
-                    packet.dst_state_probe_bytes,
-                    packet.pre_dst_state_probe_bytes,
-                    packet.post_dst_state_probe_bytes,
-                    packet.edge_budget,
-                    packet.source_state_snapshot_ms,
-                    packet.cpu_wall_ms,
-                    packet.proposal_compress_ms,
-                    packet.dst_state_probe_ms,
-                    packet.pre_dst_state_probe_ms,
-                    packet.post_dst_state_probe_ms,
-                    pre_gpu_probe_ms,
-                    gpu_launch_submit_ms,
-                    gpu_sync_wait_ms,
-                    overlap_window_ms,
-                    hidden_ms,
-                    exposed_ms,
-                    hidden_ratio,
-                    gpu_kernel_launches,
-                    packet.proposal_checksum,
-                    FLAGS_coop_packet_diagnostic_merge
-                        ? "pre_gpu_quality_probe_diagnostic_merge_no_gpu_skip"
-                        : "pre_gpu_quality_probe_no_device_state_change_no_merge_no_gpu_skip");
-
-                PostComputationBW();
-            }
-
-            void ExecutePolicy_Converge_PacketProductionMerge(AlgoVariant *algo_variant,
-                                                              uint64_t coop_seq,
-                                                              uint32_t coop_round,
-                                                              const char *split_mode_name) {
-                CoopPacketDryRunStats packet;
-                std::vector<index_t> packet_sources;
-                uint64_t selected_edge_est = 0;
-                SelectCpuPacketSources(packet, packet_sources, selected_edge_est);
-                const std::string source_policy = FLAGS_coop_packet_source_policy;
-
-                CoopRoundStats state_stats;
-                std::vector<TValue> source_values;
-                std::vector<TBuffer> source_buffers;
-                if (!packet_sources.empty()) {
-                    FetchCoopStateForVertices(packet_sources,
-                                              source_values,
-                                              source_buffers,
-                                              state_stats,
-                                              false);
-                }
-                packet.source_state_snapshots = packet_sources.size();
-                packet.state_snapshot_bytes =
-                    state_stats.state_request_h2d_bytes + state_stats.state_d2h_bytes;
-                packet.source_state_snapshot_ms =
-                    state_stats.state_request_h2d_ms + state_stats.state_d2h_ms;
-
-                std::vector<CpuRelaxProposal<TBuffer>> proposals;
-                proposals.reserve(packet.edge_budget > 0
-                                      ? static_cast<size_t>(packet.edge_budget)
-                                      : static_cast<size_t>(selected_edge_est));
-                RunCpuPacketDryRun(packet_sources,
-                                   source_values,
-                                   source_buffers,
-                                   proposals,
-                                   packet);
-
-                CoopRoundStats compress_stats;
-                CompressCpuRelaxProposals(proposals, compress_stats);
-                packet.compressed_proposals = proposals.size();
-                packet.compressed_unique_dst = proposals.size();
-                packet.proposal_compress_ms = compress_stats.proposal_compress_ms;
-
-                if (!proposals.empty()) {
-                    CoopRoundStats merge_stats;
-                    std::vector<CpuSourceCommit<TValue>> no_source_commits;
-                    Stopwatch sw_merge_wall(true);
-                    MergeCpuSSSPProposals(proposals,
-                                          no_source_commits,
-                                          merge_stats,
-                                          m_coop_device_changed_vertices.DeviceObject());
-                    sw_merge_wall.stop();
-                    packet.diagnostic_merge_success = merge_stats.cpu_proposals_success;
-                    packet.diagnostic_merge_h2d_bytes = merge_stats.h2d_proposal_bytes;
-                    packet.diagnostic_merge_h2d_ms = merge_stats.h2d_proposal_ms;
-                    packet.diagnostic_merge_kernel_ms = merge_stats.merge_ms;
-                    packet.diagnostic_merge_wall_ms = sw_merge_wall.ms();
-                }
-
-                double gpu_launch_submit_ms = 0.0;
-                double gpu_sync_wait_ms = 0.0;
-                uint32_t gpu_kernel_launches = 0;
-                LaunchGpuDeltaAndSync(algo_variant,
-                                      gpu_launch_submit_ms,
-                                      gpu_sync_wait_ms,
-                                      gpu_kernel_launches);
-
-                const double overlap_window_ms = gpu_launch_submit_ms + gpu_sync_wait_ms;
-
-                LOG("[COOP-PACKET-MERGE] seq=%lu round=%u split_mode=%s phase=9F_packet_production_candidate source_policy=%s candidate_sources=%lu selected_sources=%lu source_state_snapshots=%lu reachable_sources=%lu active_sources=%lu cached_sources=%lu non_cached_sources=%lu edge_visits=%lu generated_proposals=%lu compressed_proposals=%lu compressed_unique_dst=%lu merge_success=%lu merge_h2d_bytes=%lu state_snapshot_bytes=%lu host_pma_read_bytes=%lu edge_budget=%lu source_state_snapshot_ms=%f cpu_wall_ms=%f proposal_compress_ms=%f merge_h2d_ms=%f merge_kernel_ms=%f merge_wall_ms=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f overlap_window_ms=%f gpu_kernel_launches=%u proposal_checksum=%lu note=production_candidate_no_dst_probe_no_gpu_skip\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    split_mode_name,
-                    source_policy.c_str(),
-                    packet.candidate_sources,
-                    packet.selected_sources,
-                    packet.source_state_snapshots,
-                    packet.reachable_sources,
-                    packet.active_sources,
-                    packet.cached_sources,
-                    packet.non_cached_sources,
-                    packet.edge_visits,
-                    packet.generated_proposals,
-                    packet.compressed_proposals,
-                    packet.compressed_unique_dst,
-                    packet.diagnostic_merge_success,
-                    packet.diagnostic_merge_h2d_bytes,
-                    packet.state_snapshot_bytes,
-                    packet.host_pma_read_bytes,
-                    packet.edge_budget,
-                    packet.source_state_snapshot_ms,
-                    packet.cpu_wall_ms,
-                    packet.proposal_compress_ms,
-                    packet.diagnostic_merge_h2d_ms,
-                    packet.diagnostic_merge_kernel_ms,
-                    packet.diagnostic_merge_wall_ms,
-                    gpu_launch_submit_ms,
-                    gpu_sync_wait_ms,
-                    overlap_window_ms,
-                    gpu_kernel_launches,
-                    packet.proposal_checksum);
-
-                PostComputationBW();
-            }
-
-            void ExecutePolicy_Converge_PacketOverlapMerge(AlgoVariant *algo_variant,
-                                                           uint64_t coop_seq,
-                                                           uint32_t coop_round,
-                                                           const char *split_mode_name) {
-                CoopPacketDryRunStats packet;
-                std::vector<index_t> packet_sources;
-                uint64_t selected_edge_est = 0;
-                SelectCpuPacketSources(packet, packet_sources, selected_edge_est);
-                const std::string source_policy = FLAGS_coop_packet_source_policy;
-
-                CoopRoundStats state_stats;
-                std::vector<TValue> source_values;
-                std::vector<TBuffer> source_buffers;
-                if (!packet_sources.empty()) {
-                    FetchCoopStateForVertices(packet_sources,
-                                              source_values,
-                                              source_buffers,
-                                              state_stats,
-                                              false);
-                }
-                packet.source_state_snapshots = packet_sources.size();
-                packet.state_snapshot_bytes =
-                    state_stats.state_request_h2d_bytes + state_stats.state_d2h_bytes;
-                packet.source_state_snapshot_ms =
-                    state_stats.state_request_h2d_ms + state_stats.state_d2h_ms;
-
-                std::vector<CpuRelaxProposal<TBuffer>> proposals;
-                proposals.reserve(packet.edge_budget > 0
-                                      ? static_cast<size_t>(packet.edge_budget)
-                                      : static_cast<size_t>(selected_edge_est));
-
-                CoopRoundStats compress_stats;
-                std::thread cpu_packet_thread([this,
-                                               &packet_sources,
-                                               &source_values,
-                                               &source_buffers,
-                                               &proposals,
-                                               &packet,
-                                               &compress_stats]() {
-                    RunCpuPacketDryRun(packet_sources,
-                                       source_values,
-                                       source_buffers,
-                                       proposals,
-                                       packet);
-                    CompressCpuRelaxProposals(proposals, compress_stats);
-                    packet.compressed_proposals = proposals.size();
-                    packet.compressed_unique_dst = proposals.size();
-                    packet.proposal_compress_ms = compress_stats.proposal_compress_ms;
-                });
-
-                m_coop_device_changed_vertices.ResetAsync(m_stream->cuda_stream);
-                m_stream->Sync();
-
-                double gpu_launch_submit_ms = 0.0;
-                double gpu_sync_wait_ms = 0.0;
-                uint32_t gpu_kernel_launches = 0;
-                LaunchGpuDeltaAndSync(algo_variant,
-                                      gpu_launch_submit_ms,
-                                      gpu_sync_wait_ms,
-                                      gpu_kernel_launches);
-
-                if (cpu_packet_thread.joinable()) {
-                    cpu_packet_thread.join();
-                }
-
-                const uint64_t compressed_before_stale_filter = proposals.size();
-                uint64_t still_valid_proposals = 0;
-                uint64_t stale_proposals = 0;
-                uint64_t dropped_stale_proposals = 0;
-                double stale_filter_ms = 0.0;
-                uint64_t stale_filter_bytes = 0;
-                if (!proposals.empty()) {
-                    Stopwatch sw_stale_filter(true);
-                    std::vector<index_t> dst_vertices;
-                    dst_vertices.reserve(proposals.size());
-                    for (const auto &proposal : proposals) {
-                        dst_vertices.push_back(proposal.dst);
-                    }
-                    CoopRoundStats dst_stats;
-                    std::vector<TValue> dst_values;
-                    std::vector<TBuffer> dst_buffers;
-                    FetchCoopStateForVertices(dst_vertices,
-                                              dst_values,
-                                              dst_buffers,
-                                              dst_stats,
-                                              false);
-                    std::vector<CpuRelaxProposal<TBuffer>> still_valid;
-                    still_valid.reserve(proposals.size());
-                    for (size_t i = 0; i < proposals.size(); i++) {
-                        if (proposals[i].value < dst_buffers[i]) {
-                            still_valid.push_back(proposals[i]);
-                        }
-                    }
-                    still_valid_proposals = still_valid.size();
-                    stale_proposals = proposals.size() - still_valid.size();
-                    dropped_stale_proposals = stale_proposals;
-                    proposals.swap(still_valid);
-                    sw_stale_filter.stop();
-                    stale_filter_ms = sw_stale_filter.ms();
-                    stale_filter_bytes =
-                        dst_stats.state_request_h2d_bytes + dst_stats.state_d2h_bytes;
-                }
-
-                if (!proposals.empty()) {
-                    CoopRoundStats merge_stats;
-                    std::vector<CpuSourceCommit<TValue>> no_source_commits;
-                    Stopwatch sw_merge_wall(true);
-                    MergeCpuSSSPProposals(proposals,
-                                          no_source_commits,
-                                          merge_stats,
-                                          m_coop_device_changed_vertices.DeviceObject());
-                    sw_merge_wall.stop();
-                    packet.diagnostic_merge_success = merge_stats.cpu_proposals_success;
-                    packet.diagnostic_merge_h2d_bytes = merge_stats.h2d_proposal_bytes;
-                    packet.diagnostic_merge_h2d_ms = merge_stats.h2d_proposal_ms;
-                    packet.diagnostic_merge_kernel_ms = merge_stats.merge_ms;
-                    packet.diagnostic_merge_wall_ms = sw_merge_wall.ms();
-                }
-
-                uint32_t postbw_visible_active = 0;
-                if (packet.diagnostic_merge_success > 0) {
-                    postbw_visible_active = m_coop_device_changed_vertices.GetCount(*m_stream);
-                }
-
-                const double overlap_window_ms = gpu_launch_submit_ms + gpu_sync_wait_ms;
-                const double cpu_hidden_candidate_ms =
-                    packet.cpu_wall_ms + packet.proposal_compress_ms;
-                const double hidden_ms = std::min(cpu_hidden_candidate_ms, overlap_window_ms);
-                const double exposed_ms = cpu_hidden_candidate_ms > overlap_window_ms
-                                              ? cpu_hidden_candidate_ms - overlap_window_ms
-                                              : 0.0;
-                const double hidden_ratio = cpu_hidden_candidate_ms > 0.0
-                                                ? hidden_ms / cpu_hidden_candidate_ms
-                                                : 0.0;
-
-                LOG("[COOP-PACKET-OVERLAP] seq=%lu packet_round=%u merge_round=%u split_mode=%s phase=10A_packet_overlap_merge source_policy=%s candidate_sources=%lu selected_sources=%lu source_state_snapshots=%lu reachable_sources=%lu active_sources=%lu cached_sources=%lu non_cached_sources=%lu edge_visits=%lu generated_proposals=%lu compressed_proposals=%lu compressed_before_stale_filter=%lu still_valid_proposals=%lu stale_proposals=%lu dropped_stale_proposals=%lu merge_success=%lu merge_h2d_bytes=%lu state_snapshot_bytes=%lu stale_filter_bytes=%lu host_pma_read_bytes=%lu edge_budget=%lu source_state_snapshot_ms=%f cpu_generate_ms=%f cpu_wall_ms=%f proposal_compress_ms=%f stale_filter_ms=%f overlap_window_ms=%f hidden_cpu_ms=%f exposed_cpu_ms=%f hidden_ratio=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f merge_h2d_ms=%f merge_kernel_ms=%f merge_wall_ms=%f gpu_kernel_launches=%u postbw_visible_active=%u performance_claim_valid=%d proposal_checksum=%lu note=phase10A_overlap_generate_compress_then_barrier_merge_no_gpu_skip\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    coop_round,
-                    split_mode_name,
-                    source_policy.c_str(),
-                    packet.candidate_sources,
-                    packet.selected_sources,
-                    packet.source_state_snapshots,
-                    packet.reachable_sources,
-                    packet.active_sources,
-                    packet.cached_sources,
-                    packet.non_cached_sources,
-                    packet.edge_visits,
-                    packet.generated_proposals,
-                    packet.compressed_proposals,
-                    compressed_before_stale_filter,
-                    still_valid_proposals,
-                    stale_proposals,
-                    dropped_stale_proposals,
-                    packet.diagnostic_merge_success,
-                    packet.diagnostic_merge_h2d_bytes,
-                    packet.state_snapshot_bytes,
-                    stale_filter_bytes,
-                    packet.host_pma_read_bytes,
-                    packet.edge_budget,
-                    packet.source_state_snapshot_ms,
-                    packet.cpu_wall_ms,
-                    packet.cpu_wall_ms,
-                    packet.proposal_compress_ms,
-                    stale_filter_ms,
-                    overlap_window_ms,
-                    hidden_ms,
-                    exposed_ms,
-                    hidden_ratio,
-                    gpu_launch_submit_ms,
-                    gpu_sync_wait_ms,
-                    packet.diagnostic_merge_h2d_ms,
-                    packet.diagnostic_merge_kernel_ms,
-                    packet.diagnostic_merge_wall_ms,
-                    gpu_kernel_launches,
-                    postbw_visible_active,
-                    1,
-                    packet.proposal_checksum);
-
-                PostComputationBW();
-            }
-
-            void ExecutePolicy_Converge_PacketSkipAudit(AlgoVariant *algo_variant,
-                                                        uint64_t coop_seq,
-                                                        uint32_t coop_round,
-                                                        const char *split_mode_name) {
-                CoopPacketDryRunStats packet;
-                std::vector<index_t> packet_sources;
-                uint64_t selected_edge_est = 0;
-                SelectCpuPacketSources(packet, packet_sources, selected_edge_est);
-                const std::string source_policy = FLAGS_coop_packet_source_policy;
-
-                CoopRoundStats state_stats;
-                std::vector<TValue> source_values;
-                std::vector<TBuffer> source_buffers;
-                if (!packet_sources.empty()) {
-                    FetchCoopStateForVertices(packet_sources,
-                                              source_values,
-                                              source_buffers,
-                                              state_stats,
-                                              false);
-                }
-                packet.source_state_snapshots = packet_sources.size();
-                packet.state_snapshot_bytes =
-                    state_stats.state_request_h2d_bytes + state_stats.state_d2h_bytes;
-                packet.source_state_snapshot_ms =
-                    state_stats.state_request_h2d_ms + state_stats.state_d2h_ms;
-
-                std::vector<CpuRelaxProposal<TBuffer>> proposals;
-                proposals.reserve(packet.edge_budget > 0
-                                      ? static_cast<size_t>(packet.edge_budget)
-                                      : static_cast<size_t>(selected_edge_est));
-                std::vector<uint64_t> edges_read_per_source;
-                std::vector<CpuSourceCommit<TValue>> source_commits;
-                source_commits.reserve(packet_sources.size());
-                std::vector<index_t> covered_sources;
-                covered_sources.reserve(packet_sources.size());
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                for (size_t i = 0; i < packet_sources.size(); i++) {
-                    const index_t src = packet_sources[i];
-                    if (src >= host_pma.nnodes) {
-                        continue;
-                    }
-                    const TBuffer inf = static_cast<TBuffer>(std::numeric_limits<uint32_t>::max());
-                    const TBuffer src_buffer = source_buffers[i];
-                    const TValue src_value = source_values[i];
-                    if (src_buffer == inf || src_buffer >= static_cast<TBuffer>(src_value)) {
-                        continue;
-                    }
-                    covered_sources.push_back(src);
-                    source_commits.push_back({src, static_cast<TValue>(src_buffer)});
-                }
-                packet.fully_covered_active_sources = source_commits.size();
-
-                m_coop_cpu_source_candidates.clear();
-                m_coop_cpu_source_candidates.reserve(source_commits.size());
-                for (const auto &commit : source_commits) {
-                    const index_t src = commit.src;
-                    if (src >= host_pma.nnodes) {
-                        continue;
-                    }
-                    const uint64_t degree = host_pma.sync_vertices_[src].degree;
-                    const uint8_t cached = host_pma.vertices_[src].cache ? 1 : 0;
-                    packet.expected_avoided_gpu_edges += degree;
-                    m_coop_cpu_source_candidates.push_back({src, 0, degree, cached, degree, 1});
-                }
-                if (!covered_sources.empty()) {
-                    std::sort(covered_sources.begin(), covered_sources.end());
-                    covered_sources.erase(std::unique(covered_sources.begin(), covered_sources.end()),
-                                          covered_sources.end());
-                }
-
-                std::exception_ptr cpu_worker_error;
-                std::thread cpu_worker([this,
-                                        &packet_sources,
-                                        &source_values,
-                                        &source_buffers,
-                                        &proposals,
-                                        &packet,
-                                        &edges_read_per_source,
-                                        &covered_sources,
-                                        &cpu_worker_error]() {
-                    try {
-                        RunCpuPacketDryRun(packet_sources,
-                                           source_values,
-                                           source_buffers,
-                                           proposals,
-                                           packet,
-                                           &edges_read_per_source);
-                        if (covered_sources.empty()) {
-                            packet.dropped_uncovered_proposals += proposals.size();
-                            proposals.clear();
-                        } else {
-                            std::vector<index_t> covered_sorted = covered_sources;
-                            std::sort(covered_sorted.begin(), covered_sorted.end());
-                            covered_sorted.erase(std::unique(covered_sorted.begin(),
-                                                             covered_sorted.end()),
-                                                 covered_sorted.end());
-                            const size_t before_filter = proposals.size();
-                            proposals.erase(
-                                std::remove_if(proposals.begin(),
-                                               proposals.end(),
-                                               [&covered_sorted](const CpuRelaxProposal<TBuffer> &proposal) {
-                                                   return !std::binary_search(covered_sorted.begin(),
-                                                                              covered_sorted.end(),
-                                                                              proposal.parent);
-                                               }),
-                                proposals.end());
-                            packet.dropped_uncovered_proposals += before_filter - proposals.size();
-                        }
-                        CoopRoundStats compress_stats;
-                        CompressCpuRelaxProposals(proposals, compress_stats);
-                        packet.compressed_proposals = proposals.size();
-                        packet.compressed_unique_dst = proposals.size();
-                        packet.proposal_compress_ms = compress_stats.proposal_compress_ms;
-                    } catch (...) {
-                        cpu_worker_error = std::current_exception();
-                    }
-                });
-
-                CoopRoundStats mark_stats;
-                Stopwatch sw_mark(true);
-                if (!m_coop_cpu_source_candidates.empty()) {
-                    MarkCpuSourcesForGpuSkip(mark_stats);
-                }
-                sw_mark.stop();
-
-                m_coop_device_changed_vertices.ResetAsync(m_stream->cuda_stream);
-                m_coop_device_gpu_relax_dst_vertices.ResetAsync(m_stream->cuda_stream);
-                EnsureCoopGpuRelaxCounterStorage();
-                GROUTE_CUDA_CHECK(cudaMemsetAsync(m_coop_device_gpu_relax_dst_degree_sum,
-                                                  0,
-                                                  sizeof(unsigned long long),
-                                                  m_stream->cuda_stream));
-                m_stream->Sync();
-
-                double gpu_launch_submit_ms = 0.0;
-                double gpu_sync_wait_ms = 0.0;
-                uint32_t gpu_kernel_launches = 0;
-                if (!m_coop_cpu_source_candidates.empty()) {
-                    LaunchGpuDeltaAndSyncWithSkip(algo_variant,
-                                                  m_coop_device_cpu_source_owner_epoch,
-                                                  m_coop_cpu_source_epoch,
-                                                  m_coop_device_gpu_skipped_cpu_sources,
-                                                  gpu_launch_submit_ms,
-                                                  gpu_sync_wait_ms,
-                                                  gpu_kernel_launches,
-                                                  m_coop_device_gpu_relax_dst_vertices.DeviceObject(),
-                                                  m_coop_device_gpu_relax_dst_degree_sum);
-                } else {
-                    LaunchGpuDeltaAndSync(algo_variant,
-                                          gpu_launch_submit_ms,
-                                          gpu_sync_wait_ms,
-                                          gpu_kernel_launches);
-                }
-                if (cpu_worker.joinable()) {
-                    cpu_worker.join();
-                }
-                if (cpu_worker_error) {
-                    std::rethrow_exception(cpu_worker_error);
-                }
-                const uint64_t compressed_before_merge = proposals.size();
-                const double overlap_window_ms = gpu_launch_submit_ms + gpu_sync_wait_ms;
-                const double cpu_packet_ms = packet.cpu_wall_ms + packet.proposal_compress_ms;
-                const double hidden_cpu_ms = std::min(cpu_packet_ms, overlap_window_ms);
-                const double exposed_cpu_ms = cpu_packet_ms > overlap_window_ms
-                                                  ? cpu_packet_ms - overlap_window_ms
-                                                  : 0.0;
-                const double hidden_ratio = cpu_packet_ms > 0.0
-                                                ? hidden_cpu_ms / cpu_packet_ms
-                                                : 0.0;
-
-                uint64_t gpu_skipped_sources = 0;
-                double gpu_skip_counter_d2h_ms = 0.0;
-                if (!m_coop_cpu_source_candidates.empty() &&
-                    m_coop_device_gpu_skipped_cpu_sources != nullptr) {
-                    Stopwatch sw_skip_d2h(true);
-                    unsigned long long skipped = 0;
-                    GROUTE_CUDA_CHECK(cudaMemcpy(&skipped,
-                                                 m_coop_device_gpu_skipped_cpu_sources,
-                                                 sizeof(unsigned long long),
-                                                 cudaMemcpyDeviceToHost));
-                    sw_skip_d2h.stop();
-                    gpu_skipped_sources = skipped;
-                    gpu_skip_counter_d2h_ms = sw_skip_d2h.ms();
-                }
-
-                if (FLAGS_coop_merge_light_prefilter && !proposals.empty()) {
-                    FilterCpuRelaxProposalsByCurrentDstBuffer(proposals, packet);
-                    packet.compressed_proposals = proposals.size();
-                    packet.compressed_unique_dst = proposals.size();
-                }
-
-                if (!proposals.empty() || !source_commits.empty()) {
-                    CoopRoundStats merge_stats;
-                    Stopwatch sw_merge_wall(true);
-                    MergeCpuSSSPProposals(proposals,
-                                          source_commits,
-                                          merge_stats,
-                                          m_coop_device_changed_vertices.DeviceObject());
-                    sw_merge_wall.stop();
-                    packet.diagnostic_merge_success = merge_stats.cpu_proposals_success;
-                    packet.diagnostic_merge_h2d_bytes = merge_stats.h2d_proposal_bytes;
-                    packet.diagnostic_merge_h2d_ms = merge_stats.h2d_proposal_ms;
-                    packet.diagnostic_merge_kernel_ms = merge_stats.merge_ms;
-                    packet.diagnostic_merge_wall_ms = sw_merge_wall.ms();
-                }
-
-                uint32_t postbw_visible_active = 0;
-                if (packet.diagnostic_merge_success > 0) {
-                    postbw_visible_active = m_coop_device_changed_vertices.GetCount(*m_stream);
-                }
-
-                if (FLAGS_verbose) {
-                    const double merge_success_per_edge =
-                        packet.edge_visits > 0
-                            ? static_cast<double>(packet.diagnostic_merge_success) /
-                                  static_cast<double>(packet.edge_visits)
-                            : 0.0;
-                    const double merge_success_per_compressed =
-                        packet.compressed_proposals > 0
-                            ? static_cast<double>(packet.diagnostic_merge_success) /
-                                  static_cast<double>(packet.compressed_proposals)
-                            : 0.0;
-                    const double skipped_edges_per_covered =
-                        packet.edge_visits > 0
-                            ? static_cast<double>(packet.expected_avoided_gpu_edges) /
-                                  static_cast<double>(packet.edge_visits)
-                            : 0.0;
-                    LOG("[COOP-SKIP-AUDIT] seq=%lu batch=%lu round=%u split_mode=%s phase=10C3_overlapped_owner_packet source_policy=%s skip_enabled=1 candidate_sources=%lu selected_sources=%lu source_state_snapshots=%lu frontier_active_sources=%lu active_segments=%lu reachable_sources=%lu active_sources=%lu cpu_covered_sources=%lu cpu_covered_edges=%lu generated_proposals=%lu dropped_uncovered_proposals=%lu compressed_proposals=%lu compressed_before_merge=%lu source_commits=%lu gpu_skipped_sources=%lu gpu_kernel_launches=%u merge_success=%lu skipped_edges_est=%lu merge_success_per_edge=%f merge_success_per_compressed=%f skipped_edges_per_covered=%f cached_sources=%lu non_cached_sources=%lu cached_edges=%lu non_cached_edges=%lu cached_active_sources=%lu non_cached_active_sources=%lu merge_prefilter_enabled=%d merge_prefilter_input=%lu merge_prefilter_kept=%lu merge_prefilter_dropped=%lu merge_prefilter_probe_bytes=%lu merge_prefilter_ms=%f merge_h2d_bytes=%lu postbw_visible_active=%u state_snapshot_bytes=%lu host_pma_read_bytes=%lu source_state_snapshot_ms=%f cpu_generate_ms=%f proposal_compress_ms=%f owner_mark_ms=%f gpu_launch_submit_ms=%f gpu_sync_wait_ms=%f overlap_window_ms=%f hidden_cpu_ms=%f exposed_cpu_ms=%f hidden_ratio=%f gpu_skip_counter_d2h_ms=%f merge_h2d_ms=%f merge_kernel_ms=%f merge_wall_ms=%f fully_covered_active_sources=%lu partial_covered_active_sources=%lu missing_relax_count=%lu mismatched_buffer_count=not_checked_minimal mismatched_active_count=not_checked_minimal performance_claim_valid=0 note=cggraph_style_gpu_skip_cpu_packet_overlap\n",
-                        static_cast<unsigned long>(coop_seq),
-                        static_cast<unsigned long>(m_coop_current_batch),
-                        coop_round,
-                        split_mode_name,
-                        source_policy.c_str(),
-                        packet.candidate_sources,
-                        packet.selected_sources,
-                        packet.source_state_snapshots,
-                        packet.frontier_active_sources,
-                        packet.active_segments,
-                        packet.reachable_sources,
-                        packet.active_sources,
-                        static_cast<uint64_t>(source_commits.size()),
-                        packet.edge_visits,
-                        packet.generated_proposals,
-                        packet.dropped_uncovered_proposals,
-                        packet.compressed_proposals,
-                        compressed_before_merge,
-                        static_cast<uint64_t>(source_commits.size()),
-                        gpu_skipped_sources,
-                        gpu_kernel_launches,
-                        packet.diagnostic_merge_success,
-                        packet.expected_avoided_gpu_edges,
-                        merge_success_per_edge,
-                        merge_success_per_compressed,
-                        skipped_edges_per_covered,
-                        packet.cached_sources,
-                        packet.non_cached_sources,
-                        packet.cached_edges,
-                        packet.non_cached_edges,
-                        packet.cached_active_sources,
-                        packet.non_cached_active_sources,
-                        FLAGS_coop_merge_light_prefilter ? 1 : 0,
-                        packet.merge_prefilter_input_proposals,
-                        packet.merge_prefilter_kept_proposals,
-                        packet.merge_prefilter_dropped_proposals,
-                        packet.merge_prefilter_probe_bytes,
-                        packet.merge_prefilter_ms,
-                        packet.diagnostic_merge_h2d_bytes,
-                        postbw_visible_active,
-                        packet.state_snapshot_bytes,
-                        packet.host_pma_read_bytes,
-                        packet.source_state_snapshot_ms,
-                        packet.cpu_wall_ms,
-                        packet.proposal_compress_ms,
-                        sw_mark.ms(),
-                        gpu_launch_submit_ms,
-                        gpu_sync_wait_ms,
-                        overlap_window_ms,
-                        hidden_cpu_ms,
-                        exposed_cpu_ms,
-                        hidden_ratio,
-                        gpu_skip_counter_d2h_ms,
-                        packet.diagnostic_merge_h2d_ms,
-                        packet.diagnostic_merge_kernel_ms,
-                        packet.diagnostic_merge_wall_ms,
-                        packet.fully_covered_active_sources,
-                        packet.partial_covered_active_sources,
-                        packet.missing_relax_count);
-                }
-
-                CoopRoundStats postbw_stats;
-                Stopwatch sw_postbw(true);
-                if (!PostComputationBWDirtySegments(proposals, source_commits, &postbw_stats)) {
-                    PostComputationBW(&postbw_stats);
-                }
-                sw_postbw.stop();
-                postbw_stats.post_bw_ms += sw_postbw.ms();
-
-                if (FLAGS_verbose) {
-                    const double fixed_tax_ms =
-                        sw_mark.ms() +
-                        gpu_skip_counter_d2h_ms +
-                        packet.diagnostic_merge_wall_ms +
-                        postbw_stats.post_bw_ms +
-                        packet.source_state_snapshot_ms;
-                    LOG("[COOP-ATTRIBUTION] seq=%lu batch=%lu round=%u dirty_segments=%lu dirty_ratio=%f postbw_active_count=%lu postbw_ms=%f postbw_rebuild_ms=%f postbw_active_count_ms=%f postbw_dirty_mark_ms=%f postbw_other_ms=%f owner_merge_postbw_fixed_tax_ms=%f\n",
-                        static_cast<unsigned long>(coop_seq),
-                        static_cast<unsigned long>(m_coop_current_batch),
-                        coop_round,
-                        postbw_stats.dirty_segments,
-                        FLAGS_SEGMENT > 0
-                            ? static_cast<double>(postbw_stats.dirty_segments) /
-                                  static_cast<double>(FLAGS_SEGMENT)
-                            : 0.0,
-                        postbw_stats.post_bw_active_count,
-                        postbw_stats.post_bw_ms,
-                        postbw_stats.post_bw_rebuild_worklist_ms,
-                        postbw_stats.post_bw_active_count_ms,
-                        postbw_stats.post_bw_queue_reset_ms,
-                        postbw_stats.post_bw_other_ms,
-                        fixed_tax_ms);
-                }
-
-                AccumulateCoopOwnedSummary(packet,
-                                           static_cast<uint64_t>(source_commits.size()),
-                                           static_cast<uint64_t>(source_commits.size()),
-                                           gpu_skipped_sources,
-                                           gpu_kernel_launches,
-                                           postbw_visible_active,
-                                           postbw_stats,
-                                           sw_mark.ms(),
-                                           gpu_launch_submit_ms,
-                                           gpu_sync_wait_ms,
-                                           overlap_window_ms,
-                                           hidden_cpu_ms,
-                                           exposed_cpu_ms,
-                                           gpu_skip_counter_d2h_ms);
-            }
-
-            void ExecutePolicy_Converge_Coop(AlgoVariant *algo_variant) {
-                Stopwatch sw_round(true);
-                const uint32_t coop_round = m_running_info.current_round;
-                const uint64_t coop_seq = m_coop_attr_sequence++;
-                auto &app_inst = *m_app_inst;
-                auto &vcsr_graph_host = m_vcsr_dev_graph_allocator->HostObject();
-                GraphDatum &graph_datum = *m_graph_datum;
-                bool zcflag = true;
-                m_vcsr_dev_graph_allocator->AllocateDevMirror_Edge_Zero();
-                uint64_t seg_sedge_csr, seg_nedges_csr;
-                index_t seg_snode, seg_enode;
-                const CoopSplitMode split_mode = GetCoopSplitMode();
-                const bool cpu_home_mode = split_mode == CoopSplitMode::CPU_HOME;
-                const bool cpu_home_owner_skip_enabled =
-                    cpu_home_mode && FLAGS_coop_home_skip_gpu_sources;
-                const bool cpu_home_diagnostic_launch_enabled =
-                    cpu_home_mode && FLAGS_coop_home_diagnostic_launch;
-                const char *split_mode_name = cpu_home_mode ? "cpu_home" : "host_select";
-
-                if (cpu_home_mode && !m_coop_cpu_home_batch_enabled) {
-                    LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_disabled_low_work\n",
-                        static_cast<unsigned long>(coop_seq),
-                        coop_round,
-                        split_mode_name);
-                    ExecutePolicy_Converge(algo_variant);
-                    return;
-                }
-
-                if (cpu_home_mode &&
-                    !cpu_home_owner_skip_enabled &&
-                    !cpu_home_diagnostic_launch_enabled) {
-                    if (FLAGS_coop_packet_skip_audit) {
-                        if (FLAGS_verbose) {
-                            LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_packet_skip_audit_convergence_delta_only\n",
-                                static_cast<unsigned long>(coop_seq),
-                                coop_round,
-                                split_mode_name);
-                        }
-                        ExecutePolicy_Converge_PacketSkipAudit(algo_variant,
-                                                               coop_seq,
-                                                               coop_round,
-                                                               split_mode_name);
-                        return;
-                    }
-                    if (FLAGS_coop_packet_overlap_merge) {
-                        LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_packet_overlap_merge_gpu_authoritative_no_skip\n",
-                            static_cast<unsigned long>(coop_seq),
-                            coop_round,
-                            split_mode_name);
-                        ExecutePolicy_Converge_PacketOverlapMerge(algo_variant,
-                                                                  coop_seq,
-                                                                  coop_round,
-                                                                  split_mode_name);
-                        return;
-                    }
-                    if (FLAGS_coop_packet_production_merge) {
-                        LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_packet_production_merge_gpu_authoritative_no_skip\n",
-                            static_cast<unsigned long>(coop_seq),
-                            coop_round,
-                            split_mode_name);
-                        ExecutePolicy_Converge_PacketProductionMerge(algo_variant,
-                                                                     coop_seq,
-                                                                     coop_round,
-                                                                     split_mode_name);
-                        return;
-                    }
-                    if (FLAGS_coop_packet_dry_run) {
-                        LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_packet_dry_run_gpu_only_with_cpu_proposal_quality_probe\n",
-                            static_cast<unsigned long>(coop_seq),
-                            coop_round,
-                            split_mode_name);
-                        ExecutePolicy_Converge_PacketDryRun(algo_variant,
-                                                            coop_seq,
-                                                            coop_round,
-                                                            split_mode_name);
-                        return;
-                    }
-                    if (FLAGS_coop_overlap_probe) {
-                        LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_overlap_probe_gpu_only_with_cpu_readonly_probe\n",
-                            static_cast<unsigned long>(coop_seq),
-                            coop_round,
-                            split_mode_name);
-                        ExecutePolicy_Converge_OverlapProbe(algo_variant,
-                                                            coop_seq,
-                                                            coop_round,
-                                                            split_mode_name);
-                        return;
-                    }
-                    LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=unknown gpu_segments=unknown active_gpu_segments=unknown reason=cpu_home_safe_gpu_only_default\n",
-                        static_cast<unsigned long>(coop_seq),
-                        coop_round,
-                        split_mode_name);
-                    ExecutePolicy_Converge(algo_variant);
-                    return;
-                }
-
-                CoopRoundStats stats;
-                {
-                    Stopwatch sw_phase(true);
-                    CollectCoopRoundStats(stats);
-                    sw_phase.stop();
-                    stats.collect_stats_ms += sw_phase.ms();
-                }
-                {
-                    Stopwatch sw_phase(true);
-                    ResetCoopRoundBuffers();
-                    sw_phase.stop();
-                    stats.reset_buffers_ms += sw_phase.ms();
-                }
-                if (cpu_home_mode) {
-                    DrainCpuHomeBoundaryQueue(stats);
-                }
-                {
-                    Stopwatch sw_phase(true);
-                    if (cpu_home_mode) {
-                        SelectCpuHomeSourcesForRound(stats);
-                    } else {
-                        SelectCpuSourcesForRound(stats);
-                    }
-                    sw_phase.stop();
-                    stats.source_select_ms += sw_phase.ms();
-                }
-
-                {
-                    Stopwatch sw_phase(true);
-                    if (!cpu_home_mode || cpu_home_owner_skip_enabled) {
-                        MarkCpuSourcesForGpuSkip(stats);
-                    }
-                    sw_phase.stop();
-                    stats.owner_mark_ms += sw_phase.ms();
-                }
-
-                if (cpu_home_mode && m_coop_cpu_source_candidates.empty()) {
-                    LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=cpu_home_source_ownership cpu_sources=0 gpu_frontier_vertices=%lu gpu_segments=%u active_gpu_segments=unknown reason=no_active_cpu_home_sources_round_continues\n",
-                        static_cast<unsigned long>(coop_seq),
-                        coop_round,
-                        split_mode_name,
-                        stats.gpu_frontier_vertices,
-                        stats.gpu_segments);
-                }
-
-                stats.cpu_segments = 0;
-                stats.gpu_segments = 0;
-                std::vector<index_t> active_gpu_segments;
-                active_gpu_segments.reserve(FLAGS_SEGMENT);
-                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                    const index_t stream_id = seg_idx % FLAGS_n_stream;
-                    const uint64_t active_count = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream[stream_id]);
-                    if (active_count > 0) {
-                        stats.gpu_segments++;
-                        if (algo_variant[seg_idx] == AlgoVariant::Zero_Copy) {
-                            active_gpu_segments.push_back(seg_idx);
-                        }
-                    }
-                    stats.gpu_frontier_vertices += active_count;
-                }
-                stats.active_gpu_segments = static_cast<uint32_t>(active_gpu_segments.size());
-
-                LOG("[COOP-STATS] seq=%lu round=%u split_mode=%s active_vertices=%lu cpu_frontier_vertices=pending gpu_frontier_vertices=%lu gpu_active_edges=unknown d2h_frontier_bytes=%lu d2h_frontier_ms=%f\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    split_mode_name,
-                    stats.active_vertices,
-                    stats.gpu_frontier_vertices,
-                    stats.d2h_frontier_bytes,
-                    stats.d2h_frontier_ms);
-                LOG("[COOP-DECISION] seq=%lu round=%u mode=hybrid split_mode=%s policy=%s cpu_sources=%lu gpu_frontier_vertices=%lu gpu_segments=%u active_gpu_segments=%u reason=%s\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    split_mode_name,
-                    cpu_home_mode ? "cpu_home_source_ownership" : "source_level",
-                    static_cast<uint64_t>(m_coop_cpu_source_candidates.size()),
-                    stats.gpu_frontier_vertices,
-                    stats.gpu_segments,
-                    stats.active_gpu_segments,
-                    FLAGS_coop_cpu_dry_run ? "dry_run_gpu_owns_all_sources" :
-                    (m_coop_cpu_source_candidates.empty()
-                         ? (cpu_home_mode ? "no_active_cpu_home_sources" : "gpu_only_low_expected_benefit")
-                         : (cpu_home_mode ? "active_cpu_home_sources" : "source_level_cpu_candidates")));
-                LOG("[COOP-SPLIT] seq=%lu round=%u split_mode=%s active_sources=%lu cpu_sources=%lu gpu_sources_est=%lu cpu_active_degree_sum=%lu cpu_cached_sources=%lu cpu_non_cached_sources=%lu min_degree=%d max_cpu_sources=%d home_min_degree=%d home_max_sources=%d\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    split_mode_name,
-                    stats.active_vertices,
-                    static_cast<uint64_t>(m_coop_cpu_source_candidates.size()),
-                    stats.gpu_frontier_vertices >= m_coop_cpu_source_candidates.size()
-                        ? stats.gpu_frontier_vertices - m_coop_cpu_source_candidates.size()
-                        : 0,
-                    stats.active_degree_sum,
-                    stats.cpu_cached_source_vertices,
-                    stats.cpu_non_cached_source_vertices,
-                    FLAGS_coop_cpu_min_degree,
-                    GetCoopMaxCpuSources(),
-                    FLAGS_coop_home_min_degree,
-                    FLAGS_coop_home_max_sources);
-
-                m_groute_context->segment_ct = FLAGS_SEGMENT;
-                {
-                    Stopwatch sw_phase(true);
-                    m_coop_device_changed_vertices.ResetAsync(m_stream->cuda_stream);
-                    if (cpu_home_mode) {
-                        EnsureCoopGpuRelaxCounterStorage();
-                        m_coop_device_gpu_to_cpu_boundary_vertices.ResetAsync(m_stream->cuda_stream);
-                        m_coop_device_gpu_relax_dst_vertices.ResetAsync(m_stream->cuda_stream);
-                        GROUTE_CUDA_CHECK(cudaMemsetAsync(m_coop_device_gpu_relax_success_count,
-                                                          0,
-                                                          sizeof(unsigned long long),
-                                                          m_stream->cuda_stream));
-                        GROUTE_CUDA_CHECK(cudaMemsetAsync(m_coop_device_gpu_relax_cpu_home_success_count,
-                                                          0,
-                                                          sizeof(unsigned long long),
-                                                          m_stream->cuda_stream));
-                        GROUTE_CUDA_CHECK(cudaMemsetAsync(m_coop_device_gpu_relax_dst_degree_sum,
-                                                          0,
-                                                          sizeof(unsigned long long),
-                                                          m_stream->cuda_stream));
-                        GROUTE_CUDA_CHECK(cudaMemsetAsync(m_coop_device_gpu_relax_dst_high_degree_count,
-                                                          0,
-                                                          sizeof(unsigned long long),
-                                                          m_stream->cuda_stream));
-                        GROUTE_CUDA_CHECK(cudaMemsetAsync(m_coop_device_gpu_relax_dst_high_degree_sum,
-                                                          0,
-                                                          sizeof(unsigned long long),
-                                                          m_stream->cuda_stream));
-                        GROUTE_CUDA_CHECK(cudaMemsetAsync(m_coop_device_gpu_relax_dst_batch_touched_count,
-                                                          0,
-                                                          sizeof(unsigned long long),
-                                                          m_stream->cuda_stream));
-                    }
-                    m_stream->Sync();
-                    sw_phase.stop();
-                    stats.changed_queue_reset_ms += sw_phase.ms();
-                }
-                index_t stream_id;
-
-                {
-                    Stopwatch sw_phase(true);
-                    GenerateCpuSSSPProposalsForSources(m_coop_cpu_proposals,
-                                                       m_coop_source_commits,
-                                                       stats);
-                    sw_phase.stop();
-                    stats.cpu_generate_wall_ms += sw_phase.ms();
-                }
-                if (cpu_home_mode) {
-                    stats.cpu_local_edge_visits = stats.cpu_edge_visits;
-                    stats.cpu_local_frontier_pushes = stats.cpu_proposals_survived;
-                    stats.cpu_to_gpu_boundary_proposals = stats.cpu_proposals_survived;
-                    stats.cpu_home_commit_count = m_coop_source_commits.size();
-                }
-
-                {
-                    Stopwatch sw_phase(true);
-                    for (const index_t seg_idx : active_gpu_segments) {
-                        seg_snode = m_groute_context->seg_snode[seg_idx];
-                        seg_enode = m_groute_context->seg_enode[seg_idx];
-                        seg_sedge_csr = m_groute_context->seg_sedge_csr[seg_idx];
-                        seg_nedges_csr = m_groute_context->seg_nedge_csr[seg_idx];
-                        (void)seg_nedges_csr;
-                        stream_id = seg_idx % FLAGS_n_stream;
-
-                    const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
-                    m_vcsr_dev_graph_allocator->SwitchZC();
-                    zcflag = true;
-                    RunSyncPushDDB_Delta(app_inst,
-                                         seg_snode,
-                                             seg_enode,
-                                             seg_sedge_csr,
-                                             seg_idx,
-                                             zcflag,
-                                             vcsr_graph,
-                                             graph_datum,
-                                             m_engine_options,
-                                         stream[stream_id],
-                                         m_coop_device_changed_vertices.DeviceObject(),
-                                         m_coop_device_shadow_valid_flags,
-                                         true,
-                                         (!cpu_home_mode || cpu_home_owner_skip_enabled)
-                                             ? m_coop_device_cpu_source_owner_epoch
-                                             : nullptr,
-                                         (!cpu_home_mode || cpu_home_owner_skip_enabled)
-                                             ? m_coop_cpu_source_epoch
-                                             : 0,
-                                         (!cpu_home_mode || cpu_home_owner_skip_enabled)
-                                             ? m_coop_device_gpu_skipped_cpu_sources
-                                             : nullptr,
-                                         m_coop_device_cpu_home_flags,
-                                         cpu_home_mode ? m_coop_device_gpu_to_cpu_boundary_vertices.DeviceObject()
-                                                       : groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                                         cpu_home_mode ? m_coop_device_gpu_relax_dst_vertices.DeviceObject()
-                                                       : groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                                         cpu_home_mode ? m_coop_device_gpu_relax_success_count : nullptr,
-                                         cpu_home_mode ? m_coop_device_gpu_relax_cpu_home_success_count : nullptr,
-                                         cpu_home_mode ? m_coop_device_gpu_relax_dst_degree_sum : nullptr,
-                                         cpu_home_mode ? m_coop_device_gpu_relax_dst_high_degree_count : nullptr,
-                                         cpu_home_mode ? m_coop_device_gpu_relax_dst_high_degree_sum : nullptr,
-                                         cpu_home_mode ? m_coop_device_gpu_relax_dst_batch_touched_count : nullptr,
-                                         cpu_home_mode ? m_coop_device_batch_touched_flags : nullptr,
-                                         cpu_home_mode ? static_cast<uint32_t>(std::max(FLAGS_coop_home_min_degree, 0)) : 0);
-                        stats.gpu_kernel_launches++;
-                    }
-                    sw_phase.stop();
-                    stats.gpu_launch_submit_ms += sw_phase.ms();
-                }
-
-                {
-                    Stopwatch sw_phase(true);
-                    for (index_t stream_idx = 0; stream_idx < FLAGS_n_stream; stream_idx++) {
-                        stream[stream_idx].Sync();
-                    }
-                    sw_phase.stop();
-                    stats.gpu_sync_ms += sw_phase.ms();
-                }
-                if (m_coop_device_gpu_skipped_cpu_sources != nullptr) {
-                    Stopwatch sw_phase(true);
-                    unsigned long long skipped = 0;
-                    GROUTE_CUDA_CHECK(cudaMemcpy(&skipped,
-                                                 m_coop_device_gpu_skipped_cpu_sources,
-                                                 sizeof(unsigned long long),
-                                                 cudaMemcpyDeviceToHost));
-                    stats.gpu_skipped_cpu_sources += skipped;
-                    sw_phase.stop();
-                    stats.gpu_skip_counter_d2h_ms += sw_phase.ms();
-                }
-                if (cpu_home_mode &&
-                    m_coop_device_gpu_relax_success_count != nullptr &&
-                    m_coop_device_gpu_relax_cpu_home_success_count != nullptr) {
-                    Stopwatch sw_phase(true);
-                    unsigned long long gpu_relax_success = 0;
-                    unsigned long long gpu_relax_cpu_home_success = 0;
-                    unsigned long long gpu_relax_dst_degree_sum = 0;
-                    unsigned long long gpu_relax_dst_high_degree_count = 0;
-                    unsigned long long gpu_relax_dst_high_degree_sum = 0;
-                    unsigned long long gpu_relax_dst_batch_touched_count = 0;
-                    GROUTE_CUDA_CHECK(cudaMemcpy(&gpu_relax_success,
-                                                 m_coop_device_gpu_relax_success_count,
-                                                 sizeof(unsigned long long),
-                                                 cudaMemcpyDeviceToHost));
-                    GROUTE_CUDA_CHECK(cudaMemcpy(&gpu_relax_cpu_home_success,
-                                                 m_coop_device_gpu_relax_cpu_home_success_count,
-                                                 sizeof(unsigned long long),
-                                                 cudaMemcpyDeviceToHost));
-                    GROUTE_CUDA_CHECK(cudaMemcpy(&gpu_relax_dst_degree_sum,
-                                                 m_coop_device_gpu_relax_dst_degree_sum,
-                                                 sizeof(unsigned long long),
-                                                 cudaMemcpyDeviceToHost));
-                    GROUTE_CUDA_CHECK(cudaMemcpy(&gpu_relax_dst_high_degree_count,
-                                                 m_coop_device_gpu_relax_dst_high_degree_count,
-                                                 sizeof(unsigned long long),
-                                                 cudaMemcpyDeviceToHost));
-                    GROUTE_CUDA_CHECK(cudaMemcpy(&gpu_relax_dst_high_degree_sum,
-                                                 m_coop_device_gpu_relax_dst_high_degree_sum,
-                                                 sizeof(unsigned long long),
-                                                 cudaMemcpyDeviceToHost));
-                    GROUTE_CUDA_CHECK(cudaMemcpy(&gpu_relax_dst_batch_touched_count,
-                                                 m_coop_device_gpu_relax_dst_batch_touched_count,
-                                                 sizeof(unsigned long long),
-                                                 cudaMemcpyDeviceToHost));
-                    stats.gpu_relax_success = gpu_relax_success;
-                    stats.gpu_relax_cpu_home_success = gpu_relax_cpu_home_success;
-                    stats.gpu_relax_dst_degree_sum = gpu_relax_dst_degree_sum;
-                    stats.gpu_relax_dst_high_degree_count = gpu_relax_dst_high_degree_count;
-                    stats.gpu_relax_dst_high_degree_sum = gpu_relax_dst_high_degree_sum;
-                    stats.gpu_relax_dst_batch_touched_count = gpu_relax_dst_batch_touched_count;
-                    sw_phase.stop();
-                    stats.gpu_skip_counter_d2h_ms += sw_phase.ms();
-                    CollectGpuRelaxDstUniqueStats(stats);
-                }
-
-                if (!cpu_home_mode || cpu_home_owner_skip_enabled) {
-                    Stopwatch sw_phase(true);
-                    MergeCpuSSSPProposals(m_coop_cpu_proposals,
-                                          m_coop_source_commits,
-                                          stats,
-                                          m_coop_device_changed_vertices.DeviceObject());
-                    sw_phase.stop();
-                    stats.merge_wall_ms += sw_phase.ms();
-                } else {
-                    stats.cpu_proposals += m_coop_cpu_proposals.size();
-                }
-                if (cpu_home_mode) {
-                    stats.cpu_local_relax_success = stats.cpu_proposals_success;
-                    stats.cpu_to_gpu_boundary_success = stats.cpu_proposals_success;
-                }
-                const uint64_t feedback_min_success_per_mille =
-                    static_cast<uint64_t>(std::max(FLAGS_coop_home_feedback_min_success_per_mille, 0));
-                if (cpu_home_mode &&
-                    m_coop_cpu_home_batch_enabled &&
-                    feedback_min_success_per_mille > 0 &&
-                    stats.cpu_proposals_survived > 0 &&
-                    stats.gpu_relax_cpu_home_success == 0 &&
-                    stats.cpu_proposals_success * 1000ULL <
-                        stats.cpu_proposals_survived * feedback_min_success_per_mille) {
-                    m_coop_cpu_home_batch_enabled = false;
-                    m_coop_cpu_home_injected_sources.clear();
-                    m_coop_cpu_home_injected_edges_est = 0;
-                    LOG("[COOP-HOME-FEEDBACK] seq=%lu round=%u action=disable_cpu_home_for_batch reason=low_cpu_success_no_gpu_to_cpu_boundary cpu_success=%lu cpu_proposals_survived=%lu gpu_relax_cpu_home_success=%lu threshold_success_per_mille=%lu\n",
-                        static_cast<unsigned long>(coop_seq),
-                        coop_round,
-                        stats.cpu_proposals_success,
-                        stats.cpu_proposals_survived,
-                        stats.gpu_relax_cpu_home_success,
-                        static_cast<unsigned long>(feedback_min_success_per_mille));
-                }
-                {
-                    Stopwatch sw_phase(true);
-                    RefreshCoopShadowFromChangedQueue(stats);
-                    sw_phase.stop();
-                    stats.shadow_refresh_wall_ms += sw_phase.ms();
-                }
-                {
-                    Stopwatch sw_phase(true);
-                    ApplyCpuSourceCommitsToShadow(m_coop_source_commits);
-                    sw_phase.stop();
-                    stats.shadow_apply_ms += sw_phase.ms();
-                }
-
-                LOG("[COOP-CPU] seq=%lu round=%u frontier_vertices=%lu expanded_vertices=%lu active_degree_sum=%lu edge_visits=%lu proposals=%lu proposal_generated=%lu proposal_survived=%lu proposal_compressed=%lu proposal_success=%lu unique_dst=%lu gpu_skipped_cpu_sources=%lu min_degree=%d state_d2h_bytes=%lu state_d2h_ms=%f frontier_d2h_bytes=%lu frontier_d2h_ms=%f cpu_ms=%f proposal_compress_ms=%f allocation_ms=%f host_pma_only=true host_pma_edge_visits=%lu cached_source_vertices=%lu non_cached_source_vertices=%lu cached_edges=%lu non_cached_edges=%lu cache_edge_reads=0 compression_enabled=%d\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    stats.cpu_frontier_vertices,
-                    stats.cpu_expanded_vertices,
-                    stats.active_degree_sum,
-                    stats.cpu_edge_visits,
-                    stats.cpu_proposals,
-                    stats.cpu_proposals_generated,
-                    stats.cpu_proposals_survived,
-                    stats.cpu_proposals_compressed,
-                    stats.cpu_proposals_success,
-                    stats.cpu_unique_dst,
-                    stats.gpu_skipped_cpu_sources,
-                    FLAGS_coop_cpu_min_degree,
-                    stats.state_d2h_bytes,
-                    stats.state_d2h_ms,
-                    stats.d2h_frontier_bytes,
-                    stats.d2h_frontier_ms,
-                    stats.cpu_ms,
-                    stats.proposal_compress_ms,
-                    stats.allocation_ms,
-                    stats.cpu_host_pma_edge_visits,
-                    stats.cpu_cached_source_vertices,
-                    stats.cpu_non_cached_source_vertices,
-                    stats.cpu_cached_edges,
-                    stats.cpu_non_cached_edges,
-                    FLAGS_coop_compress_proposals ? 1 : 0);
-                LOG("[COOP-MERGE] seq=%lu round=%u proposals=%lu proposal_capacity=%lu commit_capacity=%lu h2d_bytes=%lu h2d_ms=%f merge_kernel_ms=%f allocation_ms=%f source_commits=%lu\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    stats.cpu_proposals,
-                    static_cast<uint64_t>(m_coop_device_proposal_capacity),
-                    static_cast<uint64_t>(m_coop_device_commit_capacity),
-                    stats.h2d_proposal_bytes,
-                    stats.h2d_proposal_ms,
-                    stats.merge_ms,
-                    stats.allocation_ms,
-                    m_coop_source_commits.size());
-                LOG("[COOP-SHADOW] seq=%lu round=%u hits=%lu misses=%lu dirty_vertices=%lu invalidated_vertices=%lu dirty_queue_d2h_bytes=%lu dirty_queue_d2h_ms=%f delta_state_d2h_bytes=%lu delta_state_d2h_ms=%f state_request_h2d_bytes=%lu state_request_h2d_ms=%f gpu_dirty_unknown_next=0\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    stats.shadow_hits,
-                    stats.shadow_misses,
-                    stats.shadow_dirty_vertices,
-                    stats.shadow_invalidated_vertices,
-                    stats.dirty_queue_d2h_bytes,
-                    stats.dirty_queue_d2h_ms,
-                    stats.delta_state_d2h_bytes,
-                    stats.delta_state_d2h_ms,
-                    stats.state_request_h2d_bytes,
-                    stats.state_request_h2d_ms);
-                if (cpu_home_mode) {
-                    LOG("[COOP-HOME] seq=%lu round=%u cpu_home_sources=%lu gpu_home_sources=%lu cpu_home_edges_est=%lu cpu_home_active_sources=%lu cpu_home_injected_sources=%lu gpu_home_active_sources=%lu policy=%s min_degree=%d max_sources=%d\n",
-                        static_cast<unsigned long>(coop_seq),
-                        coop_round,
-                        stats.cpu_home_sources,
-                        stats.gpu_home_sources,
-                        stats.cpu_home_edges_est,
-                        stats.cpu_home_active_sources,
-                        stats.cpu_home_injected_sources,
-                        stats.gpu_home_active_sources,
-                        FLAGS_coop_home_policy.c_str(),
-                        FLAGS_coop_home_min_degree,
-                        FLAGS_coop_home_max_sources);
-                    LOG("[COOP-CPU-HOME] seq=%lu round=%u cpu_local_edge_visits=%lu cpu_local_relax_success=%lu cpu_local_frontier_pushes=%lu cpu_to_gpu_boundary_proposals=%lu cpu_to_gpu_boundary_success=%lu cpu_home_commit_count=%lu phase=8A_boundary_dst_mvp\n",
-                        static_cast<unsigned long>(coop_seq),
-                        coop_round,
-                        stats.cpu_local_edge_visits,
-                        stats.cpu_local_relax_success,
-                        stats.cpu_local_frontier_pushes,
-                        stats.cpu_to_gpu_boundary_proposals,
-                        stats.cpu_to_gpu_boundary_success,
-                        stats.cpu_home_commit_count);
-                    LOG("[COOP-BOUNDARY] seq=%lu round=%u gpu_relax_success=%lu gpu_relax_cpu_home_success=%lu gpu_to_cpu_boundary_items=%lu gpu_to_cpu_boundary_bytes=%lu gpu_to_cpu_boundary_unique=%lu gpu_to_cpu_boundary_d2h_ms=%f full_frontier_d2h_bytes=%lu full_frontier_d2h_ms=%f note=phase8_boundary_queue_mvp\n",
-                        static_cast<unsigned long>(coop_seq),
-                        coop_round,
-                        stats.gpu_relax_success,
-                        stats.gpu_relax_cpu_home_success,
-                        stats.gpu_to_cpu_boundary_items,
-                        stats.gpu_to_cpu_boundary_bytes,
-                        stats.gpu_to_cpu_boundary_unique,
-                        stats.gpu_to_cpu_boundary_d2h_ms,
-                        stats.full_frontier_d2h_bytes,
-                        stats.full_frontier_d2h_ms);
-                    LOG("[COOP-DST-DIAG] seq=%lu round=%u gpu_relax_success=%lu gpu_relax_dst_degree_sum=%lu gpu_relax_dst_high_degree_count=%lu gpu_relax_dst_high_degree_sum=%lu gpu_relax_dst_batch_touched_count=%lu gpu_relax_cpu_home_success=%lu high_degree_threshold=%u\n",
-                        static_cast<unsigned long>(coop_seq),
-                        coop_round,
-                        stats.gpu_relax_success,
-                        stats.gpu_relax_dst_degree_sum,
-                        stats.gpu_relax_dst_high_degree_count,
-                        stats.gpu_relax_dst_high_degree_sum,
-                        stats.gpu_relax_dst_batch_touched_count,
-                        stats.gpu_relax_cpu_home_success,
-                        static_cast<uint32_t>(std::max(FLAGS_coop_home_min_degree, 0)));
-                    LOG("[COOP-DST-UNIQUE] seq=%lu round=%u queue_items=%lu unique_dst=%lu unique_dst_degree_sum=%lu unique_dst_ge32_count=%lu unique_dst_ge32_sum=%lu unique_dst_ge128_count=%lu unique_dst_ge128_sum=%lu unique_dst_ge512_count=%lu unique_dst_ge512_sum=%lu unique_dst_ge1024_count=%lu unique_dst_ge1024_sum=%lu unique_dst_batch_touched_count=%lu unique_dst_cpu_home_count=%lu queue_bytes=%lu queue_d2h_ms=%f note=diagnostic_only_no_scheduling_change\n",
-                        static_cast<unsigned long>(coop_seq),
-                        coop_round,
-                        stats.gpu_relax_dst_queue_items,
-                        stats.gpu_relax_unique_dst,
-                        stats.gpu_relax_unique_dst_degree_sum,
-                        stats.gpu_relax_unique_dst_ge32_count,
-                        stats.gpu_relax_unique_dst_ge32_sum,
-                        stats.gpu_relax_unique_dst_ge128_count,
-                        stats.gpu_relax_unique_dst_ge128_sum,
-                        stats.gpu_relax_unique_dst_ge512_count,
-                        stats.gpu_relax_unique_dst_ge512_sum,
-                        stats.gpu_relax_unique_dst_ge1024_count,
-                        stats.gpu_relax_unique_dst_ge1024_sum,
-                        stats.gpu_relax_unique_dst_batch_touched_count,
-                        stats.gpu_relax_unique_dst_cpu_home_count,
-                        stats.gpu_relax_dst_queue_bytes,
-                        stats.gpu_relax_dst_queue_d2h_ms);
-                }
-
-                {
-                    Stopwatch sw_phase(true);
-                    PostComputationBW(&stats);
-                    sw_phase.stop();
-                    stats.post_bw_ms += sw_phase.ms();
-                }
-                sw_round.stop();
-                stats.round_wall_ms += sw_round.ms();
-                const double accounted_ms =
-                    stats.collect_stats_ms +
-                    stats.reset_buffers_ms +
-                    stats.source_select_ms +
-                    stats.owner_mark_ms +
-                    stats.changed_queue_reset_ms +
-                    stats.cpu_generate_wall_ms +
-                    stats.gpu_launch_submit_ms +
-                    stats.gpu_sync_ms +
-                    stats.gpu_skip_counter_d2h_ms +
-                    stats.merge_wall_ms +
-                    stats.shadow_refresh_wall_ms +
-                    stats.shadow_apply_ms +
-                    stats.post_bw_ms;
-                LOG("[COOP-ATTR] seq=%lu round=%u split_mode=%s round_wall_ms=%f accounted_ms=%f unaccounted_ms=%f collect_ms=%f reset_ms=%f source_select_ms=%f owner_mark_ms=%f changed_queue_reset_ms=%f cpu_generate_wall_ms=%f gpu_launch_submit_ms=%f gpu_sync_ms=%f gpu_skip_counter_d2h_ms=%f merge_wall_ms=%f shadow_refresh_wall_ms=%f shadow_apply_ms=%f post_bw_ms=%f post_bw_rebuild_worklist_ms=%f post_bw_active_count_ms=%f post_bw_queue_reset_ms=%f post_bw_other_ms=%f gpu_segments=%u active_gpu_segments=%u gpu_kernel_launches=%u success_ratio=%f compression_ratio=%f\n",
-                    static_cast<unsigned long>(coop_seq),
-                    coop_round,
-                    split_mode_name,
-                    stats.round_wall_ms,
-                    accounted_ms,
-                    stats.round_wall_ms - accounted_ms,
-                    stats.collect_stats_ms,
-                    stats.reset_buffers_ms,
-                    stats.source_select_ms,
-                    stats.owner_mark_ms,
-                    stats.changed_queue_reset_ms,
-                    stats.cpu_generate_wall_ms,
-                    stats.gpu_launch_submit_ms,
-                    stats.gpu_sync_ms,
-                    stats.gpu_skip_counter_d2h_ms,
-                    stats.merge_wall_ms,
-                    stats.shadow_refresh_wall_ms,
-                    stats.shadow_apply_ms,
-                    stats.post_bw_ms,
-                    stats.post_bw_rebuild_worklist_ms,
-                    stats.post_bw_active_count_ms,
-                    stats.post_bw_queue_reset_ms,
-                    stats.post_bw_other_ms,
-                    stats.gpu_segments,
-                    stats.active_gpu_segments,
-                    stats.gpu_kernel_launches,
-                    stats.cpu_proposals_compressed == 0
-                        ? 0.0
-                        : static_cast<double>(stats.cpu_proposals_success) /
-                              static_cast<double>(stats.cpu_proposals_compressed),
-                    stats.cpu_proposals_survived == 0
-                        ? 0.0
-                        : static_cast<double>(stats.cpu_proposals_compressed) /
-                              static_cast<double>(stats.cpu_proposals_survived));
-            }
-
-            void PostComputationBW_del() {
-                int dev_id = 0;
-                const groute::Stream &stream_seg = m_groute_context->CreateStream(dev_id);
-                GraphDatum &graph_datum = *m_graph_datum;
-                AppImplDeviceObject &app_inst = *m_app_inst;
-                m_running_info.current_round = m_graph_datum->m_current_round.get_val_D2H();
-
-                Stopwatch sw_unique(true);
-
-                index_t seg_snode,seg_enode;
-                index_t stream_id;
-                auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
-                Stopwatch sw_rebuild(true);
-                for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
-                    stream_id = seg_idx % FLAGS_n_stream;
-			        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-			        seg_enode = m_groute_context->seg_enode[seg_idx];  
-			        RebuildWorklist_del(app_inst,vcsr_graph,
-                        graph_datum,
-                        stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
-                }
-
-                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
-                    stream[stream_idx].Sync();
-                }
-                sw_rebuild.stop();
-                uint64_t del_act_num_node = 0;
-                m_running_info.time_overhead_rebuild_worklist += sw_rebuild.ms();
-                // for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-                //     stream_id = seg_idx % FLAGS_n_stream;		      
-
-		        //     index_t active_count = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream[stream_id]);    
-		        //     graph_datum.seg_active_num[seg_idx] = active_count;
-
-		        //     m_running_info.input_active_count_seg[seg_idx] = active_count;
-
-		        //     uint32_t work_size = active_count;
-                //     del_act_num_node+=work_size;
-                // }
-                // std::cout<<"删除活跃顶点 "<<del_act_num_node<<std::endl;
-                sw_unique.stop();
-                m_running_info.time_overhead_wl_unique += sw_unique.ms();
-
-          }
-
-            void PostComputationBW(CoopRoundStats *coop_stats = nullptr) {
+            void PostComputationBW() {
                 // printf("------------PostComputationBW-----------\n");
-                Stopwatch sw_post_total(true);
                 int dev_id = 0;
-                Stopwatch sw_post_setup(true);
                 const groute::Stream &stream_seg = m_groute_context->CreateStream(dev_id);
                 GraphDatum &graph_datum = *m_graph_datum;
                 AppImplDeviceObject &app_inst = *m_app_inst;
                 m_running_info.current_round = m_graph_datum->m_current_round.get_val_D2H();
-                sw_post_setup.stop();
-
+                std::vector<uint8_t> dirty_segments(
+                    FLAGS_SEGMENT, m_insertion_epoch_active ? 0 : 1);
+                if (m_insertion_epoch_active) {
+                    const uint32_t changed_count =
+                        m_device_insertion_changed_vertices.GetCount(*m_stream);
+                    m_insertion_changed_vertices.resize(changed_count);
+                    if (changed_count != 0) {
+                        GROUTE_CUDA_CHECK(cudaMemcpy(
+                            m_insertion_changed_vertices.data(),
+                            m_device_insertion_changed_vertices.GetDeviceDataPtr(),
+                            sizeof(index_t) * changed_count,
+                            cudaMemcpyDeviceToHost));
+                        for (const index_t dst : m_insertion_changed_vertices) {
+                            const index_t seg = FindSegmentForVertexHost(dst);
+                            if (seg < FLAGS_SEGMENT) dirty_segments[seg] = 1;
+                        }
+                    }
+                }
+                m_last_insertion_dirty_partitions = static_cast<uint32_t>(
+                    std::count(dirty_segments.begin(), dirty_segments.end(), uint8_t{1}));
                 Stopwatch sw_unique(true);
 
                 index_t seg_snode,seg_enode;
@@ -6211,46 +3240,41 @@ namespace sepgraph {
 
                 Stopwatch sw_rebuild(true);
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
+                    if (!dirty_segments[seg_idx]) {
+                        graph_datum.seg_active_num[seg_idx] = 0;
+                        m_running_info.input_active_count_seg[seg_idx] = 0;
+                        continue;
+                    }
                     stream_id = seg_idx % FLAGS_n_stream;
-			        seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
-			        seg_enode = m_groute_context->seg_enode[seg_idx];  
-			        RebuildArrayWorklist(app_inst,
+                    seg_snode = m_groute_context->seg_snode[seg_idx];                                    // start node
+                    seg_enode = m_groute_context->seg_enode[seg_idx];
+                    RebuildArrayWorklist(app_inst,
                         graph_datum,
-                        stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx);
+                        stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx,
+                        m_insertion_epoch_active ? m_device_node_state_epoch : nullptr,
+                        m_insertion_epoch);
                 }
 
                 for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
                     stream[stream_idx].Sync();
                 }
-                uint64_t act = 0;
                 sw_rebuild.stop();
                 m_running_info.time_overhead_rebuild_worklist += sw_rebuild.ms();
-                RefreshSegmentActiveCountsFromQueues();
+                if (m_insertion_epoch_active) {
+                    for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; ++seg_idx) {
+                        if (!dirty_segments[seg_idx]) continue;
+                        const index_t sid = seg_idx % FLAGS_n_stream;
+                        const index_t active =
+                            graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream[sid]);
+                        graph_datum.seg_active_num[seg_idx] = active;
+                        m_running_info.input_active_count_seg[seg_idx] = active;
+                    }
+                } else {
+                    RefreshSegmentActiveCountsFromQueues();
+                }
                 // printf("static num nodes %d\n",act);
                 sw_unique.stop();
                 m_running_info.time_overhead_wl_unique += sw_unique.ms();
-                if (coop_stats != nullptr) {
-                    sw_post_total.stop();
-                    const double rebuild_ms = sw_rebuild.ms();
-                    const double active_count_ms = sw_unique.ms() > rebuild_ms
-                                                       ? sw_unique.ms() - rebuild_ms
-                                                       : 0.0;
-                    const double queue_reset_ms = 0.0;
-                    const double known_ms = rebuild_ms + active_count_ms + queue_reset_ms;
-                    uint64_t active_total = 0;
-                    for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                        active_total += graph_datum.seg_active_num[seg_idx];
-                    }
-                    coop_stats->dirty_segments += FLAGS_SEGMENT;
-                    coop_stats->post_bw_active_count += active_total;
-                    coop_stats->post_bw_rebuild_worklist_ms += rebuild_ms;
-                    coop_stats->post_bw_active_count_ms += active_count_ms;
-                    coop_stats->post_bw_queue_reset_ms += queue_reset_ms;
-                    coop_stats->post_bw_other_ms += sw_post_total.ms() > known_ms
-                                                        ? sw_post_total.ms() - known_ms
-                                                        : sw_post_setup.ms();
-                }
-
           }
 
             index_t FindSegmentForVertexHost(index_t vertex) const {
@@ -6267,149 +3291,6 @@ namespace sepgraph {
                 return lo;
             }
 
-            bool PostComputationBWDirtySegments(
-                const std::vector<CpuRelaxProposal<TBuffer>> &cpu_proposals,
-                const std::vector<CpuSourceCommit<TValue>> &source_commits,
-                CoopRoundStats *coop_stats = nullptr) {
-                Stopwatch sw_post_total(true);
-                if (m_coop_device_seg_enodes == nullptr ||
-                    m_coop_device_dirty_segments == nullptr ||
-                    FLAGS_SEGMENT <= 0) {
-                    return false;
-                }
-
-                const uint32_t relaxed_dst_count =
-                    m_coop_device_gpu_relax_dst_vertices.GetCount(*m_stream);
-                const uint32_t cpu_success_dst_count =
-                    m_coop_device_cpu_success_dst_vertices.GetCount(*m_stream);
-                const bool has_cpu_dirty = cpu_success_dst_count > 0 || !source_commits.empty();
-                if (relaxed_dst_count == 0 && !has_cpu_dirty) {
-                    Stopwatch sw_count(true);
-                    GraphDatum &graph_datum = *m_graph_datum;
-                    for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                        graph_datum.seg_active_num[seg_idx] = 0;
-                        m_running_info.input_active_count_seg[seg_idx] = 0;
-                    }
-                    sw_count.stop();
-                    if (coop_stats != nullptr) {
-                        sw_post_total.stop();
-                        coop_stats->post_bw_active_count_ms += sw_count.ms();
-                        coop_stats->dirty_segments += 0;
-                        coop_stats->post_bw_active_count += 0;
-                        coop_stats->post_bw_other_ms +=
-                            sw_post_total.ms() > sw_count.ms()
-                                ? sw_post_total.ms() - sw_count.ms()
-                                : 0.0;
-                    }
-                    return true;
-                }
-
-                Stopwatch sw_mark(true);
-                m_coop_dirty_segments.resize(FLAGS_SEGMENT);
-                if (relaxed_dst_count > 0 || cpu_success_dst_count > 0) {
-                    GROUTE_CUDA_CHECK(cudaMemset(m_coop_device_dirty_segments,
-                                                 0,
-                                                 sizeof(uint8_t) * FLAGS_SEGMENT));
-                    dim3 mark_grid_dims, mark_block_dims;
-                    if (relaxed_dst_count > 0) {
-                        KernelSizing(mark_grid_dims, mark_block_dims, relaxed_dst_count);
-                        MarkDirtySegmentsFromVertices<<<mark_grid_dims, mark_block_dims>>>(
-                            m_coop_device_gpu_relax_dst_vertices.GetDeviceDataPtr(),
-                            relaxed_dst_count,
-                            m_coop_device_seg_enodes,
-                            FLAGS_SEGMENT,
-                            m_coop_device_dirty_segments);
-                    }
-                    if (cpu_success_dst_count > 0) {
-                        KernelSizing(mark_grid_dims, mark_block_dims, cpu_success_dst_count);
-                        MarkDirtySegmentsFromVertices<<<mark_grid_dims, mark_block_dims>>>(
-                            m_coop_device_cpu_success_dst_vertices.GetDeviceDataPtr(),
-                            cpu_success_dst_count,
-                            m_coop_device_seg_enodes,
-                            FLAGS_SEGMENT,
-                            m_coop_device_dirty_segments);
-                    }
-                    GROUTE_CUDA_CHECK(cudaMemcpy(m_coop_dirty_segments.data(),
-                                                 m_coop_device_dirty_segments,
-                                                 sizeof(uint8_t) * FLAGS_SEGMENT,
-                                                 cudaMemcpyDeviceToHost));
-                } else {
-                    std::fill(m_coop_dirty_segments.begin(), m_coop_dirty_segments.end(), 0);
-                }
-                for (const auto &commit : source_commits) {
-                    const index_t seg_idx = FindSegmentForVertexHost(commit.src);
-                    if (seg_idx < FLAGS_SEGMENT) {
-                        m_coop_dirty_segments[seg_idx] = 1;
-                    }
-                }
-                sw_mark.stop();
-
-                GraphDatum &graph_datum = *m_graph_datum;
-                AppImplDeviceObject &app_inst = *m_app_inst;
-                m_running_info.current_round = m_graph_datum->m_current_round.get_val_D2H();
-
-                Stopwatch sw_rebuild(true);
-                uint32_t dirty_segment_count = 0;
-                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                    if (!m_coop_dirty_segments[seg_idx]) {
-                        graph_datum.seg_active_num[seg_idx] = 0;
-                        m_running_info.input_active_count_seg[seg_idx] = 0;
-                        continue;
-                    }
-                    dirty_segment_count++;
-                    const index_t stream_id = seg_idx % FLAGS_n_stream;
-                    const index_t seg_snode = m_groute_context->seg_snode[seg_idx];
-                    const index_t seg_enode = m_groute_context->seg_enode[seg_idx];
-                    RebuildArrayWorklist(app_inst,
-                                         graph_datum,
-                                         stream[stream_id],
-                                         seg_snode,
-                                         seg_enode - seg_snode,
-                                         seg_idx);
-                }
-                for (index_t stream_idx = 0; stream_idx < FLAGS_n_stream; stream_idx++) {
-                    stream[stream_idx].Sync();
-                }
-                sw_rebuild.stop();
-                m_running_info.time_overhead_rebuild_worklist += sw_rebuild.ms();
-
-                Stopwatch sw_count(true);
-                uint64_t active_total = 0;
-                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++) {
-                    if (!m_coop_dirty_segments[seg_idx]) {
-                        continue;
-                    }
-                    const index_t stream_id = seg_idx % FLAGS_n_stream;
-                    const index_t active_count =
-                        graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream[stream_id]);
-                    graph_datum.seg_active_num[seg_idx] = active_count;
-                    m_running_info.input_active_count_seg[seg_idx] = active_count;
-                    active_total += active_count;
-                }
-                sw_count.stop();
-                m_running_info.time_overhead_wl_unique += sw_count.ms();
-
-                if (coop_stats != nullptr) {
-                    sw_post_total.stop();
-                    coop_stats->dirty_segments += dirty_segment_count;
-                    coop_stats->post_bw_active_count += active_total;
-                    coop_stats->post_bw_rebuild_worklist_ms += sw_rebuild.ms();
-                    coop_stats->post_bw_active_count_ms += sw_count.ms();
-                    coop_stats->post_bw_queue_reset_ms += sw_mark.ms();
-                    const double known_ms = sw_mark.ms() + sw_rebuild.ms() + sw_count.ms();
-                    coop_stats->post_bw_other_ms += sw_post_total.ms() > known_ms
-                                                        ? sw_post_total.ms() - known_ms
-                                                        : 0.0;
-                }
-                if (FLAGS_verbose) {
-                    LOG("[COOP-DIRTY-REBUILD] relaxed_dst_count=%u cpu_success_dst_count=%u dirty_segments=%u total_segments=%d mode=success_queue\n",
-                        relaxed_dst_count,
-                        cpu_success_dst_count,
-                        dirty_segment_count,
-                        FLAGS_SEGMENT);
-                }
-                return true;
-            }
 
             void count() {
                 // printf("------------PostComputationBW-----------\n");
@@ -6427,14 +3308,14 @@ namespace sepgraph {
                 // sw_rebuild.stop();
                 // m_running_info.time_overhead_rebuild_worklist += sw_rebuild.ms();
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
-                    stream_id = seg_idx % FLAGS_n_stream; 
+                    stream_id = seg_idx % FLAGS_n_stream;
                     index_t active_count = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream[stream_id]);
-		            graph_datum.seg_active_num[seg_idx] = active_count;
+                    graph_datum.seg_active_num[seg_idx] = active_count;
 
-		            m_running_info.input_active_count_seg[seg_idx] = active_count;
+                    m_running_info.input_active_count_seg[seg_idx] = active_count;
 
-		            uint32_t work_size = active_count;
-		            dim3 grid_dims, block_dims;
+                    uint32_t work_size = active_count;
+                    dim3 grid_dims, block_dims;
                     // act += work_size;
 
                 }
@@ -6443,7 +3324,7 @@ namespace sepgraph {
                 // m_running_info.time_overhead_wl_unique += sw_unique.ms();
 
           }
-           
+
            void CombineTask(AlgoVariant *algo_variant) {
                 // LOG("------------CombineTask-----------\n");
                 int dev_id = 0;
@@ -6461,7 +3342,7 @@ namespace sepgraph {
                 bool compaction = false;
                 Stopwatch sw_rebuild(true);
                 index_t seg_idx_ct = 0;
-                for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){  
+                for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                     stream_id = seg_idx % FLAGS_n_stream;
                     seg_snode = m_groute_context->seg_snode[seg_idx];
                     if(algo_variant[seg_idx] == AlgoVariant::Zero_Copy){
@@ -6523,8 +3404,8 @@ namespace sepgraph {
                 for(index_t seg_idx = 0; seg_idx < seg_idx_ct ; seg_idx++){
                     uint32_t seg_idx_new = m_groute_context->segment_id_ct[seg_idx];
                     // printf("seg_idx_new %d",seg_idx_new);
-                    stream_id = seg_idx % FLAGS_n_stream;            
-                    index_t active_count = graph_datum.m_wl_array_in_seg[seg_idx_new].GetCount(stream[stream_id]);  
+                    stream_id = seg_idx % FLAGS_n_stream;
+                    index_t active_count = graph_datum.m_wl_array_in_seg[seg_idx_new].GetCount(stream[stream_id]);
                     // printf(": active %d\n",active_count);
                     uint32_t work_size = active_count;
                     dim3 grid_dims, block_dims;
@@ -6550,7 +3431,7 @@ namespace sepgraph {
                                 graph_datum.GetValueDeviceObject(),
                                 graph_datum.GetBufferDeviceObject(),
                                 graph_datum.m_seg_value.dev_ptr);
-                                
+
                             stream[stream_id].Sync();
                             graph_datum.seg_res_num[seg_idx_new] = graph_datum.m_seg_value.get_val_D2H();
                             sw_priority.stop();
@@ -6590,7 +3471,7 @@ namespace sepgraph {
                 thrust::exclusive_scan(ptr_degrees, ptr_degrees + graph_datum.nnodes, ptr_degrees_prefixsum);
 
                 kernel::makeActiveNodesPointer<<<graph_datum.nnodes/512+1, 512>>>(vcsr_graph.subgraph_rowstart, graph_datum.activeNodesLabeling.dev_ptr, graph_datum.prefixLabeling.dev_ptr, graph_datum.prefixSumDegrees.dev_ptr, graph_datum.nnodes);
-                
+
                 GROUTE_CUDA_CHECK(cudaMemcpy(vcsr_graph_host.subgraph_rowstart, vcsr_graph.subgraph_rowstart, graph_datum.subgraphnodes*sizeof(uint32_t), cudaMemcpyDeviceToHost));
 
                 uint32_t numActiveEdges = 0;
@@ -6598,13 +3479,13 @@ namespace sepgraph {
                 // uint32_t outDegree = vcsr_graph_host.end_edge(endid) - vcsr_graph_host.begin_edge(endid);
                 uint64_t outDegree = vcsr_graph_host.sync_vertices_[endid].index;
                 if(graph_datum.subgraphnodes > 0)
-                    numActiveEdges = vcsr_graph_host.subgraph_rowstart[graph_datum.subgraphnodes-1] + outDegree; 
-                
+                    numActiveEdges = vcsr_graph_host.subgraph_rowstart[graph_datum.subgraphnodes-1] + outDegree;
+
                 graph_datum.subgraphedges = numActiveEdges;
                 uint32_t last = numActiveEdges;
 
                 GROUTE_CUDA_CHECK(cudaMemcpy(vcsr_graph.subgraph_rowstart + graph_datum.subgraphnodes, &last, sizeof(uint32_t), cudaMemcpyHostToDevice));
-    
+
                 GROUTE_CUDA_CHECK(cudaMemcpy(vcsr_graph_host.subgraph_rowstart, vcsr_graph.subgraph_rowstart, (graph_datum.subgraphnodes + 1)*sizeof(uint32_t), cudaMemcpyDeviceToHost));
 
                 uint32_t numThreads = 32;

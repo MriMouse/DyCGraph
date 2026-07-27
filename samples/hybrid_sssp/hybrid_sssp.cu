@@ -21,62 +21,8 @@ DEFINE_bool(sparse,
             false, "use async/push/dd + fusion for high-diameter");
 DEFINE_int32(sssp_max_batches,
              10, "Maximum number of update batches processed by hybrid_sssp");
-DEFINE_string(coop_mode,
-              "hybrid", "CPU-GPU cooperative execution mode for SSSP add convergence: hybrid/off; use off for GPU-only ablation");
-DEFINE_string(coop_split_mode,
-              "cpu_home", "CPU-GPU cooperative split mode for SSSP: cpu_home/host_select; host_select is kept for ablation");
-DEFINE_int32(coop_cpu_segment_limit,
-             1, "Maximum number of whole frontier segments assigned to CPU in one cooperative round");
-DEFINE_int32(coop_max_cpu_sources,
-             -1, "Maximum number of active SSSP sources assigned to CPU in one cooperative round; -1 reuses coop_cpu_segment_limit");
-DEFINE_string(coop_segment_policy,
-              "first_active", "CPU segment selection policy: first_active/active_frontier/estimated_edges");
-DEFINE_int32(coop_cpu_min_degree,
-             0, "Only let CPU expand active SSSP sources with out-degree >= this threshold");
-DEFINE_bool(coop_cpu_dry_run,
-            false, "Generate CPU-side SSSP proposals for instrumentation but keep GPU owning all segments");
-DEFINE_bool(coop_compress_proposals,
-            true, "Compress CPU SSSP relax proposals by destination before H2D merge");
-DEFINE_int32(coop_home_min_degree,
-             1024, "Minimum out-degree for a source to become CPU_HOME in coop_split_mode=cpu_home");
-DEFINE_int32(coop_home_max_sources,
-             4096, "Maximum number of persistent CPU_HOME sources in coop_split_mode=cpu_home");
-DEFINE_string(coop_home_policy,
-              "update_touched_high_degree", "CPU_HOME selection policy for coop_split_mode=cpu_home");
-DEFINE_int32(coop_home_min_injected_sources,
-             32, "Minimum injected CPU_HOME sources required to admit cpu_home for a batch; <=0 disables this admission threshold");
-DEFINE_int32(coop_home_min_injected_edges,
-             50000, "Minimum estimated injected CPU_HOME edges required to admit cpu_home for a batch; <=0 disables this admission threshold");
-DEFINE_int32(coop_home_feedback_min_success_per_mille,
-             1, "Disable cpu_home for the rest of a batch when first-round CPU proposal success is below this per-mille threshold and no GPU->CPU boundary appears; <=0 disables this feedback gate");
-DEFINE_bool(coop_home_skip_gpu_sources,
-            false, "Experimental cpu_home owner-skip path: when true, GPU skips CPU_HOME sources and CPU proposals are merged; default false keeps cpu_home diagnostic/correctness-safe");
-DEFINE_bool(coop_home_diagnostic_launch,
-            false, "Run the cooperative delta launch for cpu_home diagnostics even when owner-skip is disabled; default false keeps safe cpu_home on the exact GPU-only convergence path");
-DEFINE_bool(coop_overlap_probe,
-            false, "Run a read-only CPU overlap probe during GPU convergence sync; default false");
-DEFINE_int32(coop_overlap_probe_max_sources,
-             512, "Maximum batch-touched sources scanned by the CPU overlap probe per convergence round");
-DEFINE_int32(coop_overlap_probe_edge_budget,
-             200000, "Maximum host PMA edges read by the CPU overlap probe per convergence round");
-DEFINE_bool(coop_packet_dry_run,
-            false, "Run a bounded CPU SSSP proposal packet dry-run during GPU convergence; default false");
-DEFINE_bool(coop_packet_diagnostic_merge,
-            false, "Diagnostic only: merge CPU packet proposals through the GPU merge kernel without GPU source skip; requires coop_packet_dry_run");
-DEFINE_bool(coop_packet_production_merge,
-            false, "Experimental production candidate: merge CPU packet proposals without pre/post dst probes and without GPU source skip; default false");
-DEFINE_bool(coop_packet_overlap_merge,
-            false, "Experimental Phase 10A candidate: generate/compress CPU packet while GPU delta runs, then merge still-valid proposals after the GPU barrier without GPU source skip");
-DEFINE_bool(coop_packet_skip_audit,
-            true, "CPU-owned packet path: skip CPU-covered active-frontier packet sources in convergence delta and merge CPU proposals through GPU authoritative merge; set false for no-skip ablation");
-DEFINE_string(coop_packet_source_policy,
-              "active_frontier", "CPU packet source policy: active_frontier/degree_desc/noncached_degree/cache_aware/hybrid_score/history_success/batch_touched");
-DEFINE_int32(coop_packet_max_sources,
-             256, "Maximum sources used by the CPU packet dry-run per convergence round");
-DEFINE_int32(coop_packet_edge_budget,
-             200000, "Maximum host PMA edges read by the CPU packet dry-run per convergence round");
-DEFINE_bool(coop_merge_light_prefilter,
-            false, "Filter CPU relax proposals against current dst buffer before GPU merge to reduce H2D/merge work");
+DEFINE_int32(sssp_cpu_partition_capacity,
+             0, "Number of stable vertex-range partitions owned by the CPU during an insertion epoch");
 DEFINE_bool(sssp_print_checksum,
             false, "Print final SSSP distance and parent checksums");
 DECLARE_int32(top_ranks);
@@ -90,12 +36,18 @@ namespace hybrid_sssp
     template<typename TValue, typename TBuffer, typename TWeight, typename...UnusedData>
     struct SSSP : sepgraph::api::AppBase<TValue, TBuffer, TWeight>
     {
+        static constexpr bool kSupportsGpuDeletionRepair = true;
+
+        __host__ __device__ static TWeight DeletionEdgeWeight(index_t src, index_t dst) {
+            return static_cast<TWeight>((src + dst) % 128 + 1);
+        }
+
         using sepgraph::api::AppBase<TValue, TBuffer, TWeight>::AccumulateBuffer;
         index_t m_source_node;
 
         SSSP(index_t source_node) : m_source_node(source_node)
         {
-         
+
         }
 
         __forceinline__ __device__
@@ -107,7 +59,7 @@ namespace hybrid_sssp
 
         __forceinline__ __device__
 
-        TBuffer GetInitBuffer(index_t node) const override 
+        TBuffer GetInitBuffer(index_t node) const override
         {
             TBuffer buffer;
             if (node == m_source_node)//source_node = 1
@@ -132,7 +84,7 @@ namespace hybrid_sssp
                                                       TValue *p_value,
                                                       TBuffer *p_buffer) override
         {
-           
+
             return utils::pair<TBuffer, bool>(*p_buffer, true);
         }
         __forceinline__ __device__
@@ -169,11 +121,11 @@ namespace hybrid_sssp
             TBuffer new_buffer = buffer + weight;
             TBuffer old_buffer=atomicMin(p_buffer, buffer + weight);;
             if(new_buffer< old_buffer){
-            
+
                 TValue old_parent = *p_parent;
                 do{
                     old_parent = atomicCAS(p_parent,old_parent,src);
-                    
+
                 } while (new_buffer==*p_buffer && (*p_parent) !=src);
             }
             return new_buffer < old_buffer ? 1 : 0;
@@ -213,29 +165,13 @@ namespace hybrid_sssp
         // bool reduce()
 
         __forceinline__ __device__
-        int AccumulateBuffer_del(index_t src,
-                             index_t dst,
-                             TValue *p_parent,
-                             TBuffer *p_buffer,    //dst_buffer
-                             TValue *p_value) override   //dst_value
-        {
-            if(*p_parent == src){
-                *p_buffer = UINT32_MAX;
-                *p_value = UINT32_MAX;
-                *p_parent = UINT32_MAX;
-                this->m_vcsr_graph.vertices_[dst].deletion = true;
-            }
-            return 1;
-        }
-
-        __forceinline__ __device__
 
         bool IsActiveNode(index_t node, TBuffer buffer,TValue value) const override
         {
             return buffer < value;
         }
-        
-        
+
+
         __forceinline__ __device__
         TValue sum_value(index_t node, TValue value,TBuffer buffer) const override
         {
@@ -257,19 +193,36 @@ namespace hybrid_sssp
 
 struct BellmanRelaxCheckResult {
     uint64_t relaxable_edges = 0;
+    uint64_t missing_tight_witnesses = 0;
     index_t first_src = UINT32_MAX;
     index_t first_dst = UINT32_MAX;
+    index_t first_missing_witness = UINT32_MAX;
     distance_t src_distance = UINT32_MAX;
     distance_t dst_distance = UINT32_MAX;
     uint64_t candidate_distance = std::numeric_limits<uint64_t>::max();
 };
 
+struct ParentWitnessCheckResult {
+    uint64_t invalid_vertices = 0;
+    uint64_t missing_parent_edges = 0;
+    uint64_t wrong_parent_distances = 0;
+    index_t first_vertex = UINT32_MAX;
+    index_t first_parent = UINT32_MAX;
+    distance_t vertex_distance = UINT32_MAX;
+    distance_t parent_distance = UINT32_MAX;
+};
+
 static BellmanRelaxCheckResult CheckBellmanRelaxed(
         const groute::graphs::host::PMAGraph &graph,
-        const std::vector<distance_t> &distances) {
+        const std::vector<distance_t> &distances,
+        index_t source_node) {
     BellmanRelaxCheckResult result;
 
     const index_t nnodes = std::min<index_t>(graph.nnodes, distances.size());
+    std::vector<uint8_t> has_tight_witness(nnodes, 0);
+    if (source_node < nnodes) {
+        has_tight_witness[source_node] = 1;
+    }
     for (index_t src = 0; src < nnodes; src++) {
         if (distances[src] == UINT32_MAX) {
             continue;
@@ -285,6 +238,9 @@ static BellmanRelaxCheckResult CheckBellmanRelaxed(
 
             const uint64_t weight = (static_cast<uint64_t>(src) + dst) % 128 + 1;
             const uint64_t candidate = static_cast<uint64_t>(distances[src]) + weight;
+            if (distances[dst] != UINT32_MAX && candidate == distances[dst]) {
+                has_tight_witness[dst] = 1;
+            }
             if (candidate < distances[dst]) {
                 if (result.relaxable_edges == 0) {
                     result.first_src = src;
@@ -297,8 +253,83 @@ static BellmanRelaxCheckResult CheckBellmanRelaxed(
             }
         }
     }
+    for (index_t node = 0; node < nnodes; ++node) {
+        if (distances[node] == UINT32_MAX || has_tight_witness[node]) {
+            continue;
+        }
+        if (result.missing_tight_witnesses == 0) {
+            result.first_missing_witness = node;
+        }
+        result.missing_tight_witnesses++;
+    }
 
     return result;
+}
+
+static ParentWitnessCheckResult CheckParentWitness(
+        const groute::graphs::host::PMAGraph &graph,
+        const std::vector<distance_t> &distances,
+        const std::vector<distance_t> &parents,
+        index_t source_node) {
+    ParentWitnessCheckResult result;
+    const index_t nnodes = std::min<index_t>(
+        graph.nnodes,
+        std::min(distances.size(), parents.size()));
+    for (index_t node = 0; node < nnodes; ++node) {
+        if (node == source_node || distances[node] == UINT32_MAX) {
+            continue;
+        }
+
+        const index_t parent = parents[node];
+        bool valid = parent < nnodes && distances[parent] != UINT32_MAX;
+        bool parent_edge_exists = false;
+        if (valid) {
+            const uint64_t edge_start = graph.sync_vertices_[parent].index;
+            const uint64_t degree = graph.sync_vertices_[parent].degree;
+            for (uint64_t edge_offset = 0; edge_offset < degree; ++edge_offset) {
+                if (graph.edges_[edge_start + edge_offset] == node) {
+                    parent_edge_exists = true;
+                    break;
+                }
+            }
+            const uint64_t weight =
+                (static_cast<uint64_t>(parent) + node) % 128 + 1;
+            const bool distance_matches =
+                static_cast<uint64_t>(distances[parent]) + weight == distances[node];
+            if (!parent_edge_exists) {
+                result.missing_parent_edges++;
+            } else if (!distance_matches) {
+                result.wrong_parent_distances++;
+            }
+            valid = parent_edge_exists && distance_matches;
+        }
+
+        if (!valid) {
+            if (result.invalid_vertices == 0) {
+                result.first_vertex = node;
+                result.first_parent = parent;
+                result.vertex_distance = distances[node];
+                result.parent_distance =
+                    parent < distances.size() ? distances[parent] : UINT32_MAX;
+            }
+            result.invalid_vertices++;
+        }
+    }
+    return result;
+}
+
+static uint64_t DistanceChecksum(const std::vector<distance_t> &distances) {
+    uint64_t checksum = 1469598103934665603ull;
+    for (index_t node = 0; node < distances.size(); ++node) {
+        if (distances[node] == UINT32_MAX) {
+            continue;
+        }
+        checksum ^= static_cast<uint64_t>(node) + 0x9e3779b97f4a7c15ull +
+                    (static_cast<uint64_t>(distances[node]) << 6) +
+                    (static_cast<uint64_t>(distances[node]) >> 2);
+        checksum *= 1099511628211ull;
+    }
+    return checksum;
 }
 
 
@@ -375,26 +406,120 @@ bool HybridSSSP()
     while(true){
         if(NumOfSnapShots==max_batches) break;
         std::cout<<"batch number "<<NumOfSnapShots<<std::endl;
-        engine.SetCoopMechanismBatch(static_cast<uint64_t>(NumOfSnapShots));
         Stopwatch sw_paper_batch(true);
+        Stopwatch sw_delete_stage(true);
         engine.del_edge(local_begin,NumOfSnapShots);
-        engine.add_edge(local_begin,NumOfSnapShots);
-        Stopwatch sw_hot_cache_refresh(true);
-        engine.compute_hot_vertices_sssp();
-        engine.confirm_candidate_batch();
-        engine.evication_cache();
-        engine.compact_cache();
-        engine.LoadCache();
-        sw_hot_cache_refresh.stop();
+        sw_delete_stage.stop();
         sw_paper_batch.stop();
-        if (FLAGS_verbose) {
-            LOG("[P0-TIMER][SSSP][batch %d] hot_cache_refresh: %.3f ms\n",
+        double paper_algorithm_ms = sw_paper_batch.ms();
+        if (FLAGS_check) {
+            engine.GatherValue();
+            engine.GatherParent();
+            const auto &delete_stage_distances = engine.GetGraphDatum().host_value;
+            const auto &delete_stage_parents = engine.GetGraphDatum().host_parent;
+            const BellmanRelaxCheckResult delete_stage_result =
+                CheckBellmanRelaxed(engine.PMAGraph(), delete_stage_distances, source_node);
+            const ParentWitnessCheckResult delete_parent_result =
+                CheckParentWitness(engine.PMAGraph(),
+                                   delete_stage_distances,
+                                   delete_stage_parents,
+                                   source_node);
+            const bool delete_source_ok =
+                source_node < delete_stage_distances.size() &&
+                delete_stage_distances[source_node] == 0;
+            if (!delete_source_ok || delete_stage_result.relaxable_edges != 0 ||
+                delete_stage_result.missing_tight_witnesses != 0) {
+                success = false;
+            }
+            LOG("[SSSP-DELETE-STAGE-CHECK][batch %d] %s source_ok=%d relaxable_edges=%llu missing_tight_witnesses=%llu invalid_parent_witness=%llu missing_parent_edges=%llu wrong_parent_distances=%llu first_src=%u first_dst=%u first_missing_witness=%u first_bad_vertex=%u first_bad_parent=%u distance_checksum=%llu\n",
                 NumOfSnapShots,
-                sw_hot_cache_refresh.ms());
+                delete_source_ok && delete_stage_result.relaxable_edges == 0 &&
+                        delete_stage_result.missing_tight_witnesses == 0
+                    ? "passed"
+                    : "failed",
+                delete_source_ok ? 1 : 0,
+                static_cast<unsigned long long>(delete_stage_result.relaxable_edges),
+                static_cast<unsigned long long>(delete_stage_result.missing_tight_witnesses),
+                static_cast<unsigned long long>(delete_parent_result.invalid_vertices),
+                static_cast<unsigned long long>(delete_parent_result.missing_parent_edges),
+                static_cast<unsigned long long>(delete_parent_result.wrong_parent_distances),
+                delete_stage_result.first_src,
+                delete_stage_result.first_dst,
+                delete_stage_result.first_missing_witness,
+                delete_parent_result.first_vertex,
+                delete_parent_result.first_parent,
+                static_cast<unsigned long long>(DistanceChecksum(delete_stage_distances)));
         }
+        sw_paper_batch.start();
+        Stopwatch sw_add_stage(true);
+        engine.add_edge(local_begin,NumOfSnapShots);
+        sw_add_stage.stop();
+        Stopwatch sw_hotness(true);
+        engine.compute_hot_vertices_sssp();
+        sw_hotness.stop();
+        Stopwatch sw_candidate(true);
+        engine.confirm_candidate_batch();
+        sw_candidate.stop();
+        Stopwatch sw_eviction(true);
+        engine.evication_cache();
+        sw_eviction.stop();
+        Stopwatch sw_compact(true);
+        engine.compact_cache();
+        sw_compact.stop();
+        Stopwatch sw_cache_load(true);
+        engine.LoadCache();
+        sw_cache_load.stop();
+        sw_paper_batch.stop();
+        paper_algorithm_ms += sw_paper_batch.ms();
+        const double attributed_ms =
+            sw_delete_stage.ms() + sw_add_stage.ms() + sw_hotness.ms() +
+            sw_candidate.ms() + sw_eviction.ms() + sw_compact.ms() +
+            sw_cache_load.ms();
+        LOG("[P0-ATTR][SSSP][batch %d] deletion=%.3f add=%.3f hotness=%.3f candidate=%.3f eviction=%.3f compact=%.3f cache_load=%.3f residual=%.3f total=%.3f\n",
+            NumOfSnapShots,
+            sw_delete_stage.ms(),
+            sw_add_stage.ms(),
+            sw_hotness.ms(),
+            sw_candidate.ms(),
+            sw_eviction.ms(),
+            sw_compact.ms(),
+            sw_cache_load.ms(),
+            paper_algorithm_ms - attributed_ms,
+            paper_algorithm_ms);
         LOG("[P0-TIMER][SSSP][batch %d] total_batch: %.3f ms\n",
             NumOfSnapShots,
-            sw_paper_batch.ms());
+            paper_algorithm_ms);
+        if (FLAGS_check) {
+            engine.GatherValue();
+            engine.GatherParent();
+            const auto &batch_distances = engine.GetGraphDatum().host_value;
+            const auto &batch_parents = engine.GetGraphDatum().host_parent;
+            const BellmanRelaxCheckResult batch_bellman =
+                CheckBellmanRelaxed(engine.PMAGraph(), batch_distances, source_node);
+            const ParentWitnessCheckResult batch_parent =
+                CheckParentWitness(engine.PMAGraph(),
+                                   batch_distances,
+                                   batch_parents,
+                                   source_node);
+            const bool batch_source_ok =
+                source_node < batch_distances.size() && batch_distances[source_node] == 0;
+            const bool batch_ok = batch_source_ok &&
+                                  batch_bellman.relaxable_edges == 0 &&
+                                  batch_bellman.missing_tight_witnesses == 0;
+            if (!batch_ok) {
+                success = false;
+            }
+            LOG("[SSSP-BATCH-CHECK][batch %d] %s source_ok=%d relaxable_edges=%llu missing_tight_witnesses=%llu invalid_parent_witness=%llu missing_parent_edges=%llu wrong_parent_distances=%llu distance_checksum=%llu\n",
+                NumOfSnapShots,
+                batch_ok ? "passed" : "failed",
+                batch_source_ok ? 1 : 0,
+                static_cast<unsigned long long>(batch_bellman.relaxable_edges),
+                static_cast<unsigned long long>(batch_bellman.missing_tight_witnesses),
+                static_cast<unsigned long long>(batch_parent.invalid_vertices),
+                static_cast<unsigned long long>(batch_parent.missing_parent_edges),
+                static_cast<unsigned long long>(batch_parent.wrong_parent_distances),
+                static_cast<unsigned long long>(DistanceChecksum(batch_distances)));
+        }
         NumOfSnapShots+=1;
     }
     engine.GatherValue();
@@ -411,16 +536,20 @@ bool HybridSSSP()
     }
 
     if (FLAGS_check) {
-        BellmanRelaxCheckResult bellman_result = CheckBellmanRelaxed(engine.PMAGraph(), distances);
+        BellmanRelaxCheckResult bellman_result =
+            CheckBellmanRelaxed(engine.PMAGraph(), distances, source_node);
         bool source_ok = source_node < distances.size() && distances[source_node] == 0;
-        if (source_ok && bellman_result.relaxable_edges == 0) {
-            LOG("[SSSP-BELLMAN-CHECK] passed reachable=%llu relaxable_edges=0\n",
+        if (source_ok && bellman_result.relaxable_edges == 0 &&
+            bellman_result.missing_tight_witnesses == 0) {
+            LOG("[SSSP-BELLMAN-CHECK] passed reachable=%llu relaxable_edges=0 missing_tight_witnesses=0\n",
                 static_cast<unsigned long long>(reachable_count));
         } else {
             success = false;
-            LOG("[SSSP-BELLMAN-CHECK] failed source_ok=%d relaxable_edges=%llu first_src=%u first_dst=%u src_dist=%u dst_dist=%u candidate=%llu\n",
+            LOG("[SSSP-BELLMAN-CHECK] failed source_ok=%d relaxable_edges=%llu missing_tight_witnesses=%llu first_missing_witness=%u first_src=%u first_dst=%u src_dist=%u dst_dist=%u candidate=%llu\n",
                 source_ok ? 1 : 0,
                 static_cast<unsigned long long>(bellman_result.relaxable_edges),
+                static_cast<unsigned long long>(bellman_result.missing_tight_witnesses),
+                bellman_result.first_missing_witness,
                 bellman_result.first_src,
                 bellman_result.first_dst,
                 bellman_result.src_distance,
@@ -429,7 +558,7 @@ bool HybridSSSP()
         }
     }
 
-    LOG("[COOP-CHECK] final_reachable=%llu checksum=%s\n",
+    LOG("[SSSP-FINAL-CHECK] final_reachable=%llu checksum=%s\n",
         static_cast<unsigned long long>(reachable_count),
         FLAGS_sssp_print_checksum ? "enabled" : "disabled");
 
@@ -449,7 +578,7 @@ bool HybridSSSP()
                                (static_cast<uint64_t>(parents[node]) >> 3);
             parent_checksum *= 1469598103934665603ull;
         }
-        LOG("[COOP-CHECK] distance_checksum=%llu parent_checksum=%llu\n",
+        LOG("[SSSP-FINAL-CHECK] distance_checksum=%llu parent_checksum=%llu\n",
             static_cast<unsigned long long>(distance_checksum),
             static_cast<unsigned long long>(parent_checksum));
     }
@@ -474,8 +603,8 @@ bool HybridSSSP()
     //     }
     //     // printf("v %d data %d parent %d\n",i,distances[i],parents[i]);
     //     valid<<i<<" "<<vd<<" "<<parents[i]<<std::endl;
-    // } 
-    
+    // }
+
     cudaDeviceSynchronize();
     return success;
 }

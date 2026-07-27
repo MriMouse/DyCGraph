@@ -37,6 +37,37 @@ namespace sepgraph
             //            }
         };
 
+        template <typename T>
+        __device__ __forceinline__ T AtomicMin32(T *address, T value) {
+            static_assert(sizeof(T) == sizeof(uint32_t), "32-bit state required");
+            uint32_t *bits = reinterpret_cast<uint32_t *>(address);
+            uint32_t observed = *bits;
+            while (value < *reinterpret_cast<T *>(&observed)) {
+                const uint32_t desired = *reinterpret_cast<uint32_t *>(&value);
+                const uint32_t previous = atomicCAS(bits, observed, desired);
+                if (previous == observed) break;
+                observed = previous;
+            }
+            return *reinterpret_cast<T *>(&observed);
+        }
+
+        template <typename TValue>
+        __device__ __forceinline__ bool AtomicInvalidateParent(
+                TValue *parent,
+                index_t expected_parent) {
+            static_assert(sizeof(TValue) == sizeof(unsigned int),
+                          "deletion invalidation requires 32-bit parent state");
+            const TValue expected_value = static_cast<TValue>(expected_parent);
+            const TValue invalid_value = static_cast<TValue>(UINT32_MAX);
+            const unsigned int expected_bits =
+                *reinterpret_cast<const unsigned int *>(&expected_value);
+            const unsigned int invalid_bits =
+                *reinterpret_cast<const unsigned int *>(&invalid_value);
+            return atomicCAS(reinterpret_cast<unsigned int *>(parent),
+                             expected_bits,
+                             invalid_bits) == expected_bits;
+        }
+
         template <typename TAppInst,
                   typename PMAGraph,
                   template <typename> class GraphDatum,
@@ -178,7 +209,6 @@ namespace sepgraph
             uint64_t *m_cache_size;
             TValue *m_parent_array;
             TBuffer *m_buffer_array;
-            const uint8_t *m_shadow_valid_flags;
             TBuffer m_current_priority;
             bool m_data_driven;
             bool m_priority;
@@ -212,7 +242,6 @@ namespace sepgraph
                                             m_cache_size(cache_size),
                                             m_parent_array(parent_array),
                                             m_buffer_array(buffer_array),
-                                            m_shadow_valid_flags(nullptr),
                                             m_data_driven(true),
                                             m_priority(false),
                                             m_out_active_high(out_active)
@@ -262,7 +291,6 @@ namespace sepgraph
             uint64_t *m_cache_size;
             TValue *m_parent_array;
             TBuffer *m_buffer_array;
-            const uint8_t *m_shadow_valid_flags;
             TBuffer m_current_priority;
             bool m_data_driven;
             bool m_priority;
@@ -270,16 +298,9 @@ namespace sepgraph
             BitmapDeviceObject m_out_active_high;
             groute::dev::Queue<index_t> m_changed_vertices;
             groute::dev::Queue<index_t> m_gpu_to_cpu_boundary_vertices;
-            groute::dev::Queue<index_t> m_gpu_relax_dst_vertices;
             const uint8_t *m_cpu_home_flags;
-            unsigned long long *m_gpu_relax_success_count;
-            unsigned long long *m_gpu_relax_cpu_home_success_count;
-            unsigned long long *m_gpu_relax_dst_degree_sum;
-            unsigned long long *m_gpu_relax_dst_high_degree_count;
-            unsigned long long *m_gpu_relax_dst_high_degree_sum;
-            unsigned long long *m_gpu_relax_dst_batch_touched_count;
-            const uint8_t *m_batch_touched_flags;
-            uint32_t m_high_degree_threshold;
+            TBuffer *m_boundary_values;
+            index_t *m_boundary_parents;
             bool m_record_changed;
 
             __device__
@@ -314,16 +335,9 @@ namespace sepgraph
                                             m_out_active_high(out_active),
                                             m_changed_vertices(nullptr, nullptr, 0),
                                             m_gpu_to_cpu_boundary_vertices(nullptr, nullptr, 0),
-                                            m_gpu_relax_dst_vertices(nullptr, nullptr, 0),
                                             m_cpu_home_flags(nullptr),
-                                            m_gpu_relax_success_count(nullptr),
-                                            m_gpu_relax_cpu_home_success_count(nullptr),
-                                            m_gpu_relax_dst_degree_sum(nullptr),
-                                            m_gpu_relax_dst_high_degree_count(nullptr),
-                                            m_gpu_relax_dst_high_degree_sum(nullptr),
-                                            m_gpu_relax_dst_batch_touched_count(nullptr),
-                                            m_batch_touched_flags(nullptr),
-                                            m_high_degree_threshold(0),
+                                            m_boundary_values(nullptr),
+                                            m_boundary_parents(nullptr),
                                             m_record_changed(false)
             {
                 m_weighted = true;
@@ -338,19 +352,11 @@ namespace sepgraph
             TBuffer *buffer_array,
             BitmapDeviceObject out_active,
             groute::dev::Queue<index_t> changed_vertices,
-            const uint8_t *shadow_valid_flags,
             bool record_changed,
             groute::dev::Queue<index_t> gpu_to_cpu_boundary_vertices = groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-            groute::dev::Queue<index_t> gpu_relax_dst_vertices = groute::dev::Queue<index_t>(nullptr, nullptr, 0),
             const uint8_t *cpu_home_flags = nullptr,
-            unsigned long long *gpu_relax_success_count = nullptr,
-            unsigned long long *gpu_relax_cpu_home_success_count = nullptr,
-            unsigned long long *gpu_relax_dst_degree_sum = nullptr,
-            unsigned long long *gpu_relax_dst_high_degree_count = nullptr,
-            unsigned long long *gpu_relax_dst_high_degree_sum = nullptr,
-            unsigned long long *gpu_relax_dst_batch_touched_count = nullptr,
-            const uint8_t *batch_touched_flags = nullptr,
-            uint32_t high_degree_threshold = 0) : m_app_inst(app_inst),
+            TBuffer *boundary_values = nullptr,
+            index_t *boundary_parents = nullptr) : m_app_inst(app_inst),
                                             m_work_target_low(nullptr, nullptr, 0),
                                             m_work_target_high(nullptr, nullptr, 0),
                                             m_current_priority(0),
@@ -359,22 +365,14 @@ namespace sepgraph
                                             m_cache_size(cache_size),
                                             m_parent_array(parent_array),
                                             m_buffer_array(buffer_array),
-                                            m_shadow_valid_flags(shadow_valid_flags),
                                             m_data_driven(true),
                                             m_priority(false),
                                             m_out_active_high(out_active),
                                             m_changed_vertices(changed_vertices),
                                             m_gpu_to_cpu_boundary_vertices(gpu_to_cpu_boundary_vertices),
-                                            m_gpu_relax_dst_vertices(gpu_relax_dst_vertices),
                                             m_cpu_home_flags(cpu_home_flags),
-                                            m_gpu_relax_success_count(gpu_relax_success_count),
-                                            m_gpu_relax_cpu_home_success_count(gpu_relax_cpu_home_success_count),
-                                            m_gpu_relax_dst_degree_sum(gpu_relax_dst_degree_sum),
-                                            m_gpu_relax_dst_high_degree_count(gpu_relax_dst_high_degree_count),
-                                            m_gpu_relax_dst_high_degree_sum(gpu_relax_dst_high_degree_sum),
-                                            m_gpu_relax_dst_batch_touched_count(gpu_relax_dst_batch_touched_count),
-                                            m_batch_touched_flags(batch_touched_flags),
-                                            m_high_degree_threshold(high_degree_threshold),
+                                            m_boundary_values(boundary_values),
+                                            m_boundary_parents(boundary_parents),
                                             m_record_changed(record_changed)
             {
                 m_weighted = true;
@@ -384,50 +382,29 @@ namespace sepgraph
             {
                 index_t dst = m_vcsr_graph.edge_dest(edge);
                 index_t weight = (meta_data.m_src + dst)%128 + 1;
-                
+
                 TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 if ((dst!=-1))
-                {  
+                {
+                        if (m_cpu_home_flags != nullptr &&
+                            m_cpu_home_flags[dst] == 1 &&
+                            m_boundary_values != nullptr) {
+                            const TBuffer candidate = buffer_to_push + static_cast<TBuffer>(weight);
+                            const TBuffer old = AtomicMin32(&m_boundary_values[dst], candidate);
+                            if (candidate < old) {
+                                m_boundary_parents[dst] = meta_data.m_src;
+                                m_gpu_to_cpu_boundary_vertices.append(dst);
+                            }
+                            return true;
+                        }
                         const int changed = m_app_inst.AccumulateBuffer(meta_data.m_src,
                                                          dst,
                                                         weight,
                                                         &m_parent_array[dst],
                                                         &m_buffer_array[dst],
                                                         buffer_to_push);
-                        if (m_record_changed && changed &&
-                            m_shadow_valid_flags != nullptr && m_shadow_valid_flags[dst]) {
+                        if (m_record_changed && changed) {
                             m_changed_vertices.append(dst);
-                        }
-                        if (changed && m_gpu_relax_success_count != nullptr) {
-                            atomicAdd(m_gpu_relax_success_count, 1ULL);
-                        }
-                        if (changed && m_gpu_relax_dst_degree_sum != nullptr) {
-                            m_gpu_relax_dst_vertices.append(dst);
-                        }
-                        if (changed && m_gpu_relax_dst_degree_sum != nullptr) {
-                            const unsigned long long dst_degree =
-                                static_cast<unsigned long long>(m_vcsr_graph.sync_vertices_[dst].degree);
-                            atomicAdd(m_gpu_relax_dst_degree_sum, dst_degree);
-                            if (m_high_degree_threshold > 0 &&
-                                dst_degree >= static_cast<unsigned long long>(m_high_degree_threshold)) {
-                                if (m_gpu_relax_dst_high_degree_count != nullptr) {
-                                    atomicAdd(m_gpu_relax_dst_high_degree_count, 1ULL);
-                                }
-                                if (m_gpu_relax_dst_high_degree_sum != nullptr) {
-                                    atomicAdd(m_gpu_relax_dst_high_degree_sum, dst_degree);
-                                }
-                            }
-                            if (m_batch_touched_flags != nullptr && m_batch_touched_flags[dst] &&
-                                m_gpu_relax_dst_batch_touched_count != nullptr) {
-                                atomicAdd(m_gpu_relax_dst_batch_touched_count, 1ULL);
-                            }
-                        }
-                        if (changed && m_cpu_home_flags != nullptr &&
-                            m_cpu_home_flags[dst] == 1) {
-                            if (m_gpu_relax_cpu_home_success_count != nullptr) {
-                                atomicAdd(m_gpu_relax_cpu_home_success_count, 1ULL);
-                            }
-                            m_gpu_to_cpu_boundary_vertices.append(dst);
                         }
                 }
 
@@ -506,7 +483,7 @@ namespace sepgraph
                 // }
                 // else
                 // {
-            
+
                 //    m_app_inst.AccumulateBuffer(meta_data.m_src,
                 //                                          dst,
                 //                                          m_buffer_array[dst],
@@ -580,7 +557,7 @@ namespace sepgraph
             {
                 index_t dst = m_vcsr_graph.edge_dest(edge);
                 // if(meta_data.m_src == 32) printf("========= src %d dst %d\n",meta_data.m_src,dst);
-                uint64_t offset = edge - m_vcsr_graph.begin_edge(meta_data.m_src) -m_vcsr_graph.vertices_[meta_data.m_src].virtual_degree; 
+                uint64_t offset = edge - m_vcsr_graph.begin_edge(meta_data.m_src) -m_vcsr_graph.vertices_[meta_data.m_src].virtual_degree;
                 // uint64_t offset = 0;
                 // uint64_t here = m_vcsr_graph.vertices_[meta_data.m_src].secondary_start + offset;
                 // TBuffer buffer_to_push = meta_data.m_buffer_to_push;
@@ -659,7 +636,7 @@ namespace sepgraph
                 TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 // TBuffer buffer_to_push = m_buffer_datum[meta_data.m_src];
                 if (dst!=UINT32_MAX)
-                {  
+                {
                     //here need correct
                         m_app_inst.AccumulateBuffer(meta_data.m_src,
                                                          dst,
@@ -800,11 +777,11 @@ namespace sepgraph
             __device__ __forceinline__ bool operator()(uint64_t edge, Payload<TBuffer> meta_data)
             {
                 index_t dst = (uint32_t)m_cache_g[edge];
+                TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 // printf("all 2 src %d dst %d\n",meta_data.m_src,dst);
                 index_t weight = (meta_data.m_src + dst) % 128 +1;
-                TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 if (dst!=UINT32_MAX)
-                {  
+                {
                         // m_weight_array[edge] = (meta_data.m_src + dst) % 128;
                         m_app_inst.AccumulateBuffer(meta_data.m_src,
                                                          dst,
@@ -897,10 +874,10 @@ namespace sepgraph
 
                 // index_t dst = m_vcsr_graph.edge_dest(edge);
                 index_t dst = (uint32_t)m_cache_g[edge];
-                index_t weight = (meta_data.m_src + dst) % 128 + 1;  
+                index_t weight = (meta_data.m_src + dst) % 128 + 1;
                 TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 // if (m_weighted)
-                // {  
+                // {
                         // m_weight_array[edge] = (meta_data.m_src + dst) % 128;
                         m_app_inst.AccumulateBuffer(meta_data.m_src,
                                                          dst,
@@ -944,7 +921,6 @@ namespace sepgraph
             Buffer *m_cache_g;
             TValue *m_parent_array;
             TBuffer *m_buffer_array;
-            const uint8_t *m_shadow_valid_flags;
             TBuffer m_current_priority;
             bool m_data_driven;
             bool m_priority;
@@ -952,16 +928,9 @@ namespace sepgraph
             BitmapDeviceObject m_out_active_high;
             groute::dev::Queue<index_t> m_changed_vertices;
             groute::dev::Queue<index_t> m_gpu_to_cpu_boundary_vertices;
-            groute::dev::Queue<index_t> m_gpu_relax_dst_vertices;
             const uint8_t *m_cpu_home_flags;
-            unsigned long long *m_gpu_relax_success_count;
-            unsigned long long *m_gpu_relax_cpu_home_success_count;
-            unsigned long long *m_gpu_relax_dst_degree_sum;
-            unsigned long long *m_gpu_relax_dst_high_degree_count;
-            unsigned long long *m_gpu_relax_dst_high_degree_sum;
-            unsigned long long *m_gpu_relax_dst_batch_touched_count;
-            const uint8_t *m_batch_touched_flags;
-            uint32_t m_high_degree_threshold;
+            TBuffer *m_boundary_values;
+            index_t *m_boundary_parents;
             bool m_record_changed;
 
             __device__
@@ -990,22 +959,14 @@ namespace sepgraph
                                                            m_cache_g(buffer),
                                                            m_parent_array(parent_array),
                                                            m_buffer_array(buffer_array),
-                                                           m_shadow_valid_flags(nullptr),
                                                            m_data_driven(true),
                                                            m_priority(false),
                                                            m_out_active_high(out_active),
                                                            m_changed_vertices(nullptr, nullptr, 0),
                                                            m_gpu_to_cpu_boundary_vertices(nullptr, nullptr, 0),
-                                                           m_gpu_relax_dst_vertices(nullptr, nullptr, 0),
                                                            m_cpu_home_flags(nullptr),
-                                                           m_gpu_relax_success_count(nullptr),
-                                                           m_gpu_relax_cpu_home_success_count(nullptr),
-                                                           m_gpu_relax_dst_degree_sum(nullptr),
-                                                           m_gpu_relax_dst_high_degree_count(nullptr),
-                                                           m_gpu_relax_dst_high_degree_sum(nullptr),
-                                                           m_gpu_relax_dst_batch_touched_count(nullptr),
-                                                           m_batch_touched_flags(nullptr),
-                                                           m_high_degree_threshold(0),
+                                                           m_boundary_values(nullptr),
+                                                           m_boundary_parents(nullptr),
                                                            m_record_changed(false)
             {
                 // m_weighted = true;
@@ -1019,19 +980,11 @@ namespace sepgraph
                           TBuffer *buffer_array,
                           BitmapDeviceObject out_active,
                           groute::dev::Queue<index_t> changed_vertices,
-                          const uint8_t *shadow_valid_flags,
                           bool record_changed,
                           groute::dev::Queue<index_t> gpu_to_cpu_boundary_vertices = groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                          groute::dev::Queue<index_t> gpu_relax_dst_vertices = groute::dev::Queue<index_t>(nullptr, nullptr, 0),
                           const uint8_t *cpu_home_flags = nullptr,
-                          unsigned long long *gpu_relax_success_count = nullptr,
-                          unsigned long long *gpu_relax_cpu_home_success_count = nullptr,
-                          unsigned long long *gpu_relax_dst_degree_sum = nullptr,
-                          unsigned long long *gpu_relax_dst_high_degree_count = nullptr,
-                          unsigned long long *gpu_relax_dst_high_degree_sum = nullptr,
-                          unsigned long long *gpu_relax_dst_batch_touched_count = nullptr,
-                          const uint8_t *batch_touched_flags = nullptr,
-                          uint32_t high_degree_threshold = 0) : m_app_inst(app_inst),
+                          TBuffer *boundary_values = nullptr,
+                          index_t *boundary_parents = nullptr) : m_app_inst(app_inst),
                                                            m_work_target_low(nullptr, nullptr, 0),
                                                            m_work_target_high(nullptr, nullptr, 0),
                                                            m_current_priority(0),
@@ -1039,22 +992,14 @@ namespace sepgraph
                                                            m_cache_g(buffer),
                                                            m_parent_array(parent_array),
                                                            m_buffer_array(buffer_array),
-                                                           m_shadow_valid_flags(shadow_valid_flags),
                                                            m_data_driven(true),
                                                            m_priority(false),
                                                            m_out_active_high(out_active),
                                                            m_changed_vertices(changed_vertices),
                                                            m_gpu_to_cpu_boundary_vertices(gpu_to_cpu_boundary_vertices),
-                                                           m_gpu_relax_dst_vertices(gpu_relax_dst_vertices),
                                                            m_cpu_home_flags(cpu_home_flags),
-                                                           m_gpu_relax_success_count(gpu_relax_success_count),
-                                                           m_gpu_relax_cpu_home_success_count(gpu_relax_cpu_home_success_count),
-                                                           m_gpu_relax_dst_degree_sum(gpu_relax_dst_degree_sum),
-                                                           m_gpu_relax_dst_high_degree_count(gpu_relax_dst_high_degree_count),
-                                                           m_gpu_relax_dst_high_degree_sum(gpu_relax_dst_high_degree_sum),
-                                                           m_gpu_relax_dst_batch_touched_count(gpu_relax_dst_batch_touched_count),
-                                                           m_batch_touched_flags(batch_touched_flags),
-                                                           m_high_degree_threshold(high_degree_threshold),
+                                                           m_boundary_values(boundary_values),
+                                                           m_boundary_parents(boundary_parents),
                                                            m_record_changed(record_changed)
             {
             }
@@ -1066,7 +1011,18 @@ namespace sepgraph
                 index_t weight = (meta_data.m_src + dst) % 128 + 1;
                 TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 if (dst!=-1)
-                {  
+                {
+                        if (m_cpu_home_flags != nullptr &&
+                            m_cpu_home_flags[dst] == 1 &&
+                            m_boundary_values != nullptr) {
+                            const TBuffer candidate = buffer_to_push + static_cast<TBuffer>(weight);
+                            const TBuffer old = AtomicMin32(&m_boundary_values[dst], candidate);
+                            if (candidate < old) {
+                                m_boundary_parents[dst] = meta_data.m_src;
+                                m_gpu_to_cpu_boundary_vertices.append(dst);
+                            }
+                            return true;
+                        }
                         // if(dst ==5 )printf("acc src %d -> dst %d delta %f\n",meta_data.m_src,dst,buffer_to_push);
                         const int changed = m_app_inst.AccumulateBuffer(meta_data.m_src,
                                                          dst,
@@ -1074,40 +1030,8 @@ namespace sepgraph
                                                         &m_parent_array[dst],
                                                         &m_buffer_array[dst],
                                                         buffer_to_push);
-                        if (m_record_changed && changed &&
-                            m_shadow_valid_flags != nullptr && m_shadow_valid_flags[dst]) {
+                        if (m_record_changed && changed) {
                             m_changed_vertices.append(dst);
-                        }
-                        if (changed && m_gpu_relax_success_count != nullptr) {
-                            atomicAdd(m_gpu_relax_success_count, 1ULL);
-                        }
-                        if (changed && m_gpu_relax_dst_degree_sum != nullptr) {
-                            m_gpu_relax_dst_vertices.append(dst);
-                        }
-                        if (changed && m_gpu_relax_dst_degree_sum != nullptr) {
-                            const unsigned long long dst_degree =
-                                static_cast<unsigned long long>(m_vcsr_graph.sync_vertices_[dst].degree);
-                            atomicAdd(m_gpu_relax_dst_degree_sum, dst_degree);
-                            if (m_high_degree_threshold > 0 &&
-                                dst_degree >= static_cast<unsigned long long>(m_high_degree_threshold)) {
-                                if (m_gpu_relax_dst_high_degree_count != nullptr) {
-                                    atomicAdd(m_gpu_relax_dst_high_degree_count, 1ULL);
-                                }
-                                if (m_gpu_relax_dst_high_degree_sum != nullptr) {
-                                    atomicAdd(m_gpu_relax_dst_high_degree_sum, dst_degree);
-                                }
-                            }
-                            if (m_batch_touched_flags != nullptr && m_batch_touched_flags[dst] &&
-                                m_gpu_relax_dst_batch_touched_count != nullptr) {
-                                atomicAdd(m_gpu_relax_dst_batch_touched_count, 1ULL);
-                            }
-                        }
-                        if (changed && m_cpu_home_flags != nullptr &&
-                            m_cpu_home_flags[dst] == 1) {
-                            if (m_gpu_relax_cpu_home_success_count != nullptr) {
-                                atomicAdd(m_gpu_relax_cpu_home_success_count, 1ULL);
-                            }
-                            m_gpu_to_cpu_boundary_vertices.append(dst);
                         }
                          //insert edges to buffer
                 }
@@ -1200,6 +1124,8 @@ namespace sepgraph
             TValue *m_parent_array;
             TValue *m_value_array;
             TBuffer *m_buffer_array;
+            bool *m_reset_nodes;
+            TWorkTarget m_affected_vertices;
             TBuffer m_current_priority;
             bool m_data_driven;
             bool m_priority;
@@ -1224,6 +1150,8 @@ namespace sepgraph
                         TValue *parent_array,
                           TBuffer *buffer_array,
                           TValue *value_array,
+                          bool *reset_nodes,
+                          TWorkTarget affected_vertices,
                           BitmapDeviceObject out_active) : m_app_inst(app_inst),
                                                            m_work_target_low(nullptr, nullptr, 0),
                                                            m_work_target_high(nullptr, nullptr, 0),
@@ -1233,6 +1161,8 @@ namespace sepgraph
                                                            m_parent_array(parent_array),
                                                            m_buffer_array(buffer_array),
                                                            m_value_array(value_array),
+                                                           m_reset_nodes(reset_nodes),
+                                                           m_affected_vertices(affected_vertices),
                                                            m_data_driven(true),
                                                            m_priority(false),
                                                            m_out_active_high(out_active)
@@ -1243,16 +1173,16 @@ namespace sepgraph
             __device__ __forceinline__ bool operator()(uint64_t edge, Payload<TBuffer> meta_data)
             {
                 index_t dst = m_vcsr_graph.edge_dest(edge);
-            
-                TBuffer buffer_to_push = meta_data.m_buffer_to_push;
+
                 if (dst!=UINT32_MAX)
-                {  
-                        m_app_inst.AccumulateBuffer_del(meta_data.m_src,
-                                                         dst,
-                                                        &m_parent_array[dst],
-                                                        &m_buffer_array[dst],
-                                                        &m_value_array[dst]);
-                         //insert edges to buffer
+                {
+                        if (AtomicInvalidateParent(&m_parent_array[dst],
+                                                   meta_data.m_src)) {
+                            m_buffer_array[dst] = m_app_inst.GetInitBuffer(dst);
+                            m_value_array[dst] = m_app_inst.GetInitValue(dst);
+                            m_reset_nodes[dst] = true;
+                            m_affected_vertices.append(dst);
+                        }
                 }
 
                 return true;
@@ -1275,6 +1205,8 @@ namespace sepgraph
             TValue *m_parent_array;
             TValue *m_value_array;
             TBuffer *m_buffer_array;
+            bool *m_reset_nodes;
+            TWorkTarget m_affected_vertices;
             TBuffer m_current_priority;
             bool m_data_driven;
             bool m_priority;
@@ -1297,8 +1229,10 @@ namespace sepgraph
             const TPMAGraph vcsr_graph,
             Buffer buffer,
                         TValue *parent_array,
-                        TBuffer *buffer_array,
-                        TValue *value_array,
+                          TBuffer *buffer_array,
+                          TValue *value_array,
+                          bool *reset_nodes,
+                          TWorkTarget affected_vertices,
                           BitmapDeviceObject out_active) : m_app_inst(app_inst),
                                                            m_work_target_low(nullptr, nullptr, 0),
                                                            m_work_target_high(nullptr, nullptr, 0),
@@ -1309,6 +1243,8 @@ namespace sepgraph
                                                            m_parent_array(parent_array),
                                                            m_buffer_array(buffer_array),
                                                            m_value_array(value_array),
+                                                           m_reset_nodes(reset_nodes),
+                                                           m_affected_vertices(affected_vertices),
                                                         //    m_weight_array(weight_array),
                                                            m_data_driven(true),
                                                            m_priority(false),
@@ -1320,16 +1256,16 @@ namespace sepgraph
             __device__ __forceinline__ bool operator()(uint64_t edge, Payload<TBuffer> meta_data)
             {
                 index_t dst = (uint32_t)m_cache_g[edge];
-                TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 if (dst!=UINT32_MAX)
-                {  
+                {
                         // m_weight_array[edge] = (meta_data.m_src + dst) % 128;
-                        m_app_inst.AccumulateBuffer_del(meta_data.m_src,
-                                                         dst,
-                                                        &m_parent_array[dst],
-                                                        &m_buffer_array[dst],
-                                                        &m_value_array[dst]);
-                         //insert edges to buffer
+                        if (AtomicInvalidateParent(&m_parent_array[dst],
+                                                   meta_data.m_src)) {
+                            m_buffer_array[dst] = m_app_inst.GetInitBuffer(dst);
+                            m_value_array[dst] = m_app_inst.GetInitValue(dst);
+                            m_reset_nodes[dst] = true;
+                            m_affected_vertices.append(dst);
+                        }
                 }
 
                 return true;

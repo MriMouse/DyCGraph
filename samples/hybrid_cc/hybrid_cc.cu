@@ -15,34 +15,7 @@
 #include "hybrid_cc_common.h"
 
 DEFINE_bool(sparse, false, "use async/push/dd + fusion for high-diameter");
-DEFINE_string(coop_mode, "off", "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_string(coop_split_mode, "host_select", "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_cpu_segment_limit, 0, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_max_cpu_sources, -1, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_string(coop_segment_policy, "first_active", "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_cpu_min_degree, 0, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_cpu_dry_run, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_compress_proposals, true, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_home_min_degree, 1024, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_home_max_sources, 4096, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_string(coop_home_policy, "update_touched_high_degree", "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_home_min_injected_sources, 32, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_home_min_injected_edges, 50000, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_home_feedback_min_success_per_mille, 1, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_home_skip_gpu_sources, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_home_diagnostic_launch, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_overlap_probe, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_overlap_probe_max_sources, 512, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_overlap_probe_edge_budget, 200000, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_packet_dry_run, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_packet_diagnostic_merge, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_packet_production_merge, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_packet_overlap_merge, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_packet_skip_audit, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_string(coop_packet_source_policy, "batch_touched", "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_packet_max_sources, 256, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_int32(coop_packet_edge_budget, 200000, "Compatibility flag; cooperative execution is implemented for SSSP only");
-DEFINE_bool(coop_merge_light_prefilter, false, "Compatibility flag; cooperative execution is implemented for SSSP only");
+DEFINE_int32(sssp_cpu_partition_capacity, 0, "Compatibility flag; SSSP insertion only");
 DECLARE_bool(non_atomic);
 DECLARE_int32(top_ranks);
 DECLARE_bool(print_ranks);
@@ -163,22 +136,6 @@ namespace hybrid_cc
             return 1;
         }
 
-        __forceinline__ __device__
-        int AccumulateBuffer_del(index_t src,
-                             index_t dst,
-                             TValue *p_parent,
-                             TBuffer *p_buffer,    //dst_buffer
-                             TValue *p_value) override   //dst_value
-        {
-            if(*p_parent == src){
-                *p_buffer = UINT32_MAX;
-                *p_value = UINT32_MAX;
-                *p_parent = UINT32_MAX;
-                this->m_vcsr_graph.vertices_[dst].deletion = true;
-            }
-            return 1;
-        }
-        
         __forceinline__ __device__
         TValue sum_value(index_t node, TValue value, TBuffer buffer) const override
         {

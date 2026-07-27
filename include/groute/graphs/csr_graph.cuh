@@ -304,7 +304,6 @@ namespace groute
                 index_t third_degree;
                 bool delta;
                 bool cache;
-                bool deletion;
                 uint8_t hotness[4];
                 uint64_t virtual_start;
                 index_t virtual_degree;
@@ -434,7 +433,6 @@ namespace groute
                         vertices_[node].delta = false;
                         vertices_[node].hotness[0] = vertices_[node].hotness[1]=vertices_[node].hotness[2]=0;
                         vertices_[node].cache = false;
-                        vertices_[node].deletion = false;
                         for(uint64_t edge = begin_edge; edge < end_edge; edge++){
                             uint32_t t_segment_id = node / segment_size;
                             uint32_t j = t_segment_id + segment_count;
@@ -1484,7 +1482,6 @@ namespace groute
                 index_t third_degree;
                 bool delta;
                 bool cache;
-                bool deletion;
                 uint64_t virtual_start;
                 index_t virtual_degree;
                 uint64_t secondary_start;

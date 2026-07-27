@@ -22,6 +22,7 @@
 #include <stdgpu/vector.cuh>
 #include <stdgpu/unordered_map.cuh>
 #include <cub/cub.cuh>
+#include <stdexcept>
 #define PRIORITY_SAMPLE_SIZE 1000
 
 DECLARE_int32(SEGMENT);
@@ -34,13 +35,18 @@ namespace sepgraph {
                 typename TBuffer,
                 typename TWeight>
         struct GraphDatum {
+            using BufferType = TBuffer;
+            static constexpr index_t kMaxSegments = 512;
+            static constexpr index_t kCombinedWorklists = 2;
+
             // Graph metadata
             uint32_t nnodes, nedges;
 	               
             index_t segment = FLAGS_SEGMENT;
             index_t cache = FLAGS_cache;
             // Worklist
-	        groute::Queue<index_t> m_wl_array_in_seg[512];
+		        groute::Queue<index_t>
+                    m_wl_array_in_seg[kMaxSegments + kCombinedWorklists];
             groute::Queue<index_t> m_wl_array_in; // Work-list in
             groute::Queue<index_t> m_wl_array_out_high; // Work-list out High priority
             groute::Queue<index_t> m_wl_array_out_low; // Work-list out Low priority
@@ -70,8 +76,10 @@ namespace sepgraph {
             utils::SharedValue<uint32_t> m_total_out_degree;
 	        utils::SharedValue<uint32_t> m_seg_degree;
 	        utils::SharedValue<TValue> m_seg_value;
-            size_t temp_storage_bytes = 0;
-            void *d_temp_storage      = NULL;   
+            size_t sort_temp_storage_bytes = 0;
+            void *d_sort_temp_storage = nullptr;
+            size_t scan_temp_storage_bytes = 0;
+            void *d_scan_temp_storage = nullptr;
             // Graph data
             // groute::graphs::single::NodeOutputDatum<TValue> m_node_value_datum;
             // groute::graphs::single::NodeOutputDatum<TBuffer> m_node_buffer_datum;
@@ -139,6 +147,10 @@ namespace sepgraph {
                                                                           m_sampled_nodes(nullptr, 0),
                                                                           m_sampled_values(nullptr, 0),
                                                                           m_on_pinned_memory(OnPinnedMemory){
+                if (FLAGS_SEGMENT <= 0 || FLAGS_SEGMENT > kMaxSegments) {
+                    throw std::invalid_argument(
+                        "SEGMENT must be in [1, 512] because GraphDatum uses a fixed segment table");
+                }
                 // m_node_value_datum.Allocate(vcsr_graph);
                 // m_node_buffer_datum.Allocate(vcsr_graph);
                 // m_node_buffer_tmp_datum.Allocate(vcsr_graph);
@@ -146,6 +158,7 @@ namespace sepgraph {
                 GROUTE_CUDA_CHECK(cudaMalloc((void**)&m_node_buffer_datum, sizeof(TBuffer)*vcsr_graph.nnodes));
                 GROUTE_CUDA_CHECK(cudaMalloc((void**)&m_node_parent_datum, sizeof(TValue)*vcsr_graph.nnodes));
                 GROUTE_CUDA_CHECK(cudaMalloc((void**)&m_node_reset_datum, sizeof(bool)*vcsr_graph.nnodes));
+                GROUTE_CUDA_CHECK(cudaMemset(m_node_reset_datum, 0, sizeof(bool)*vcsr_graph.nnodes));
                 // GROUTE_CUDA_CHECK(cudaMalloc((void**)&m_node_tmp_buffer_datum, sizeof(TBuffer)*vcsr_graph.nnodes));
                 // GROUTE_CUDA_CHECK(cudaMalloc((void**)&m_node_level_datum, sizeof(TValue)*vcsr_graph.nnodes));
                 uint64_t unit_gb = 1073741824;
@@ -194,12 +207,21 @@ namespace sepgraph {
                 else{
 		             m_weighted = false;
 		        }   
-                CubDebugExit(cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, d_hotness, d_id, vcsr_graph.nnodes));
-                CubDebugExit(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_bytes));
+                CubDebugExit(cub::DeviceRadixSort::SortPairs(
+                    d_sort_temp_storage,
+                    sort_temp_storage_bytes,
+                    d_hotness,
+                    d_id,
+                    vcsr_graph.nnodes));
+                CubDebugExit(g_allocator.DeviceAllocate(
+                    &d_sort_temp_storage,
+                    sort_temp_storage_bytes));
                 uint32_t capacity = nnodes * FLAGS_wl_alloc_factor;
 
 		        for(index_t i = 0; i < segment; i++){
-		              m_wl_array_in_seg[i] = std::move(groute::Queue<index_t>(nnodes_num[i]));
+                    const index_t queue_capacity = std::max<index_t>(1, nnodes_num[i]);
+		              m_wl_array_in_seg[i] =
+                        std::move(groute::Queue<index_t>(queue_capacity));
 		        }
                 m_wl_array_in_seg[segment] = std::move(groute::Queue<index_t>(nnodes)); //for zero task combine
                 m_wl_array_in_seg[segment + 1] = std::move(groute::Queue<index_t>(nnodes)); //for compaction task combine
@@ -219,6 +241,17 @@ namespace sepgraph {
             }
 
             GraphDatum(GraphDatum &&other) = delete;
+
+            ~GraphDatum() {
+                if (d_sort_temp_storage != nullptr) {
+                    CubDebugExit(g_allocator.DeviceFree(d_sort_temp_storage));
+                    d_sort_temp_storage = nullptr;
+                }
+                if (d_scan_temp_storage != nullptr) {
+                    CubDebugExit(g_allocator.DeviceFree(d_scan_temp_storage));
+                    d_scan_temp_storage = nullptr;
+                }
+            }
 
             GraphDatum &operator=(const GraphDatum &other) = delete;
 
@@ -257,15 +290,31 @@ namespace sepgraph {
             }
             void sort_vtx_by_hotness(){
             LOG("sort vtx by hot\n");
-                // CubDebugExit(cub::DeviceRadixSort::SortPairsDescending(d_temp_storage, temp_storage_bytes, d_hotness, d_id, nnodes));       
-                (cub::DeviceRadixSort::SortPairsDescending(d_temp_storage, temp_storage_bytes, d_hotness, d_id, nnodes));     
+                CubDebugExit(cub::DeviceRadixSort::SortPairsDescending(
+                    d_sort_temp_storage,
+                    sort_temp_storage_bytes,
+                    d_hotness,
+                    d_id,
+                    nnodes));
             }
             void ensure_candidate_vertex(){
-                this->d_temp_storage = NULL;
-                this->temp_storage_bytes = 0;
-                CubDebugExit(cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_v, d_sum, nnodes)); 
-                CubDebugExit(g_allocator.DeviceAllocate(&d_temp_storage, temp_storage_bytes));
-                CubDebugExit(cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_v, d_sum, nnodes));
+                if (d_scan_temp_storage == nullptr) {
+                    CubDebugExit(cub::DeviceScan::ExclusiveSum(
+                        nullptr,
+                        scan_temp_storage_bytes,
+                        d_v,
+                        d_sum,
+                        nnodes));
+                    CubDebugExit(g_allocator.DeviceAllocate(
+                        &d_scan_temp_storage,
+                        scan_temp_storage_bytes));
+                }
+                CubDebugExit(cub::DeviceScan::ExclusiveSum(
+                    d_scan_temp_storage,
+                    scan_temp_storage_bytes,
+                    d_v,
+                    d_sum,
+                    nnodes));
             }
             // const groute::graphs::dev::GraphDatum<TBuffer> &GetBufferDeviceObject() const {
             TBuffer* GetBufferDeviceObject(){     

@@ -22,7 +22,7 @@ namespace sepgraph
         namespace sync_push_dd
         {
             using sepgraph::common::LoadBalancing;
-            
+
             template<typename TAppInst,
                     typename WorkSource,
                     typename WorkTarget,
@@ -49,7 +49,7 @@ namespace sepgraph
                 uint32_t tid = TID_1D;
                 uint32_t nthreads = TOTAL_THREADS_1D;
                 uint32_t work_size = work_source.get_size();
-		
+
                 PushFunctor<TAppInst, PMAGraph, GraphDatum, TBuffer, TWeight>
                         push_functor(app_inst,
                                      work_target_low,
@@ -58,9 +58,9 @@ namespace sepgraph
                                      csr_graph,
                                      node_buffer_datum,
                                      edge_weight_datum);
-		
-		 
-		
+
+
+
                /*for (int i = 0 + tid; i < work_size; i += nthreads)
                 {
                     index_t node = work_source.get_work(i);
@@ -118,10 +118,7 @@ namespace sepgraph
                             TBuffer* node_buffer_datum,
                             TBuffer current_priority,
                             BitmapDeviceObject out_active,
-                            BitmapDeviceObject in_active,
-                            const uint32_t *cpu_source_owner_epoch = nullptr,
-                            uint32_t cpu_source_epoch = 0,
-                            unsigned long long *gpu_skipped_cpu_sources = nullptr)
+                            BitmapDeviceObject in_active)
             {
                 const uint32_t tid = TID_1D;
                 const uint32_t nthreads = TOTAL_THREADS_1D;
@@ -138,16 +135,16 @@ namespace sepgraph
                     if (tid < work_size)
                     {
                         //遍历cache_l1和cache_l2，对于 virtual_degree > 0 将数据合并到一个里面
-                        const index_t node = work_source.get_work(tid);                          
+                        const index_t node = work_source.get_work(tid);
                         Payload<TBuffer> payload;
                         payload.m_src = node;
-                    
+
                         np_local_ca.start = vcsr_graph.vertices_[node].virtual_start;
                         np_local_ca.size = vcsr_graph.vertices_[node].virtual_degree;
                         np_local_ca.meta_data = payload;
                         index_t node_index = atomicAdd(vcsr_graph.river_global, (index_t)(np_local_ca.size));
                         vcsr_graph.vertices_[node].third_start = (uint64_t)node_index;
-            
+
                     }
                     switch (LB)
                     {
@@ -200,24 +197,12 @@ namespace sepgraph
                             BitmapDeviceObject out_active,
                             BitmapDeviceObject in_active,
                             groute::dev::Queue<index_t> changed_vertices,
-                            const uint8_t *shadow_valid_flags,
                             bool record_changed,
-                            const uint32_t *cpu_source_owner_epoch = nullptr,
-                            uint32_t cpu_source_epoch = 0,
-                            unsigned long long *gpu_skipped_cpu_sources = nullptr,
                             const uint8_t *cpu_home_flags = nullptr,
                             groute::dev::Queue<index_t> gpu_to_cpu_boundary_vertices =
                                 groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                            groute::dev::Queue<index_t> gpu_relax_dst_vertices =
-                                groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                            unsigned long long *gpu_relax_success_count = nullptr,
-                            unsigned long long *gpu_relax_cpu_home_success_count = nullptr,
-                            unsigned long long *gpu_relax_dst_degree_sum = nullptr,
-                            unsigned long long *gpu_relax_dst_high_degree_count = nullptr,
-                            unsigned long long *gpu_relax_dst_high_degree_sum = nullptr,
-                            unsigned long long *gpu_relax_dst_batch_touched_count = nullptr,
-                            const uint8_t *batch_touched_flags = nullptr,
-                            uint32_t high_degree_threshold = 0)
+                            TBuffer *boundary_values = nullptr,
+                            index_t *boundary_parents = nullptr)
             {
                 const uint32_t tid = TID_1D;
                 const uint32_t nthreads = TOTAL_THREADS_1D;
@@ -225,28 +210,16 @@ namespace sepgraph
                 const uint32_t work_size_rup = round_up(work_size, blockDim.x) * blockDim.x;
                 PushFunctorDB<TAppInst, PMAGraph, BufferVec, TValue, TBuffer>
                         push_functor(app_inst, vcsr_graph, buffer,cache_size, node_parent_datum, node_buffer_datum, out_active,
-                                     changed_vertices, shadow_valid_flags, record_changed,
-                                     gpu_to_cpu_boundary_vertices, gpu_relax_dst_vertices, cpu_home_flags,
-                                     gpu_relax_success_count,
-                                     gpu_relax_cpu_home_success_count,
-                                     gpu_relax_dst_degree_sum,
-                                     gpu_relax_dst_high_degree_count,
-                                     gpu_relax_dst_high_degree_sum,
-                                     gpu_relax_dst_batch_touched_count,
-                                     batch_touched_flags,
-                                     high_degree_threshold);
+                                     changed_vertices, record_changed,
+                                     gpu_to_cpu_boundary_vertices, cpu_home_flags,
+                                     boundary_values,
+                                     boundary_parents);
                 PushFunctorDBCachel2<TAppInst, PMAGraph, BufferVec, TValue, TBuffer>
                         push_functor_l1(app_inst, vcsr_graph, buffer, node_parent_datum, node_buffer_datum, out_active,
-                                        changed_vertices, shadow_valid_flags, record_changed,
-                                        gpu_to_cpu_boundary_vertices, gpu_relax_dst_vertices, cpu_home_flags,
-                                        gpu_relax_success_count,
-                                        gpu_relax_cpu_home_success_count,
-                                        gpu_relax_dst_degree_sum,
-                                        gpu_relax_dst_high_degree_count,
-                                        gpu_relax_dst_high_degree_sum,
-                                        gpu_relax_dst_batch_touched_count,
-                                        batch_touched_flags,
-                                        high_degree_threshold);
+                                        changed_vertices, record_changed,
+                                        gpu_to_cpu_boundary_vertices, cpu_home_flags,
+                                        boundary_values,
+                                        boundary_parents);
                         for (uint32_t i = 0 + tid; i < work_size_rup; i += nthreads)
                         {
                             groute::dev::np_local<Payload<TBuffer>> np_local = {0, 0};
@@ -254,26 +227,16 @@ namespace sepgraph
                             if (i < work_size)
                             {
                                 const index_t node = work_source.get_work(i);
-                                if (cpu_source_owner_epoch != nullptr &&
-                                    cpu_source_owner_epoch[node] == cpu_source_epoch) {
-                                    if (gpu_skipped_cpu_sources != nullptr) {
-                                        atomicAdd(gpu_skipped_cpu_sources, 1ULL);
-                                    }
-                                } else {
                                     const auto pair = app_inst.CombineValueBuffer(node,
                                     &node_value_datum[node],&node_buffer_datum[node]);
                                     // Value changed means validate combine, we need push the buffer to neighbors
                                     if (pair.second)
                                     {
-                                        if (record_changed &&
-                                            shadow_valid_flags != nullptr && shadow_valid_flags[node]) {
-                                            changed_vertices.append(node);
-                                        }
                                         Payload<TBuffer> payload;
                                         payload.m_src = node;
                                         payload.m_buffer_to_push = pair.first;
                                         if(vcsr_graph.vertices_[node].cache){
-                                            vcsr_graph.vertices_[node].hotness[0] +=1;                           
+                                            vcsr_graph.vertices_[node].hotness[0] +=1;
                                             np_local_ca.start = vcsr_graph.vertices_[node].virtual_start;
                                             np_local_ca.size = vcsr_graph.vertices_[node].virtual_degree;
                                             np_local_ca.meta_data  = payload;
@@ -290,9 +253,8 @@ namespace sepgraph
                                         }
 
                                     }
-                                }
-                                
-                            } 
+
+                            }
                             switch (LB)
                             {
                                 case LoadBalancing::NONE:
@@ -369,11 +331,11 @@ namespace sepgraph
                                 &node_value_datum[node],&node_buffer_datum[node]);
                                 // Value changed means validate combine, we need push the buffer to neighbors
                                 if (pair.second)
-                                {                                       
+                                {
                                     Payload<TBuffer> payload;
                                     payload.m_src = node;
                                     payload.m_buffer_to_push = pair.first;
-                                    if(vcsr_graph.vertices_[node].cache){     
+                                    if(vcsr_graph.vertices_[node].cache){
                                         np_local_ca.start = vcsr_graph.vertices_[node].virtual_start;
                                         np_local_ca.size = vcsr_graph.vertices_[node].virtual_degree;
                                         np_local_ca.meta_data  = payload;
@@ -388,8 +350,8 @@ namespace sepgraph
                                         transfer[node] +=np_local.size;
                                     }
                                 }
-                                
-                            } 
+
+                            }
                             switch (LB)
                             {
                                 case LoadBalancing::COARSE_GRAINED:
@@ -472,9 +434,9 @@ namespace sepgraph
                                 // bool correct = vcsr_graph.vertices_[node].virtual_degree ==vcsr_graph.sync_vertices_[node].degree ? true :false;
                                 assert(vcsr_graph.vertices_[node].virtual_degree ==  vcsr_graph.sync_vertices_[node].degree ) ;
                                 assert((vcsr_graph.vertices_[node].virtual_start + vcsr_graph.vertices_[node].virtual_degree)  < (*cache_size)) ;
-                                 
+
                                 if (pair.second)
-                                {                                       
+                                {
                                     Payload<TBuffer> payload;
                                     payload.m_src = node;
                                     payload.m_buffer_to_push = pair.first;
@@ -491,8 +453,8 @@ namespace sepgraph
                                     }
 
                                 }
-                                
-                            } 
+
+                            }
                             switch (LB)
                             {
                                 case LoadBalancing::COARSE_GRAINED:
@@ -572,7 +534,7 @@ namespace sepgraph
                                 &node_value_datum[node],&node_buffer_datum[node]);
                                 // Value changed means validate combine, we need push the buffer to neighbors
                                 if (pair.second)
-                                {                                       
+                                {
                                     Payload<TBuffer> payload;
                                     payload.m_src = node;
                                     payload.m_buffer_to_push = pair.first;
@@ -583,8 +545,8 @@ namespace sepgraph
                                     }
 
                                 }
-                                
-                            } 
+
+                            }
                             switch (LB)
                             {
                                 case LoadBalancing::COARSE_GRAINED:
@@ -644,7 +606,7 @@ namespace sepgraph
                         for (uint32_t i = 0 + tid; i < work_size_rup; i += nthreads)
                        {
                             groute::dev::np_local<Payload<TBuffer>> np_local = {0, 0};
-        
+
                             if (tid < work_size)
                             {
                                     const index_t node = csr_graph.subgraph_activenode[tid];
@@ -655,24 +617,24 @@ namespace sepgraph
                                     //out_active.set_bit_atomic(node);
                                     // Value changed means validate combine, we need push the buffer to neighbors
                                     if (pair.second)
-                                    {       
+                                    {
                                         np_local.start = csr_graph.subgraph_rowstart[tid];
                                         np_local.size = csr_graph.subgraph_rowstart[tid + 1] - np_local.start; // out-degree
                                         Payload<TBuffer> payload;
                                         payload.m_src = node;
                                         payload.m_buffer_to_push = pair.first;
                                         np_local.meta_data = payload;
-                                        
+
                                         //printf("%d %d %d\n",node, np_local.start, np_local.size);
                                         // if(node==10767||node==785951||node==828471||node==851670)
                                         //     for(int j=np_local.start;j<np_local.start+np_local.size;j++){
                                         //         printf("##%d %d\n",node,csr_graph.edge_dest(j));
                                         //     }
                                     }
-                                
-                
+
+
                              }
-        
+
                             switch (LB)
                             {
                                 case LoadBalancing::COARSE_GRAINED:
@@ -738,7 +700,7 @@ namespace sepgraph
                                 // &node_value_datum[node],&node_buffer_datum[node]);
                                 // // Value changed means validate combine, we need push the buffer to neighbors
                                 // if (pair.second)
-                                // {                                       
+                                // {
                                     Payload<TBuffer> payload;
                                     payload.m_src = node;
                                     // uint64_t cache_size_river = *cache_size;
@@ -748,7 +710,7 @@ namespace sepgraph
                                         np_local.size = vcsr_graph.sync_vertices_[node].degree;
                                         // index_t degree = vcsr_graph.sync_vertices_[node].degree;
                                         index_t node_index = atomicAdd(vcsr_graph.river, vcsr_graph.sync_vertices_[node].degree);
-                                        
+
                                         vcsr_graph.vertices_[node].cache = true;
                                         vcsr_graph.vertices_[node].delta= false;
                                         vcsr_graph.vertices_[node].virtual_start = (uint64_t)node_index;
@@ -758,13 +720,13 @@ namespace sepgraph
                                     // np_local.size = vcsr_graph.sync_vertices_[node].degree;
                                     // // index_t degree = vcsr_graph.sync_vertices_[node].degree;
                                     // index_t node_index = atomicAdd(vcsr_graph.river, vcsr_graph.sync_vertices_[node].degree);
-                                    
+
                                     // vcsr_graph.vertices_[node].cache = true;
                                     // vcsr_graph.vertices_[node].delta= false;
                                     // vcsr_graph.vertices_[node].virtual_start = (uint64_t)node_index;
                                     // np_local.meta_data = payload;
                                 // }
-                                
+
                             }
                             switch (LB)
                             {
@@ -848,7 +810,7 @@ namespace sepgraph
                             np_local.meta_data = payload;
                         }
                     }
-                    
+
                     if(np_local.meta_data.m_src >= seg_snode && np_local.meta_data.m_src < seg_enode){
                         switch (LB)
                         {
@@ -907,7 +869,7 @@ namespace sepgraph
                              node_buffer_datum,
                              edge_weight_datum);
 
- 
+
 
         for (int i = 0 + tid; i < work_size; i += nthreads)
         {
@@ -975,7 +937,7 @@ namespace sepgraph
                              node_buffer_datum,
                              edge_weight_datum);
 
- 
+
 
         for (int i = 0 + tid; i < work_size; i += nthreads)
         {
@@ -1162,7 +1124,7 @@ namespace sepgraph
                           WorkTarget work_target_low,
                           WorkTarget work_target_high,
                           TBuffer current_priority,
-                          PMAGraph csr_graph,   
+                          PMAGraph csr_graph,
                           GraphDatum<TValue> node_value_datum,
                           GraphDatum<TBuffer> node_buffer_datum,
                           GraphDatum<TWeight> edge_weight_datum)
@@ -1212,7 +1174,7 @@ namespace sepgraph
                             break;
                         default:
                             assert(false);
-                    }   
+                    }
                 }
             }
 
@@ -1273,7 +1235,7 @@ namespace sepgraph
                             //     }
                         }
                         //如果增量更新的顶点被包含在缓存l1中，那么就刷新一下L1？
-                        
+
                     }
                     switch (LB)
                     {
@@ -1353,7 +1315,7 @@ namespace sepgraph
         //                         //s
         //                         // Value changed means validate combine, we need push the buffer to neighbors
         //                         if (pair.second)
-        //                         {                                       
+        //                         {
         //                             Payload<TBuffer> payload;
         //                             payload.m_src = node;
         //                             payload.m_buffer_to_push = pair.first;
@@ -1362,7 +1324,7 @@ namespace sepgraph
         //                                 // LOG("static 缓存命中 %d\n",node);
         //                                 np_local_ca.start = vcsr_graph.vertices_[node].virtual_start;
         //                                 np_local_ca.size = vcsr_graph.vertices_[node].virtual_degree;
-                                        
+
         //                                 np_local_secondary.start = vcsr_graph.vertices_[node].secondary_start;
         //                                 np_local_secondary.size = vcsr_graph.vertices_[node].secondary_degree;
         //                                 np_local_ca.meta_data  = payload;
@@ -1378,10 +1340,10 @@ namespace sepgraph
         //                             }
         //                         }
 
-        //                     } 
+        //                     }
         //                     switch (LB)
         //                     {
-                                
+
         //                         case LoadBalancing::COARSE_GRAINED:
 
         //                                 groute::dev::CTAWorkSchedulerNew<Payload<TBuffer>, groute::dev::LB_COARSE_GRAINED>::template
@@ -1424,9 +1386,6 @@ namespace sepgraph
                     typename TBuffer>
             __forceinline__ __device__
             void RelaxCTADB_del(TAppInst app_inst,
-                            index_t seg_snode,
-                            index_t seg_enode,
-                            uint64_t seg_sedge_csr,
                             bool zcflag,
                             WorkSource work_source,
                             PMAGraph vcsr_graph,
@@ -1435,6 +1394,7 @@ namespace sepgraph
                             uint64_t *count_gpu,
                             uint64_t *total_act_d,
                             bool *reset_node,
+                            groute::dev::Queue<index_t> affected_vertices,
                             TValue *node_parent_datum,
                             TValue *node_value_datum,
                             TBuffer * node_buffer_datum,
@@ -1447,18 +1407,20 @@ namespace sepgraph
                 const uint32_t work_size = work_source.get_size();
                 const uint32_t work_size_rup = round_up(work_size, blockDim.x) * blockDim.x;
                 PushFunctorDB_Del<TAppInst, PMAGraph, BufferVec, TValue, TBuffer>
-                        push_functor(app_inst, vcsr_graph, buffer, node_parent_datum, node_buffer_datum, node_value_datum,out_active);
+                        push_functor(app_inst, vcsr_graph, buffer, node_parent_datum,
+                                     node_buffer_datum, node_value_datum, reset_node,
+                                     affected_vertices, out_active);
                 PushFunctorDBCachel2_DEL<TAppInst, PMAGraph, BufferVec, TValue, TBuffer>
-                        push_functor_l1(app_inst, vcsr_graph, buffer, node_parent_datum, node_buffer_datum,node_value_datum, out_active);
+                        push_functor_l1(app_inst, vcsr_graph, buffer, node_parent_datum,
+                                        node_buffer_datum, node_value_datum, reset_node,
+                                        affected_vertices, out_active);
                 for (uint32_t i = 0 + tid; i < work_size_rup; i += nthreads)
                 {
                     groute::dev::np_local<Payload<TBuffer>> np_local = {0, 0};
                     groute::dev::np_local<Payload<TBuffer>> np_local_ca = {0, 0};
-                    if (tid < work_size)
+                    if (i < work_size)
                     {
-                        const index_t node = work_source.get_work(tid); 
-                        vcsr_graph.vertices_[node].deletion = false;
-                        reset_node[node]=true;
+                        const index_t node = work_source.get_work(i);
                         Payload<TBuffer> payload;
                         payload.m_src = node;
                         payload.m_buffer_to_push = UINT32_MAX;
@@ -1469,10 +1431,10 @@ namespace sepgraph
                             vcsr_graph.vertices_[node].hotness[0]+=1;
                             // total_act_d[node]++;
                             // total_act_d[node]+=np_local_ca.size;
-                            
+
                         }else{
                             // total_act_d[node]++;
-                            
+
                             // count_gpu[node]++;
                             np_local.start = vcsr_graph.begin_edge(node);
                             np_local.size = vcsr_graph.sync_vertices_[node].degree;
@@ -1481,9 +1443,9 @@ namespace sepgraph
                             np_local.meta_data = payload;
                         }
 
-                                
-                    }  
-                
+
+                    }
+
                     switch (LB)
                     {
                         case LoadBalancing::COARSE_GRAINED:
@@ -1539,10 +1501,7 @@ namespace sepgraph
                             TBuffer* node_buffer_datum,
                             TBuffer current_priority,
                             BitmapDeviceObject out_active,
-                            BitmapDeviceObject in_active,
-                            const uint32_t *cpu_source_owner_epoch = nullptr,
-                            uint32_t cpu_source_epoch = 0,
-                            unsigned long long *gpu_skipped_cpu_sources = nullptr)
+                            BitmapDeviceObject in_active)
             {
                 const uint32_t tid = TID_1D;
                 const uint32_t nthreads = TOTAL_THREADS_1D;
@@ -1559,12 +1518,6 @@ namespace sepgraph
                     if (i < work_size)
                     {
                         const index_t node = work_source.get_work(i);
-                        if (cpu_source_owner_epoch != nullptr &&
-                            cpu_source_owner_epoch[node] == cpu_source_epoch) {
-                            if (gpu_skipped_cpu_sources != nullptr) {
-                                atomicAdd(gpu_skipped_cpu_sources, 1ULL);
-                            }
-                        } else {
                             TBuffer now_buff = atomicAdd(&node_buffer_datum[node],0);
                             if (now_buff!=UINT32_MAX)
                             {
@@ -1591,8 +1544,7 @@ namespace sepgraph
 
                                 // printf("hotness %d\n",hotness.d_buffers[hotness.selector][node]);
                             }
-                        }
-                    } 
+                    }
                     switch (LB)
                     {
                         case LoadBalancing::COARSE_GRAINED:

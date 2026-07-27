@@ -38,7 +38,7 @@ namespace sepgraph
                     queue.DeviceObject());
             stream.Sync();
         }
-	
+
 	template<typename TBitmap,
                 typename TWorklist>
 	void Bitmap2QueueRange(TBitmap &bitmap,
@@ -54,8 +54,8 @@ namespace sepgraph
                     queue.DeviceObject(), seg_snode, seg_enode);
             stream.Sync();
         }
-        
-        
+
+
         template<typename TWorklist,
                 typename TBitmap>
         void Queue2Bitmap(const TWorklist &queue,
@@ -80,7 +80,9 @@ namespace sepgraph
                                   const groute::Stream &stream,
 				  index_t seg_snode,
 				  index_t seg_nnodes,
-				  index_t seg_idx)
+				  index_t seg_idx,
+                                  uint32_t *node_state_epoch = nullptr,
+                                  uint32_t state_epoch = 0)
         {
 
             dim3 grid_dims, block_dims;
@@ -92,7 +94,9 @@ namespace sepgraph
                     graph_datum.GetWorkSourceRangeDeviceObject(seg_snode,seg_nnodes),
                     graph_datum.m_wl_array_in_seg[seg_idx].DeviceObject(),
                     graph_datum.GetBufferDeviceObject(),
-		            graph_datum.GetValueDeviceObject()
+		            graph_datum.GetValueDeviceObject(),
+                    node_state_epoch,
+                    state_epoch
 		    );
         }
 
@@ -229,34 +233,6 @@ namespace sepgraph
             stream.Sync();
         }
 
-        template<typename TAppInst, typename PMAGraph,typename TGraphDatum>
-        // void RebuildArrayWorklistAdd(TAppInst &app_inst,
-        void RebuildArrayWorklistDel(TAppInst &app_inst,
-                                  PMAGraph &vcsr_graph,
-                                  TGraphDatum &graph_datum,
-                                  const groute::Stream &stream,
-				  index_t seg_snode,
-				  index_t seg_nnodes,
-				  index_t seg_idx)
-        {
-
-            dim3 grid_dims, block_dims;
-
-            graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
-            KernelSizing(grid_dims, block_dims, seg_nnodes);
-            // kernel::RebuildWorklist_add
-            kernel::RebuildWorklist_deletion
-                    << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,
-                    graph_datum.GetWorkSourceRangeDeviceObject(seg_snode,seg_nnodes),
-                    vcsr_graph,
-                    graph_datum.m_wl_array_in_seg[seg_idx].DeviceObject(),
-                    graph_datum.GetBufferDeviceObject(),
-		    graph_datum.GetValueDeviceObject()
-		    );
-
-            stream.Sync();
-        }
-
         template<typename TAppInst, typename TGraphDatum>
         void RebuildArrayWorklistINC(TAppInst &app_inst,
                                   TGraphDatum &graph_datum,
@@ -305,29 +281,6 @@ namespace sepgraph
             stream.Sync();
         }
 
-        template<typename TAppInst, typename PMAGraph,typename TGraphDatum>
-        void RebuildWorklist_del(TAppInst &app_inst,
-        PMAGraph &vcsr_graph,
-                                  TGraphDatum &graph_datum,
-                                  const groute::Stream &stream,
-				  index_t seg_snode,
-				  index_t seg_nnodes,
-				  index_t seg_idx)
-        {
-
-            dim3 grid_dims, block_dims;
-
-            graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
-            KernelSizing(grid_dims, block_dims, seg_nnodes);
-            kernel::RebuildWorklist_del
-                    << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,
-                    vcsr_graph,
-                    graph_datum.GetWorkSourceRangeDeviceObject(seg_snode,seg_nnodes),
-                    graph_datum.m_wl_array_in_seg[seg_idx].DeviceObject());
-
-            stream.Sync();
-        }
-        
         template<typename TAppInst, typename TGraphDatum>
         void RebuildArrayWorklist_zero(TAppInst &app_inst,
                                   TGraphDatum &graph_datum,
@@ -524,15 +477,12 @@ namespace sepgraph
                 const PMAGraph &vcsr_graph,
                 TGraphDatum &graph_datum,
                 EngineOptions &engine_options,
-                const groute::Stream &stream,
-                const uint32_t *cpu_source_owner_epoch = nullptr,
-                uint32_t cpu_source_epoch = 0,
-                unsigned long long *gpu_skipped_cpu_sources = nullptr)
-        {       
+                const groute::Stream &stream)
+        {
             dim3 grid_dims, block_dims;
             KernelSizing(grid_dims, block_dims, seg_enode-seg_snode);
             uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
-        
+
             if(zcflag)
                 KernelSizing(grid_dims, block_dims, work_size);
             switch (engine_options.GetLoadBalancing(common::MsgPassing::PUSH))
@@ -552,10 +502,7 @@ namespace sepgraph
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
-                            graph_datum.m_wl_bitmap_in.DeviceObject(),
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources);
+                            graph_datum.m_wl_bitmap_in.DeviceObject());
                     break;
                 case LoadBalancing::COARSE_GRAINED:
                     kernel::SyncPushDDBFlush<LoadBalancing::COARSE_GRAINED>
@@ -572,10 +519,7 @@ namespace sepgraph
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
-                            graph_datum.m_wl_bitmap_in.DeviceObject(),
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources);
+                            graph_datum.m_wl_bitmap_in.DeviceObject());
                     break;
                 case LoadBalancing::FINE_GRAINED:
                     kernel::SyncPushDDBFlush<LoadBalancing::FINE_GRAINED>
@@ -592,10 +536,7 @@ namespace sepgraph
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
-                            graph_datum.m_wl_bitmap_in.DeviceObject(),
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources);
+                            graph_datum.m_wl_bitmap_in.DeviceObject());
                     break;
                 case LoadBalancing::HYBRID:
                     kernel::SyncPushDDBFlush<LoadBalancing::HYBRID>
@@ -612,10 +553,7 @@ namespace sepgraph
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
-                            graph_datum.m_wl_bitmap_in.DeviceObject(),
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources);
+                            graph_datum.m_wl_bitmap_in.DeviceObject());
                     break;
                 default:
                     assert(false);
@@ -636,7 +574,7 @@ namespace sepgraph
                             TGraphDatum &graph_datum,
                             EngineOptions &engine_options,
                             const groute::Stream &stream)
-        {       
+        {
             dim3 grid_dims, block_dims;
             uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
                  KernelSizing(grid_dims, block_dims, work_size);
@@ -738,7 +676,7 @@ namespace sepgraph
                             TGraphDatum &graph_datum,
                             EngineOptions &engine_options,
                             const groute::Stream &stream)
-        {       
+        {
             dim3 grid_dims, block_dims;
             uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
                 KernelSizing(grid_dims, block_dims, work_size);
@@ -836,7 +774,7 @@ namespace sepgraph
                             TGraphDatum &graph_datum,
                             EngineOptions &engine_options,
                             const groute::Stream &stream)
-        {       
+        {
             dim3 grid_dims, block_dims;
             uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
                  KernelSizing(grid_dims, block_dims, work_size);
@@ -945,7 +883,7 @@ namespace sepgraph
                             TGraphDatum &graph_datum,
                             EngineOptions &engine_options,
                             const groute::Stream &stream)
-        {       
+        {
             dim3 grid_dims, block_dims;
             uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
                  KernelSizing(grid_dims, block_dims, work_size);
@@ -1052,11 +990,8 @@ namespace sepgraph
                 const PMAGraph &vcsr_graph,
                 TGraphDatum &graph_datum,
                 EngineOptions &engine_options,
-                const groute::Stream &stream,
-                const uint32_t *cpu_source_owner_epoch = nullptr,
-                uint32_t cpu_source_epoch = 0,
-                unsigned long long *gpu_skipped_cpu_sources = nullptr)
-        {       
+                const groute::Stream &stream)
+        {
             dim3 grid_dims, block_dims;
             uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
 
@@ -1080,10 +1015,7 @@ namespace sepgraph
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
-                            graph_datum.m_wl_bitmap_in.DeviceObject(),
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources);
+                            graph_datum.m_wl_bitmap_in.DeviceObject());
                     break;
                 case LoadBalancing::COARSE_GRAINED:
                     kernel::SyncPushDDBAll<LoadBalancing::COARSE_GRAINED>
@@ -1102,10 +1034,7 @@ namespace sepgraph
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
-                            graph_datum.m_wl_bitmap_in.DeviceObject(),
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources);
+                            graph_datum.m_wl_bitmap_in.DeviceObject());
                     break;
                 case LoadBalancing::FINE_GRAINED:
                     kernel::SyncPushDDBAll<LoadBalancing::FINE_GRAINED>
@@ -1124,10 +1053,7 @@ namespace sepgraph
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
-                            graph_datum.m_wl_bitmap_in.DeviceObject(),
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources);
+                            graph_datum.m_wl_bitmap_in.DeviceObject());
                     break;
                 case LoadBalancing::HYBRID:
                     kernel::SyncPushDDBAll<LoadBalancing::HYBRID>
@@ -1146,10 +1072,7 @@ namespace sepgraph
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
-                            graph_datum.m_wl_bitmap_in.DeviceObject(),
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources);
+                            graph_datum.m_wl_bitmap_in.DeviceObject());
                     break;
                 default:
                     assert(false);
@@ -1172,26 +1095,14 @@ namespace sepgraph
                             EngineOptions &engine_options,
                             const groute::Stream &stream,
                             groute::dev::Queue<index_t> changed_vertices = groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                            const uint8_t *shadow_valid_flags = nullptr,
                             bool record_changed = false,
-                            const uint32_t *cpu_source_owner_epoch = nullptr,
-                            uint32_t cpu_source_epoch = 0,
-                            unsigned long long *gpu_skipped_cpu_sources = nullptr,
                             const uint8_t *cpu_home_flags = nullptr,
                             groute::dev::Queue<index_t> gpu_to_cpu_boundary_vertices =
                                 groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                            groute::dev::Queue<index_t> gpu_relax_dst_vertices =
-                                groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                            unsigned long long *gpu_relax_success_count = nullptr,
-                            unsigned long long *gpu_relax_cpu_home_success_count = nullptr,
-                            unsigned long long *gpu_relax_dst_degree_sum = nullptr,
-                            unsigned long long *gpu_relax_dst_high_degree_count = nullptr,
-                            unsigned long long *gpu_relax_dst_high_degree_sum = nullptr,
-                            unsigned long long *gpu_relax_dst_batch_touched_count = nullptr,
-                            const uint8_t *batch_touched_flags = nullptr,
-                            uint32_t high_degree_threshold = 0,
+                            typename TGraphDatum::BufferType *boundary_values = nullptr,
+                            index_t *boundary_parents = nullptr,
                             uint32_t known_work_size = std::numeric_limits<uint32_t>::max())
-        {       
+        {
             dim3 grid_dims, block_dims;
             uint32_t work_size =
                 known_work_size == std::numeric_limits<uint32_t>::max()
@@ -1219,22 +1130,11 @@ namespace sepgraph
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
                             graph_datum.m_wl_bitmap_in.DeviceObject(),
                             changed_vertices,
-                            shadow_valid_flags,
                             record_changed,
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources,
                             cpu_home_flags,
                             gpu_to_cpu_boundary_vertices,
-                            gpu_relax_dst_vertices,
-                            gpu_relax_success_count,
-                            gpu_relax_cpu_home_success_count,
-                            gpu_relax_dst_degree_sum,
-                            gpu_relax_dst_high_degree_count,
-                            gpu_relax_dst_high_degree_sum,
-                            gpu_relax_dst_batch_touched_count,
-                            batch_touched_flags,
-                            high_degree_threshold);
+                            boundary_values,
+                            boundary_parents);
                     break;
                 case LoadBalancing::COARSE_GRAINED:
                     kernel::SyncPushDDBDelta<LoadBalancing::COARSE_GRAINED>
@@ -1255,22 +1155,11 @@ namespace sepgraph
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
                             graph_datum.m_wl_bitmap_in.DeviceObject(),
                             changed_vertices,
-                            shadow_valid_flags,
                             record_changed,
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources,
                             cpu_home_flags,
                             gpu_to_cpu_boundary_vertices,
-                            gpu_relax_dst_vertices,
-                            gpu_relax_success_count,
-                            gpu_relax_cpu_home_success_count,
-                            gpu_relax_dst_degree_sum,
-                            gpu_relax_dst_high_degree_count,
-                            gpu_relax_dst_high_degree_sum,
-                            gpu_relax_dst_batch_touched_count,
-                            batch_touched_flags,
-                            high_degree_threshold);
+                            boundary_values,
+                            boundary_parents);
                     break;
                 case LoadBalancing::FINE_GRAINED:
                     kernel::SyncPushDDBDelta<LoadBalancing::FINE_GRAINED>
@@ -1291,22 +1180,11 @@ namespace sepgraph
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
                             graph_datum.m_wl_bitmap_in.DeviceObject(),
                             changed_vertices,
-                            shadow_valid_flags,
                             record_changed,
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources,
                             cpu_home_flags,
                             gpu_to_cpu_boundary_vertices,
-                            gpu_relax_dst_vertices,
-                            gpu_relax_success_count,
-                            gpu_relax_cpu_home_success_count,
-                            gpu_relax_dst_degree_sum,
-                            gpu_relax_dst_high_degree_count,
-                            gpu_relax_dst_high_degree_sum,
-                            gpu_relax_dst_batch_touched_count,
-                            batch_touched_flags,
-                            high_degree_threshold);
+                            boundary_values,
+                            boundary_parents);
                     break;
                 case LoadBalancing::HYBRID:
                     kernel::SyncPushDDBDelta<LoadBalancing::HYBRID>
@@ -1327,22 +1205,11 @@ namespace sepgraph
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
                             graph_datum.m_wl_bitmap_in.DeviceObject(),
                             changed_vertices,
-                            shadow_valid_flags,
                             record_changed,
-                            cpu_source_owner_epoch,
-                            cpu_source_epoch,
-                            gpu_skipped_cpu_sources,
                             cpu_home_flags,
                             gpu_to_cpu_boundary_vertices,
-                            gpu_relax_dst_vertices,
-                            gpu_relax_success_count,
-                            gpu_relax_cpu_home_success_count,
-                            gpu_relax_dst_degree_sum,
-                            gpu_relax_dst_high_degree_count,
-                            gpu_relax_dst_high_degree_sum,
-                            gpu_relax_dst_batch_touched_count,
-                            batch_touched_flags,
-                            high_degree_threshold);
+                            boundary_values,
+                            boundary_parents);
                     break;
                 default:
                     assert(false);
@@ -1366,12 +1233,12 @@ namespace sepgraph
                             TGraphDatum &graph_datum,
                             EngineOptions &engine_options,
                             const groute::Stream &stream)
-        {       
+        {
             dim3 grid_dims, block_dims;
             KernelSizing(grid_dims, block_dims, seg_enode-seg_snode);
         // LOG("INFO idx %d start %d end %d\n",seg_idx, seg_snode,seg_enode);
             uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
-        
+
             if(zcflag)
                 KernelSizing(grid_dims, block_dims, work_size);
             switch (engine_options.GetLoadBalancing(common::MsgPassing::PUSH))
@@ -1488,7 +1355,7 @@ namespace sepgraph
                 TGraphDatum &graph_datum,
                 EngineOptions &engine_options,
                 const groute::Stream &stream)
-        {       
+        {
             dim3 grid_dims, block_dims;
         //     KernelSizing(grid_dims, block_dims, seg_enode-seg_snode);
             uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
@@ -1580,29 +1447,25 @@ namespace sepgraph
                 typename PMAGraph,
                 typename TGraphDatum>
         void RunSyncPushDDB_del(TAppInst &app_inst,
-                index_t seg_snode,
-                index_t seg_enode,
-                uint64_t seg_sedge_csr,
-                index_t seg_idx,
                 bool zcflag,
                 PMAGraph &vcsr_graph,
                 // bool *delta,
                 TGraphDatum &graph_datum,
+                index_t *work_items,
+                uint32_t work_size,
+                groute::dev::Queue<index_t> affected_vertices,
                 EngineOptions &engine_options,
                 const groute::Stream &stream)
-        {       
+        {
             dim3 grid_dims, block_dims;
-            KernelSizing(grid_dims, block_dims, seg_enode-seg_snode);
-            uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
-            if(zcflag)
-                KernelSizing(grid_dims, block_dims, work_size);
+            KernelSizing(grid_dims, block_dims, work_size);
             switch (engine_options.GetLoadBalancing(common::MsgPassing::PUSH))
             {
                 case LoadBalancing::NONE:
                     kernel::SyncPushDDB_del<LoadBalancing::NONE>
-                            << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,seg_snode,seg_enode,seg_sedge_csr,zcflag,
+                            << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,zcflag,
                                  groute::dev::WorkSourceArray<index_t>(
-                                        graph_datum.m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
+                                        work_items,
                                         work_size),
                             vcsr_graph,
                             graph_datum.cache_edges_l1,
@@ -1610,6 +1473,7 @@ namespace sepgraph
                             graph_datum.count_gpu,
                             graph_datum.total_act_d,
                             graph_datum.m_node_reset_datum,
+                            affected_vertices,
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetValueDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
@@ -1618,9 +1482,9 @@ namespace sepgraph
                     break;
                 case LoadBalancing::COARSE_GRAINED:
                     kernel::SyncPushDDB_del<LoadBalancing::COARSE_GRAINED>
-                            << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,seg_snode,seg_enode,seg_sedge_csr,zcflag,
-                                 groute::dev::WorkSourceArray<index_t>(
-                                         graph_datum.m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
+                            << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,zcflag,
+                            groute::dev::WorkSourceArray<index_t>(
+                                         work_items,
                                          work_size),
                             vcsr_graph,
                             graph_datum.cache_edges_l1,
@@ -1628,6 +1492,7 @@ namespace sepgraph
                             graph_datum.count_gpu,
                             graph_datum.total_act_d,
                             graph_datum.m_node_reset_datum,
+                            affected_vertices,
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetValueDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
@@ -1636,9 +1501,9 @@ namespace sepgraph
                     break;
                 case LoadBalancing::FINE_GRAINED:
                     kernel::SyncPushDDB_del<LoadBalancing::FINE_GRAINED>
-                            << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,seg_snode,seg_enode,seg_sedge_csr,zcflag,
-                                 groute::dev::WorkSourceArray<index_t>(
-                                         graph_datum.m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
+                            << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,zcflag,
+                            groute::dev::WorkSourceArray<index_t>(
+                                         work_items,
                                          work_size),
                             vcsr_graph,
                             graph_datum.cache_edges_l1,
@@ -1646,6 +1511,7 @@ namespace sepgraph
                             graph_datum.count_gpu,
                             graph_datum.total_act_d,
                             graph_datum.m_node_reset_datum,
+                            affected_vertices,
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetValueDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
@@ -1654,9 +1520,9 @@ namespace sepgraph
                     break;
                 case LoadBalancing::HYBRID:
                     kernel::SyncPushDDB_del<LoadBalancing::HYBRID>
-                            << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,seg_snode,seg_enode,seg_sedge_csr,zcflag,
-                                 groute::dev::WorkSourceArray<index_t>(
-                                         graph_datum.m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
+                            << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,zcflag,
+                            groute::dev::WorkSourceArray<index_t>(
+                                         work_items,
                                          work_size),
                             vcsr_graph,
                             graph_datum.cache_edges_l1,
@@ -1664,6 +1530,7 @@ namespace sepgraph
                             graph_datum.count_gpu,
                             graph_datum.total_act_d,
                             graph_datum.m_node_reset_datum,
+                            affected_vertices,
                             graph_datum.GetParentDeviceObject(),
                             graph_datum.GetValueDeviceObject(),
                             graph_datum.GetBufferDeviceObject(),
@@ -2812,8 +2679,8 @@ namespace sepgraph
                     assert(false);
             }
 
-            
-	    
+
+
 	      stream.Sync();
         }
         template<typename TAppInst,
