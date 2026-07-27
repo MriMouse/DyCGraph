@@ -22,6 +22,7 @@
 #include <framework/variants/driver.cuh>
 #include <framework/hybrid_policy.h>
 #include <framework/dynamic_reverse_index.h>
+#include <framework/topology_replay.h>
 #include <framework/algo_variants.cuh>
 #include <utils/cuda_utils.h>
 #include <utils/graphs/traversal.h>
@@ -62,6 +63,7 @@ DECLARE_double(edge_factor);
 DECLARE_string(updatefile);
 DECLARE_string(update_size);
 DECLARE_bool(weight);
+DECLARE_bool(topology_replay_audit);
 DECLARE_int32(sssp_cpu_partition_capacity);
 
 namespace sepgraph {
@@ -368,6 +370,9 @@ namespace sepgraph {
             std::deque<index_t> m_cpu_frontier;
             std::vector<uint8_t> m_insertion_seed_partitions;
             uint32_t m_last_insertion_dirty_partitions = 0;
+            std::unique_ptr<topology::SparseTopologyReplayModel> m_topology_audit_expected;
+            std::vector<index_t> m_topology_audit_sources;
+            uint32_t m_topology_audit_batch = 0;
 
             std::unique_ptr<AppImplDeviceObject> m_app_inst;
             groute::Stream stream[64];
@@ -1184,11 +1189,11 @@ namespace sepgraph {
                 m_vcsr_dev_graph_allocator->BackNode();
                 LOG("--------Verify cache index----------\n");
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->HostObject();
+                const auto adjacency = vcsr_graph.adjacency_view();
                 uint64_t num_of_dst = 0;
                 for(index_t i = 0; i<vcsr_graph.nnodes; i++){
                     if(vcsr_graph.vertices_[i].cache){
-                        uint64_t start_h = vcsr_graph.sync_vertices_[i].index;
-                        uint32_t hot_deg = vcsr_graph.sync_vertices_[i].degree;
+                        uint32_t hot_deg = adjacency.Degree(i);
                         uint64_t start_d = vcsr_graph.vertices_[i].virtual_start;
                         uint32_t dev_deg = vcsr_graph.vertices_[i].virtual_degree;
                         uint64_t size = vcsr_graph.vertices_[i].virtual_degree+vcsr_graph.vertices_[i].virtual_start;
@@ -1204,11 +1209,11 @@ namespace sepgraph {
                         if(start_d>=graph_datum.num_of_cache){
                             printf("node %d d_start  %d\n",i,start_d);
                         }
-                        if(hot_deg!=dev_deg)LOG("%d h_deg %d d_deg %d\n",i,vcsr_graph.sync_vertices_[i].degree,vcsr_graph.vertices_[i].virtual_degree);
-                        for(auto j = 0; j<  vcsr_graph.sync_vertices_[i].degree ;j++){
-                            if(vcsr_graph.edges_[start_h+j]!=graph_datum.host_cache[start_d+j]){
+                        if(hot_deg!=dev_deg)LOG("%d h_deg %d d_deg %d\n",i,hot_deg,vcsr_graph.vertices_[i].virtual_degree);
+                        for(auto j = 0; j< hot_deg; j++){
+                            if(adjacency.EdgeAt(i, j)!=graph_datum.host_cache[start_d+j]){
                                 printf("src %d cache_dst %d  ",i,graph_datum.host_cache[start_d+j]);
-                                printf("hot_dst %d\n",vcsr_graph.edges_[start_h+j]);
+                                printf("hot_dst %d\n",adjacency.EdgeAt(i, j));
 
                             }
                         }
@@ -1228,11 +1233,11 @@ namespace sepgraph {
                 m_vcsr_dev_graph_allocator->BackNode();
                 LOG("--------Verify cache index----------\n");
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->HostObject();
+                const auto adjacency = vcsr_graph.adjacency_view();
                 uint64_t num_of_dst = 0;
                 for(index_t i = 0; i<vcsr_graph.nnodes; i++){
                     if(vcsr_graph.vertices_[i].cache){
-                        uint64_t start_h = vcsr_graph.sync_vertices_[i].index;
-                        uint32_t hot_deg = vcsr_graph.sync_vertices_[i].degree;
+                        uint32_t hot_deg = adjacency.Degree(i);
                         uint64_t start_d = vcsr_graph.vertices_[i].third_start;
                         uint32_t dev_deg = vcsr_graph.vertices_[i].third_degree;
                         uint64_t size = start_d+dev_deg;
@@ -1249,10 +1254,10 @@ namespace sepgraph {
                             printf("node %d d_start  %d\n",i,start_d);
                         }
                         if(hot_deg!=dev_deg)LOG("%d h_deg %d d_deg %d\n",i,hot_deg,dev_deg);
-                        for(auto j = 0; j<  vcsr_graph.sync_vertices_[i].degree ;j++){
-                            if(vcsr_graph.edges_[start_h+j]!=graph_datum.host_cache_l3[start_d+j]){
+                        for(auto j = 0; j< hot_deg; j++){
+                            if(adjacency.EdgeAt(i, j)!=graph_datum.host_cache_l3[start_d+j]){
                                 printf("src %d cache_dst %d  ",i,graph_datum.host_cache_l3[start_d+j]);
-                                printf("hot_dst %d\n",vcsr_graph.edges_[start_h+j]);
+                                printf("hot_dst %d\n",adjacency.EdgeAt(i, j));
 
                             }
                         }
@@ -1283,17 +1288,18 @@ namespace sepgraph {
                 m_vcsr_dev_graph_allocator->BackNode();
                 LOG("--------Verify cache index----------\n");
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->HostObject();
+                const auto adjacency = vcsr_graph.adjacency_view();
                 uint64_t num_of_dst = 0;
                 for(index_t i = 0; i<vcsr_graph.nnodes; i++){
-                    for(auto k = 0; k<  vcsr_graph.sync_vertices_[i].degree ;k++){
-                        if(vcsr_graph.edges_[vcsr_graph.sync_vertices_[i].index+k]==-1) {
-                            printf("wrong src %d dst %d\n",i,vcsr_graph.edges_[vcsr_graph.sync_vertices_[i].index+k]);
+                    for(auto k = 0; k< adjacency.Degree(i); k++){
+                        if(adjacency.EdgeAt(i, k)==std::numeric_limits<index_t>::max()) {
+                            printf("wrong src %d dst %d\n",i,adjacency.EdgeAt(i, k));
                             num_of_dst++;}
                     }
                     if(vcsr_graph.vertices_[i].cache){
 
-                        uint64_t start_h = vcsr_graph.sync_vertices_[i].index;
-                        uint32_t hot_deg = vcsr_graph.sync_vertices_[i].degree;
+                        uint64_t start_h = adjacency.Begin(i);
+                        uint32_t hot_deg = adjacency.Degree(i);
                         uint64_t start_d = vcsr_graph.vertices_[i].virtual_start;
                         uint32_t dev_deg = vcsr_graph.vertices_[i].virtual_degree;
                         uint64_t size = vcsr_graph.vertices_[i].virtual_degree+vcsr_graph.vertices_[i].virtual_start;
@@ -1310,11 +1316,11 @@ namespace sepgraph {
                         if(start_d>=graph_datum.num_of_cache){
                             printf("node %d d_start  %d\n",i,start_d);
                         }
-                        if(hot_deg!=dev_deg)LOG("%d h_deg %d d_deg %d\n",i,vcsr_graph.sync_vertices_[i].degree,vcsr_graph.vertices_[i].virtual_degree);
-                        for(auto j = 0; j<  vcsr_graph.sync_vertices_[i].degree ;j++){
-                            if(vcsr_graph.edges_[start_h+j]!=graph_datum.host_cache[start_d+j]){
+                        if(hot_deg!=dev_deg)LOG("%d h_deg %d d_deg %d\n",i,hot_deg,vcsr_graph.vertices_[i].virtual_degree);
+                        for(auto j = 0; j< hot_deg; j++){
+                            if(adjacency.EdgeAt(i, j)!=graph_datum.host_cache[start_d+j]){
                                 printf("src %d cache_dst %d  ",i,graph_datum.host_cache[start_d+j]);
-                                printf("hot_dst %d\n",vcsr_graph.edges_[start_h+j]);
+                                printf("hot_dst %d\n",adjacency.EdgeAt(i, j));
 
                             }
                         }
@@ -1614,6 +1620,7 @@ namespace sepgraph {
                 LOG("----------Batch: %d---------\n",NumOfSnapShots);
                 Loader &load_update = *m_load_update;
                 groute::graphs::host::PMAGraph &vcsr_graph  = m_vcsr_dev_graph_allocator->m_origin_graph;
+                PrepareTopologyReplayAudit(local_begin, NumOfSnapShots);
                 index_t size = load_update.m_batch_size[NumOfSnapShots].second;
                 for(index_t i = local_begin.second; i < local_begin.second+size; i++){
                     index_t src_del = load_update.deleted_edges_w[i].u;
@@ -2340,6 +2347,16 @@ namespace sepgraph {
                 Stopwatch sw_allocator_reload(true);
                 m_vcsr_dev_graph_allocator->ReloadAllocator();
                 sw_allocator_reload.stop();
+                if (!m_vcsr_dev_graph_allocator->HostObject().topology_epoch().IsPublished()) {
+                    LOG("[TOPOLOGY-EPOCH] protocol_error=traversal_before_publication batch=%u pending=%llu published=%llu\n",
+                        NumOfSnapShots,
+                        static_cast<unsigned long long>(
+                            m_vcsr_dev_graph_allocator->HostObject().topology_epoch().PendingEpoch()),
+                        static_cast<unsigned long long>(
+                            m_vcsr_dev_graph_allocator->HostObject().topology_epoch().PublishedEpoch()));
+                    std::abort();
+                }
+                VerifyTopologyReplayAudit(NumOfSnapShots);
                 if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
                     BeginInsertionEpoch(NumOfSnapShots);
                 }
@@ -2762,6 +2779,111 @@ namespace sepgraph {
             }
 
             private:
+            void PrepareTopologyReplayAudit(
+                const std::pair<index_t, index_t> &local_begin,
+                index_t batch) {
+                if (!FLAGS_topology_replay_audit) return;
+                if (m_topology_audit_expected) {
+                    LOG("[TOPOLOGY-AUDIT] protocol_error=unfinished_audit previous_batch=%u next_batch=%u\n",
+                        m_topology_audit_batch, batch);
+                    std::abort();
+                }
+
+                Loader &load_update = *m_load_update;
+                topology::TopologyMutationBatch mutations;
+                const index_t add_count = load_update.m_batch_size[batch].first;
+                const index_t delete_count = load_update.m_batch_size[batch].second;
+                mutations.deletions.reserve(delete_count);
+                mutations.additions.reserve(add_count);
+                for (index_t i = local_begin.second;
+                     i < local_begin.second + delete_count; ++i) {
+                    mutations.deletions.push_back(
+                        {load_update.deleted_edges_w[i].u,
+                         load_update.deleted_edges_w[i].v});
+                }
+                for (index_t i = local_begin.first;
+                     i < local_begin.first + add_count; ++i) {
+                    mutations.additions.push_back(
+                        {load_update.added_edges_w[i].u,
+                         load_update.added_edges_w[i].v});
+                }
+
+                const auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
+                const auto adjacency = host_pma.adjacency_view();
+                m_topology_audit_sources = mutations.TouchedSources();
+                std::unordered_map<index_t, std::vector<index_t>> touched_adjacency;
+                touched_adjacency.reserve(m_topology_audit_sources.size());
+                uint64_t graph_edge_count = 0;
+                for (index_t source = 0; source < host_pma.nnodes; ++source) {
+                    graph_edge_count += adjacency.Degree(source);
+                }
+                for (const index_t source : m_topology_audit_sources) {
+                    touched_adjacency.emplace(
+                        source, topology::MaterializeNeighbors(adjacency, source));
+                }
+
+                m_topology_audit_expected.reset(
+                    new topology::SparseTopologyReplayModel(
+                        std::move(touched_adjacency), graph_edge_count));
+                m_topology_audit_expected->ApplyBatch(mutations);
+                m_topology_audit_batch = batch;
+            }
+
+            void VerifyTopologyReplayAudit(index_t batch) {
+                if (!FLAGS_topology_replay_audit) return;
+                if (!m_topology_audit_expected || m_topology_audit_batch != batch) {
+                    LOG("[TOPOLOGY-AUDIT] protocol_error=missing_expected_state batch=%u\n",
+                        batch);
+                    std::abort();
+                }
+
+                const auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
+                const auto adjacency = host_pma.adjacency_view();
+                uint64_t actual_edge_count = 0;
+                for (index_t source = 0; source < host_pma.nnodes; ++source) {
+                    actual_edge_count += adjacency.Degree(source);
+                }
+
+                uint64_t mismatched_sources = 0;
+                index_t first_mismatch = std::numeric_limits<index_t>::max();
+                topology::SourceTopologyDigest first_expected;
+                topology::SourceTopologyDigest first_actual;
+                for (const index_t source : m_topology_audit_sources) {
+                    const auto expected = m_topology_audit_expected->Digest(source);
+                    const auto actual = topology::DigestSource(adjacency, source);
+                    if (!(expected == actual)) {
+                        if (mismatched_sources == 0) {
+                            first_mismatch = source;
+                            first_expected = expected;
+                            first_actual = actual;
+                        }
+                        ++mismatched_sources;
+                    }
+                }
+                const uint64_t expected_edge_count =
+                    m_topology_audit_expected->EdgeCount();
+                LOG("[TOPOLOGY-AUDIT][batch %u] touched_sources=%zu mismatched_sources=%llu expected_edges=%llu actual_edges=%llu first_mismatch=%u expected_degree=%llu actual_degree=%llu expected_ordered_hash=%llu actual_ordered_hash=%llu expected_multiset_hash=%llu actual_multiset_hash=%llu\n",
+                    batch,
+                    m_topology_audit_sources.size(),
+                    static_cast<unsigned long long>(mismatched_sources),
+                    static_cast<unsigned long long>(expected_edge_count),
+                    static_cast<unsigned long long>(actual_edge_count),
+                    first_mismatch,
+                    static_cast<unsigned long long>(first_expected.degree),
+                    static_cast<unsigned long long>(first_actual.degree),
+                    static_cast<unsigned long long>(first_expected.ordered_hash),
+                    static_cast<unsigned long long>(first_actual.ordered_hash),
+                    static_cast<unsigned long long>(first_expected.multiset_hash),
+                    static_cast<unsigned long long>(first_actual.multiset_hash));
+
+                m_topology_audit_expected.reset();
+                m_topology_audit_sources.clear();
+                if (mismatched_sources != 0 ||
+                    expected_edge_count != actual_edge_count) {
+                    std::abort();
+                }
+            }
+
             void LoadOptions() {
                 if (!m_engine_options.IsForceLoadBalancing(MsgPassing::PUSH)) {
                     if (FLAGS_lb_push.size() == 0) {
@@ -2930,6 +3052,7 @@ namespace sepgraph {
                 Stopwatch sw_cpu_owner(true);
                 GraphDatum &graph_datum = *m_graph_datum;
                 auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
+                const auto adjacency = host_pma.adjacency_view();
                 const TBuffer infinity = std::numeric_limits<TBuffer>::max();
                 while (!m_cpu_frontier.empty()) {
                     const size_t wave_size = m_cpu_frontier.size();
@@ -2938,12 +3061,11 @@ namespace sepgraph {
                         const index_t src = m_cpu_frontier.front();
                         m_cpu_frontier.pop_front();
                         const TBuffer src_value = m_cpu_node_buffers[src];
-                        const uint64_t edge_start = host_pma.sync_vertices_[src].index;
-                        const uint64_t degree = host_pma.sync_vertices_[src].degree;
+                        const uint64_t degree = adjacency.Degree(src);
                         ++stats.cpu_expanded_vertices;
                         stats.cpu_edge_visits += degree;
                         for (uint64_t offset = 0; offset < degree; ++offset) {
-                            const index_t dst = host_pma.edges_[edge_start + offset];
+                            const index_t dst = adjacency.EdgeAt(src, offset);
                             if (dst >= graph_datum.nnodes) continue;
                             const uint64_t candidate_wide =
                                 static_cast<uint64_t>(src_value) +

@@ -130,6 +130,7 @@ private:
     static void ParallelForVertexRanges(const PMAGraph &graph,
                                         uint32_t workers,
                                         Visitor visitor) {
+        const auto adjacency = graph.adjacency_view();
         std::vector<std::thread> threads;
         threads.reserve(workers);
         for (uint32_t worker = 0; worker < workers; ++worker) {
@@ -137,12 +138,11 @@ private:
                 (static_cast<uint64_t>(graph.nnodes) * worker) / workers);
             const index_t end_node = static_cast<index_t>(
                 (static_cast<uint64_t>(graph.nnodes) * (worker + 1)) / workers);
-            threads.emplace_back([&graph, begin_node, end_node, &visitor]() {
+            threads.emplace_back([adjacency, begin_node, end_node, &visitor]() {
                 for (index_t src = begin_node; src < end_node; ++src) {
-                    const uint64_t edge_begin = graph.sync_vertices_[src].index;
-                    const uint64_t degree = graph.sync_vertices_[src].degree;
+                    const uint64_t degree = adjacency.Degree(src);
                     for (uint64_t offset = 0; offset < degree; ++offset) {
-                        visitor(src, graph.edges_[edge_begin + offset]);
+                        visitor(src, adjacency.EdgeAt(src, offset));
                     }
                 }
             });

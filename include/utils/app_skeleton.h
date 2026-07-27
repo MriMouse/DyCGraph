@@ -94,6 +94,8 @@ DEFINE_int32(hybrid, 0, "0:zerocopy 1:explicit 2:hybrid");
 DEFINE_int32(residence, 0, "residence");
 DEFINE_int32(weight_num, 0, "1:all weight = 1");
 DEFINE_bool(weight, true, "1:has weight = 1");
+DEFINE_bool(topology_replay_audit, false,
+            "Audit each updated PMA source against the C1 topology replay contract");
 
 DEFINE_string(updatefile, "", "A file with a graph need to be update");
 DEFINE_string(update_size, "", "A file with a graph need to be update");

@@ -39,6 +39,7 @@
 #include <cuda_runtime.h>
 #include <groute/context.h>
 #include <groute/graphs/common.h>
+#include <groute/graphs/topology_contract.cuh>
 #include "./util.h"
 #include <cstring>
 #include<iostream>
@@ -296,7 +297,9 @@ namespace groute
             struct vertex_sync_element{
                 uint64_t index;
                 index_t degree;
-            };     
+            };
+            static_assert(sizeof(vertex_sync_element) == 16,
+                          "C1 must not expand the legacy full descriptor mirror");
 
             struct vertex_element{
                 //third_start and third_degree not be used
@@ -313,6 +316,8 @@ namespace groute
             };       
             struct PMAGraph : public CSRGraphBase
             {
+                using AdjacencyView = sepgraph::topology::ContiguousAdjacencyView<
+                    vertex_sync_element, index_t>;
                 std::vector<uint64_t> row_start_vec; // the vectors are not always in use (see Bind)
                 std::vector<index_t> edge_dst_vec;
                 std::vector<index_t> edge_weights_vec;
@@ -342,6 +347,7 @@ namespace groute
                 index_t river = 0;
                 index_t river_low = 0;
                 index_t river_global = 0;
+                sepgraph::topology::TopologyEpochContract topology_epoch_;
                 int8_t max_sparseness = 1.0 / low_0;
                 int8_t largest_empty_segment = 1.0 * max_sparseness;
 
@@ -354,6 +360,16 @@ namespace groute
 
                 PMAGraph()
                 {
+                }
+
+                AdjacencyView adjacency_view() const
+                {
+                    return AdjacencyView{sync_vertices_, edges_, nnodes};
+                }
+
+                const sepgraph::topology::TopologyEpochContract &topology_epoch() const
+                {
+                    return topology_epoch_;
                 }
 
                 ~PMAGraph()
@@ -780,12 +796,13 @@ namespace groute
                 // num_edges_ += 1;
 
                 rebalance_wrapper(src);
+                topology_epoch_.MarkMutation();
                 // todo: we should also consider rebalancing the donner vertex's segment
             }
 
                 
-            void del_edge(index_t src, index_t dst, index_t weight){
-                index_t current_segment = get_segment_id(src);
+            bool del_edge(index_t src, index_t dst, index_t weight){
+                (void)weight;
 
                 uint64_t left = sync_vertices_[src].index;
                 uint64_t right = sync_vertices_[src].index + sync_vertices_[src].degree;
@@ -800,12 +817,11 @@ namespace groute
                         sync_vertices_[src].degree -= 1;
                         
                         edges_[right - 1] = -1;
-                        
-                        // std::sort(vertices_[src].index, (vertices_[src].index+vertices_[src].degree)); 
-                        // break;
+                        topology_epoch_.MarkMutation();
+                        return true;
                     }
                 }
-
+                return false;
             }
 
                 void rebalance_wrapper(index_t src){
@@ -1490,6 +1506,8 @@ namespace groute
             };       
             struct PMAGraph : public CSRGraphBase
             {
+                using AdjacencyView = sepgraph::topology::ContiguousAdjacencyView<
+                    groute::graphs::host::vertex_sync_element, index_t>;
                 // index_t *edge_dst_zc;
                 index_t *edge_dst_zc;
                 index_t *weight_dst_zc;
@@ -1513,6 +1531,11 @@ namespace groute
                 
                 PMAGraph()
                 {
+                }
+
+                __device__ __forceinline__ AdjacencyView adjacency_view() const
+                {
+                    return AdjacencyView{sync_vertices_, edges_, nnodes};
                 }
 
                 __device__ __host__ __forceinline__ bool owns(index_t node) const
@@ -1543,7 +1566,7 @@ namespace groute
 //                     return __ldg(&(vertices_ + node - node_offset)->index);
 // #else
                     // printf("begin edge node_id %d, begin_edge_index %d \n",node,vertices_[node - node_offset].index);
-                    return sync_vertices_[node - node_offset].index;
+                    return adjacency_view().Begin(node - node_offset);
 // #endif
                 }
 
@@ -1787,6 +1810,7 @@ namespace groute
                 {
                     // FreeEveryThing();
                     AllocateDevMirror_node_update();
+                    m_origin_graph.topology_epoch_.MarkPublished();
                 }
 
                 const dev::PMAGraph &DeviceObject() const

@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 2.8)
 add_definitions(-w)
 # project(SEP-Graph)
 project(SEP-Graph LANGUAGES CUDA CXX)
+enable_testing()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 ############## DEPENDENCIES ##############
@@ -83,3 +84,38 @@ target_link_libraries(hybrid_cc ${EXTRA_LIBS} pthread)
 add_executable(gtools src/utils/parser.cpp src/utils/utils.cpp
         samples/tools/gtools.cpp)
 target_link_libraries(gtools gflags)
+
+add_executable(topology_replay src/topology_replay.cpp)
+add_test(
+    NAME topology_replay_fixture
+    COMMAND topology_replay
+        --graph ${PROJECT_SOURCE_DIR}/tests/fixtures/topology_replay_graph.txt
+        --updates ${PROJECT_SOURCE_DIR}/tests/fixtures/topology_replay_updates.txt
+        --batch-sizes ${PROJECT_SOURCE_DIR}/tests/fixtures/topology_replay_batch_sizes.txt)
+set_tests_properties(
+    topology_replay_fixture
+    PROPERTIES PASS_REGULAR_EXPRESSION
+        "batch=1 additions=1 deletions=1 touched_sources=2 changed_sources=1 missing_deletes=1 invalid_additions=0 graph_edges=6")
+
+add_executable(topology_contract_test tests/topology_contract_test.cpp)
+set_source_files_properties(tests/topology_contract_test.cpp PROPERTIES LANGUAGE CUDA)
+target_link_libraries(topology_contract_test ${CUDA_TOOLKIT_TARGET_DIR}/lib64/stubs/libcuda.so)
+add_test(NAME topology_contract_test COMMAND topology_contract_test)
+
+add_executable(chunk_store_replay src/chunk_store_replay.cpp)
+target_link_libraries(chunk_store_replay ${CUDA_LIBRARIES})
+add_test(
+    NAME chunk_store_replay_fixture
+    COMMAND chunk_store_replay
+        --graph ${PROJECT_SOURCE_DIR}/tests/fixtures/topology_replay_graph.txt
+        --updates ${PROJECT_SOURCE_DIR}/tests/fixtures/topology_replay_updates.txt
+        --batch-sizes ${PROJECT_SOURCE_DIR}/tests/fixtures/topology_replay_batch_sizes.txt
+        --pageable)
+set_tests_properties(
+    chunk_store_replay_fixture
+    PROPERTIES PASS_REGULAR_EXPRESSION
+        "batch=1.*topology_mismatches=0 isolation_violations=0 graph_edges=6 oracle_edges=6")
+
+add_executable(source_local_chunk_store_test tests/source_local_chunk_store_test.cpp)
+target_link_libraries(source_local_chunk_store_test ${CUDA_LIBRARIES})
+add_test(NAME source_local_chunk_store_test COMMAND source_local_chunk_store_test)
