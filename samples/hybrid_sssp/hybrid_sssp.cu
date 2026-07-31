@@ -213,12 +213,12 @@ struct ParentWitnessCheckResult {
 };
 
 static BellmanRelaxCheckResult CheckBellmanRelaxed(
-        const groute::graphs::host::PMAGraph &graph,
+        const sepgraph::topology::SourceLocalChunkStore &graph,
         const std::vector<distance_t> &distances,
         index_t source_node) {
     BellmanRelaxCheckResult result;
 
-    const index_t nnodes = std::min<index_t>(graph.nnodes, distances.size());
+    const index_t nnodes = static_cast<index_t>(distances.size());
     std::vector<uint8_t> has_tight_witness(nnodes, 0);
     if (source_node < nnodes) {
         has_tight_witness[source_node] = 1;
@@ -228,10 +228,11 @@ static BellmanRelaxCheckResult CheckBellmanRelaxed(
             continue;
         }
 
-        const uint64_t edge_start = graph.sync_vertices_[src].index;
-        const uint64_t degree = graph.sync_vertices_[src].degree;
+        const auto &descriptor = graph.Descriptor(src);
+        const uint64_t edge_start = descriptor.index;
+        const uint64_t degree = descriptor.degree;
         for (uint64_t edge_offset = 0; edge_offset < degree; edge_offset++) {
-            const index_t dst = graph.edges_[edge_start + edge_offset];
+            const index_t dst = graph.SlabData(descriptor.slab_id)[edge_start + edge_offset];
             if (dst >= distances.size()) {
                 continue;
             }
@@ -267,13 +268,12 @@ static BellmanRelaxCheckResult CheckBellmanRelaxed(
 }
 
 static ParentWitnessCheckResult CheckParentWitness(
-        const groute::graphs::host::PMAGraph &graph,
+        const sepgraph::topology::SourceLocalChunkStore &graph,
         const std::vector<distance_t> &distances,
         const std::vector<distance_t> &parents,
         index_t source_node) {
     ParentWitnessCheckResult result;
-    const index_t nnodes = std::min<index_t>(
-        graph.nnodes,
+    const index_t nnodes = static_cast<index_t>(
         std::min(distances.size(), parents.size()));
     for (index_t node = 0; node < nnodes; ++node) {
         if (node == source_node || distances[node] == UINT32_MAX) {
@@ -284,10 +284,11 @@ static ParentWitnessCheckResult CheckParentWitness(
         bool valid = parent < nnodes && distances[parent] != UINT32_MAX;
         bool parent_edge_exists = false;
         if (valid) {
-            const uint64_t edge_start = graph.sync_vertices_[parent].index;
-            const uint64_t degree = graph.sync_vertices_[parent].degree;
+            const auto &descriptor = graph.Descriptor(parent);
+            const uint64_t edge_start = descriptor.index;
+            const uint64_t degree = descriptor.degree;
             for (uint64_t edge_offset = 0; edge_offset < degree; ++edge_offset) {
-                if (graph.edges_[edge_start + edge_offset] == node) {
+                if (graph.SlabData(descriptor.slab_id)[edge_start + edge_offset] == node) {
                     parent_edge_exists = true;
                     break;
                 }
@@ -418,9 +419,9 @@ bool HybridSSSP()
             const auto &delete_stage_distances = engine.GetGraphDatum().host_value;
             const auto &delete_stage_parents = engine.GetGraphDatum().host_parent;
             const BellmanRelaxCheckResult delete_stage_result =
-                CheckBellmanRelaxed(engine.PMAGraph(), delete_stage_distances, source_node);
+                CheckBellmanRelaxed(engine.ChunkStore(), delete_stage_distances, source_node);
             const ParentWitnessCheckResult delete_parent_result =
-                CheckParentWitness(engine.PMAGraph(),
+                CheckParentWitness(engine.ChunkStore(),
                                    delete_stage_distances,
                                    delete_stage_parents,
                                    source_node);
@@ -495,9 +496,9 @@ bool HybridSSSP()
             const auto &batch_distances = engine.GetGraphDatum().host_value;
             const auto &batch_parents = engine.GetGraphDatum().host_parent;
             const BellmanRelaxCheckResult batch_bellman =
-                CheckBellmanRelaxed(engine.PMAGraph(), batch_distances, source_node);
+                CheckBellmanRelaxed(engine.ChunkStore(), batch_distances, source_node);
             const ParentWitnessCheckResult batch_parent =
-                CheckParentWitness(engine.PMAGraph(),
+                CheckParentWitness(engine.ChunkStore(),
                                    batch_distances,
                                    batch_parents,
                                    source_node);
@@ -537,7 +538,7 @@ bool HybridSSSP()
 
     if (FLAGS_check) {
         BellmanRelaxCheckResult bellman_result =
-            CheckBellmanRelaxed(engine.PMAGraph(), distances, source_node);
+            CheckBellmanRelaxed(engine.ChunkStore(), distances, source_node);
         bool source_ok = source_node < distances.size() && distances[source_node] == 0;
         if (source_ok && bellman_result.relaxable_edges == 0 &&
             bellman_result.missing_tight_witnesses == 0) {

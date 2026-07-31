@@ -63,6 +63,7 @@ DECLARE_double(edge_factor);
 DECLARE_string(updatefile);
 DECLARE_string(update_size);
 DECLARE_bool(weight);
+DECLARE_bool(check);
 DECLARE_bool(topology_replay_audit);
 DECLARE_int32(sssp_cpu_partition_capacity);
 
@@ -338,6 +339,8 @@ namespace sepgraph {
             std::unique_ptr<groute::Stream> m_stream;
             std::unique_ptr<groute::graphs::single::CSRGraphAllocator> m_csr_dev_graph_allocator;
             std::unique_ptr<groute::graphs::single::PMAGraphAllocator> m_vcsr_dev_graph_allocator;
+            std::unique_ptr<topology::SourceLocalChunkStore> m_chunk_store;
+            std::vector<index_t> m_topology_patch_sources;
             // std::unique_ptr<groute::graphs::single::PMAGraphAllocator> m_vcsr_dev_graph_allocator_update;
             std::unique_ptr<groute::graphs::single::CSCGraphAllocator> m_csc_dev_graph_allocator;
             runtime::DynamicReverseIndex m_reverse_index;
@@ -916,7 +919,34 @@ namespace sepgraph {
         // m_csr_dev_graph_allocator = std::unique_ptr<groute::graphs::single::CSRGraphAllocator>(
         //     new groute::graphs::single::CSRGraphAllocator(csr_graph,seg_nedges_csr_max));
         LOG("seg_nedges_csr_max = %d\n",seg_nedges_csr_max);
+        uint64_t chunk_required_edges = 0;
+        for (index_t source = 0; source < vcsr_graph.nnodes; ++source) {
+            chunk_required_edges += topology::SourceLocalChunkStore::RequiredChunkCapacity(
+                vcsr_graph.sync_vertices_[source].degree);
+        }
+        const uint64_t chunk_headroom = std::max<uint64_t>(
+            chunk_required_edges / 8, 1ULL << 20);
+        topology::ChunkArenaOptions chunk_options;
+        chunk_options.capacity_edges = chunk_required_edges + chunk_headroom;
+        chunk_options.slab_capacity_edges = 1ULL << 24;
+        chunk_options.minimum_chunk_edges = 4;
+        chunk_options.pinned = true;
+        m_chunk_store.reset(new topology::SourceLocalChunkStore(
+            vcsr_graph.nnodes, chunk_options));
+        for (index_t source = 0; source < vcsr_graph.nnodes; ++source) {
+            const uint64_t begin = vcsr_graph.sync_vertices_[source].index;
+            const index_t degree = vcsr_graph.sync_vertices_[source].degree;
+            m_chunk_store->LoadSource(source, std::vector<index_t>(
+                vcsr_graph.edges_ + begin, vcsr_graph.edges_ + begin + degree));
+        }
+        m_chunk_store->FinalizeLoad(vcsr_graph.nedges);
         m_vcsr_dev_graph_allocator = std::unique_ptr<groute::graphs::single::PMAGraphAllocator>(new groute::graphs::single::PMAGraphAllocator(vcsr_graph,seg_nedges_csr_max));
+        m_vcsr_dev_graph_allocator->BindChunkStore(*m_chunk_store);
+        LOG("[C3-CHUNK-LOAD] edges=%llu capacity_edges=%llu slabs=%zu metadata_bytes=%llu\n",
+            static_cast<unsigned long long>(m_chunk_store->EdgeCount()),
+            static_cast<unsigned long long>(chunk_options.capacity_edges),
+            m_chunk_store->SlabCount(),
+            static_cast<unsigned long long>(m_chunk_store->MetadataBytes()));
 
         if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
             const uint32_t hardware_workers = std::thread::hardware_concurrency();
@@ -1389,6 +1419,10 @@ namespace sepgraph {
                 return m_groute_context->host_pma_small;
             }
 
+            const topology::SourceLocalChunkStore &ChunkStore() const {
+                return *m_chunk_store;
+            }
+
             const GraphDatum &GetGraphDatum() const {
                 return *m_graph_datum;
             }
@@ -1557,6 +1591,14 @@ namespace sepgraph {
 
                 GROUTE_CUDA_CHECK(cudaMalloc(&(this->work_size_d), 2 * sizeof(uint32_t)));
                 GROUTE_CUDA_CHECK(cudaHostRegister((void *)this->type, sizeof(int) * 2, cudaHostRegisterMapped));
+                size_t max_patch_records = 0;
+                for (const auto &batch_size : load_update.m_batch_size) {
+                    max_patch_records = std::max<size_t>(
+                        max_patch_records,
+                        static_cast<size_t>(batch_size.first) + batch_size.second);
+                }
+                m_vcsr_dev_graph_allocator->ReserveSparsePublicationCapacity(
+                    max_patch_records, FLAGS_check);
             }
 
             size_t GetUpdateBatchCount() const {
@@ -1591,7 +1633,9 @@ namespace sepgraph {
 
             void add_edge_pr(std::pair<index_t,index_t>& local_begin,index_t &NumOfSnapShots){
                 Loader &load_update = *m_load_update;
-                groute::graphs::host::PMAGraph &vcsr_graph  = m_vcsr_dev_graph_allocator->m_origin_graph;
+                topology::TopologyMutationBatch additions;
+                additions.additions.reserve(
+                    load_update.m_batch_size[NumOfSnapShots].first);
                 for(index_t i = local_begin.first; i < local_begin.first+load_update.m_batch_size[NumOfSnapShots].first; i++){
                     index_t src_add = load_update.added_edges_w[i].u;
                     index_t dst_add = load_update.added_edges_w[i].v;
@@ -1601,26 +1645,54 @@ namespace sepgraph {
                     if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
                         m_reverse_index.ApplyInsert(src_add, dst_add);
                     }
-                    vcsr_graph.insert(src_add, dst_add, (src_add + dst_add)%128 + 1);
+                    additions.additions.push_back({src_add, dst_add});
+                    m_topology_patch_sources.push_back(src_add);
                 }
+                const auto metrics = m_chunk_store->ApplyPendingAdditions(additions);
+                LOG("[C3-CPU-MUTATION][batch %u phase=add] epoch=%llu touched=%llu changed=%llu written_bytes=%llu relocation_bytes=%llu mutation_ms=%.3f allocation_ms=%.3f\n",
+                    NumOfSnapShots,
+                    static_cast<unsigned long long>(metrics.epoch),
+                    static_cast<unsigned long long>(metrics.touched_sources),
+                    static_cast<unsigned long long>(metrics.changed_sources),
+                    static_cast<unsigned long long>(metrics.mutation_written_bytes),
+                    static_cast<unsigned long long>(metrics.relocation_copied_bytes),
+                    metrics.mutation_ms, metrics.allocation_ms);
             }
 
             void del_edge_pr(std::pair<index_t,index_t>& local_begin,index_t &NumOfSnapShots){
                 Loader &load_update = *m_load_update;
-                groute::graphs::host::PMAGraph &vcsr_graph  = m_vcsr_dev_graph_allocator->m_origin_graph;
+                topology::TopologyMutationBatch deletions;
                 index_t size = load_update.m_batch_size[NumOfSnapShots].second;
+                deletions.deletions.reserve(size);
                 for(index_t i = local_begin.second; i < local_begin.second+ size; i++){
                     index_t src_del = load_update.deleted_edges_w[i].u;
                     index_t dst_del = load_update.deleted_edges_w[i].v;
-                    vcsr_graph.del_edge(src_del, dst_del, (src_del + dst_del)%128+1);
+                    deletions.deletions.push_back({src_del, dst_del});
+                    m_topology_patch_sources.push_back(src_del);
                 }
+                const auto metrics = m_chunk_store->ApplyBatch(deletions);
+                LOG("[C3-CPU-MUTATION][batch %u phase=delete] epoch=%llu touched=%llu changed=%llu missing_deletes=%llu written_bytes=%llu mutation_ms=%.3f\n",
+                    NumOfSnapShots,
+                    static_cast<unsigned long long>(metrics.epoch),
+                    static_cast<unsigned long long>(metrics.touched_sources),
+                    static_cast<unsigned long long>(metrics.changed_sources),
+                    static_cast<unsigned long long>(metrics.missing_deletes),
+                    static_cast<unsigned long long>(metrics.mutation_written_bytes),
+                    metrics.mutation_ms);
             }
 
             void del_edge(std::pair<index_t,index_t>& local_begin,index_t& NumOfSnapShots){
                 LOG("----------Batch: %d---------\n",NumOfSnapShots);
                 Loader &load_update = *m_load_update;
-                groute::graphs::host::PMAGraph &vcsr_graph  = m_vcsr_dev_graph_allocator->m_origin_graph;
+                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+                const uint64_t reclaimed = m_chunk_store->ReclaimThrough(
+                    m_chunk_store->PublishedEpoch());
+                LOG("[C3-RECLAIM][batch %u] completed_epoch=%llu reclaimed_blocks=%llu\n",
+                    NumOfSnapShots,
+                    static_cast<unsigned long long>(m_chunk_store->PublishedEpoch()),
+                    static_cast<unsigned long long>(reclaimed));
                 PrepareTopologyReplayAudit(local_begin, NumOfSnapShots);
+                m_topology_patch_sources.clear();
                 index_t size = load_update.m_batch_size[NumOfSnapShots].second;
                 for(index_t i = local_begin.second; i < local_begin.second+size; i++){
                     index_t src_del = load_update.deleted_edges_w[i].u;
@@ -1636,11 +1708,7 @@ namespace sepgraph {
             }
 
             void read_del(std::pair<index_t,index_t> &local_begin,index_t &NumOfSnapShots){
-                auto &app_inst = *m_app_inst;
                 Loader &load_update = *m_load_update;
-                GraphDatum &graph_datum = *m_graph_datum;
-                auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
-                groute::Stream &stream_s = *m_stream;
                 index_t size = load_update.m_batch_size[NumOfSnapShots].second;
                 for(index_t i = local_begin.second; i < local_begin.second+size; i++){
                     index_t src_del = load_update.deleted_edges_w[i].u;
@@ -1651,7 +1719,6 @@ namespace sepgraph {
                 }
                 // LOG("DEBUG pr 1.3 \n");
 
-                dim3 grid_dims, block_dims;
                 uint32_t work_size[2];
                 index_t start = local_begin.second;
                 work_size[0] = start;
@@ -1666,23 +1733,13 @@ namespace sepgraph {
                 }
                 // LOG("DEBUG pr 1.3.2 \n");
 
-                KernelSizing(grid_dims, block_dims, size);
-                // LOG("DEBUG pr 1.3.3 \n");
-                // bool del = true;
-                kernel::reset_pr_del_edges<<< grid_dims, block_dims, 0, stream_s.cuda_stream >>>(app_inst,vcsr_graph,
-                this->del_edges_d,
-                this->work_size_d);
-                stream_s.Sync();
-                // LOG("DEBUG pr 1.3.5 \n");
+                // Cache validity is changed by the version-checked topology
+                // scatter so publication and invalidation share one stream.
 
             }
 
             void read_add(std::pair<index_t,index_t> &local_begin,index_t &NumOfSnapShots){
-                auto &app_inst = *m_app_inst;
                 Loader &load_update = *m_load_update;
-                groute::Stream &stream_s = *m_stream;
-                GraphDatum &graph_datum = *m_graph_datum;
-                auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 index_t size = load_update.m_batch_size[NumOfSnapShots].first;
                 for(index_t i = local_begin.first; i < local_begin.first+size; i++){
                     index_t src_add = load_update.added_edges_w[i].u;
@@ -1694,7 +1751,6 @@ namespace sepgraph {
                 }
                 // LOG("DEBUG pr 1.2 \n");
                 GROUTE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&(this->added_edges_d), (void *)(this->added_edges_h), 0));
-                dim3 grid_dims, block_dims;
                 uint32_t work_size[2];
                 work_size[0] = local_begin.first;
                 work_size[1] = size;
@@ -1702,14 +1758,11 @@ namespace sepgraph {
                 m_insertion_seed_count = work_size[1];
                 // LOG("add start %d \n",work_size[0]);
                 // LOG("add size %d \n",work_size[1]);
-                bool del =false;
                 GROUTE_CUDA_CHECK(cudaMemcpy(this->work_size_d, &work_size[0], 2 * sizeof(uint32_t),cudaMemcpyHostToDevice));
                 if (size == 0) {
                     return;
                 }
-                KernelSizing(grid_dims, block_dims, size);
-                kernel::reset_pr_del_edges<<< grid_dims, block_dims, 0, stream_s.cuda_stream >>>(app_inst,vcsr_graph,this->added_edges_d,this->work_size_d);
-                stream_s.Sync();
+                // Touched cached sources are invalidated by PublishSparse.
                 // LOG("DEBUG pr 1.2.5 \n");
             }
 
@@ -1839,6 +1892,14 @@ namespace sepgraph {
                     next_policy[i] = m_policy_decision_maker.GetInitPolicy();
                 }
 
+                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+                const uint64_t reclaimed = m_chunk_store->ReclaimThrough(
+                    m_chunk_store->PublishedEpoch());
+                LOG("[C3-RECLAIM][batch %u] completed_epoch=%llu reclaimed_blocks=%llu\n",
+                    NumOfSnapShots,
+                    static_cast<unsigned long long>(m_chunk_store->PublishedEpoch()),
+                    static_cast<unsigned long long>(reclaimed));
+
                 auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
 
                 //update graph on the cpu
@@ -1847,12 +1908,28 @@ namespace sepgraph {
                 read_add(local_begin,NumOfSnapShots);
                 cudaDeviceSynchronize();
 
-                add_edge_pr(local_begin,NumOfSnapShots);
+                m_topology_patch_sources.clear();
                 del_edge_pr(local_begin,NumOfSnapShots);
+                add_edge_pr(local_begin,NumOfSnapShots);
                 local_begin.second += load_update.m_batch_size[NumOfSnapShots].second;
                 local_begin.first += load_update.m_batch_size[NumOfSnapShots].first;
 
-                m_vcsr_dev_graph_allocator->ReloadAllocator();
+                std::sort(m_topology_patch_sources.begin(), m_topology_patch_sources.end());
+                m_topology_patch_sources.erase(std::unique(m_topology_patch_sources.begin(),
+                    m_topology_patch_sources.end()), m_topology_patch_sources.end());
+                m_vcsr_dev_graph_allocator->PublishSparse(
+                    m_topology_patch_sources, stream_s.cuda_stream, FLAGS_check);
+                uint64_t zc_cold_edges = m_chunk_store->EdgeCount();
+                if (FLAGS_cache != 0) {
+                    zc_cold_edges = 0;
+                    for (const index_t source : m_topology_patch_sources) {
+                        zc_cold_edges += m_chunk_store->Descriptor(source).degree;
+                    }
+                }
+                for (index_t stream_idx = 0; stream_idx < FLAGS_n_stream; ++stream_idx) {
+                    m_vcsr_dev_graph_allocator->WaitForSparsePublication(
+                        stream[stream_idx].cuda_stream);
+                }
                 type[0] = 1;
                 float time_total = 0;
                 GROUTE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&this->type_device, (void *)this->type, 0));
@@ -1875,6 +1952,25 @@ namespace sepgraph {
                 for(index_t stream_idx = 0; stream_idx <  FLAGS_n_stream ; stream_idx++){
                     stream[stream_idx].Sync();
                 }
+                const auto publication =
+                    m_vcsr_dev_graph_allocator->CompleteSparsePublication();
+                if (publication.stale_rejects != 0 ||
+                    publication.hash_mismatches != 0) {
+                    LOG("[C3-PUBLISH] protocol_error batch=%u stale_version_rejects=%llu gpu_cpu_hash_mismatches=%llu\n",
+                        NumOfSnapShots, publication.stale_rejects,
+                        publication.hash_mismatches);
+                    std::abort();
+                }
+                LOG("[C3-PUBLISH][batch %u] epoch=%llu patch_records=%zu patch_bytes=%llu h2d_count=%u publication_ms=%.3f stale_version_rejects=%llu cache_invalidations=%llu zc_cold_edges=%llu gpu_cpu_hash_mismatches=%llu audit=%u\n",
+                    NumOfSnapShots,
+                    static_cast<unsigned long long>(m_chunk_store->PublishedEpoch()),
+                    m_topology_patch_sources.size(),
+                    static_cast<unsigned long long>(m_topology_patch_sources.size() * sizeof(topology::TopologyPatchRecord)),
+                    m_topology_patch_sources.empty() ? 0U : 1U,
+                    publication.publication_ms, publication.stale_rejects,
+                    publication.cache_invalidations,
+                    static_cast<unsigned long long>(zc_cold_edges),
+                    publication.hash_mismatches, FLAGS_check ? 1U : 0U);
                 LOG("------------PR mf compensate-----------\n");
                 count();
                 for(index_t stream_idx = 0; stream_idx <  FLAGS_n_stream ; stream_idx++){
@@ -2078,18 +2174,6 @@ namespace sepgraph {
                 m_running_info.time_overhead_wl_unique += sw_unique.ms();
 
           }
-
-            void del_topo(index_t &local_begin){
-                Loader &load_update = *m_load_update;
-                groute::graphs::host::PMAGraph &vcsr_graph  = m_vcsr_dev_graph_allocator->m_origin_graph;
-                // index_t size = load_update.m_batch_size/(2*NumOfSnapShots);
-                index_t size = load_update.m_del_size;
-                for(index_t i = 0; i < size; i++){
-                    index_t src_del = load_update.deleted_edges_w[i].u;
-                    index_t dst_del = load_update.deleted_edges_w[i].v;
-                    vcsr_graph.del_edge(src_del, dst_del, (src_del + dst_del)%128+1);
-                }
-            }
 
             void reset_delta_vertices(){
                 auto &app_inst = *m_app_inst;
@@ -2338,23 +2422,37 @@ namespace sepgraph {
                 cudaDeviceSynchronize();
                 sw_update_reset.stop();
 
-                Stopwatch sw_pma_insert(true);
+                Stopwatch sw_cpu_mutation(true);
                 add_edge_pr(local_begin,NumOfSnapShots);
-                sw_pma_insert.stop();
+                sw_cpu_mutation.stop();
                 local_begin.second += load_update.m_batch_size[NumOfSnapShots].second;
                 local_begin.first += load_update.m_batch_size[NumOfSnapShots].first;
 
-                Stopwatch sw_allocator_reload(true);
-                m_vcsr_dev_graph_allocator->ReloadAllocator();
-                sw_allocator_reload.stop();
-                if (!m_vcsr_dev_graph_allocator->HostObject().topology_epoch().IsPublished()) {
+                std::sort(m_topology_patch_sources.begin(), m_topology_patch_sources.end());
+                m_topology_patch_sources.erase(std::unique(m_topology_patch_sources.begin(),
+                    m_topology_patch_sources.end()), m_topology_patch_sources.end());
+                m_vcsr_dev_graph_allocator->PublishSparse(
+                    m_topology_patch_sources, stream_s.cuda_stream, FLAGS_check);
+                for (index_t stream_idx = 0; stream_idx < FLAGS_n_stream;
+                     ++stream_idx) {
+                    m_vcsr_dev_graph_allocator->WaitForSparsePublication(
+                        stream[stream_idx].cuda_stream);
+                }
+                if (!m_chunk_store->IsPublished()) {
                     LOG("[TOPOLOGY-EPOCH] protocol_error=traversal_before_publication batch=%u pending=%llu published=%llu\n",
                         NumOfSnapShots,
                         static_cast<unsigned long long>(
-                            m_vcsr_dev_graph_allocator->HostObject().topology_epoch().PendingEpoch()),
+                            m_chunk_store->PendingEpoch()),
                         static_cast<unsigned long long>(
-                            m_vcsr_dev_graph_allocator->HostObject().topology_epoch().PublishedEpoch()));
+                            m_chunk_store->PublishedEpoch()));
                     std::abort();
+                }
+                uint64_t zc_cold_edges = m_chunk_store->EdgeCount();
+                if (FLAGS_cache != 0) {
+                    zc_cold_edges = 0;
+                    for (const index_t source : m_topology_patch_sources) {
+                        zc_cold_edges += m_chunk_store->Descriptor(source).degree;
+                    }
                 }
                 VerifyTopologyReplayAudit(NumOfSnapShots);
                 if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
@@ -2412,6 +2510,25 @@ namespace sepgraph {
                 add_time+=sw_load.ms();
                 Stopwatch sw_initial_rebuild(true);
                 cudaDeviceSynchronize();
+                const auto publication =
+                    m_vcsr_dev_graph_allocator->CompleteSparsePublication();
+                if (publication.stale_rejects != 0 ||
+                    publication.hash_mismatches != 0) {
+                    LOG("[C3-PUBLISH] protocol_error batch=%u stale_version_rejects=%llu gpu_cpu_hash_mismatches=%llu\n",
+                        NumOfSnapShots, publication.stale_rejects,
+                        publication.hash_mismatches);
+                    std::abort();
+                }
+                LOG("[C3-PUBLISH][batch %u] epoch=%llu patch_records=%zu patch_bytes=%llu h2d_count=%u publication_ms=%.3f stale_version_rejects=%llu cache_invalidations=%llu zc_cold_edges=%llu gpu_cpu_hash_mismatches=%llu audit=%u\n",
+                    NumOfSnapShots,
+                    static_cast<unsigned long long>(m_chunk_store->PublishedEpoch()),
+                    m_topology_patch_sources.size(),
+                    static_cast<unsigned long long>(m_topology_patch_sources.size() * sizeof(topology::TopologyPatchRecord)),
+                    m_topology_patch_sources.empty() ? 0U : 1U,
+                    publication.publication_ms, publication.stale_rejects,
+                    publication.cache_invalidations,
+                    static_cast<unsigned long long>(zc_cold_edges),
+                    publication.hash_mismatches, FLAGS_check ? 1U : 0U);
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
                     stream_id = seg_idx % FLAGS_n_stream;
                     if (m_insertion_epoch_active &&
@@ -2472,11 +2589,11 @@ namespace sepgraph {
                     EndInsertionEpoch(NumOfSnapShots);
                 }
                 add_time+=sw_con.ms();
-                LOG("[INSERTION-STAGE] batch=%u reset_ms=%.3f pma_insert_ms=%.3f allocator_reload_ms=%.3f initial_rebuild_ms=%.3f seed_ms=%.3f converge_ms=%.3f\n",
+                LOG("[INSERTION-STAGE] batch=%u reset_ms=%.3f cpu_mutation_ms=%.3f topology_publication_audit_ms=%.3f initial_rebuild_ms=%.3f seed_ms=%.3f converge_ms=%.3f\n",
                     NumOfSnapShots,
                     sw_update_reset.ms(),
-                    sw_pma_insert.ms(),
-                    sw_allocator_reload.ms(),
+                    sw_cpu_mutation.ms(),
+                    publication.publication_ms,
                     sw_initial_rebuild.ms(),
                     sw_load.ms(),
                     sw_con.ms());
@@ -2658,6 +2775,7 @@ namespace sepgraph {
                                                   sizeof(bool) * graph_datum.nnodes,
                                                   stream_s.cuda_stream));
                 if (size == 0) {
+                    del_edge_pr(local_begin, NumOfSnapShots);
                     stream_s.Sync();
                     LOG("[B2-GPU-REPAIR][batch %u] affected=0 reason=no_deleted_edges\n",
                         NumOfSnapShots);
@@ -2808,18 +2926,13 @@ namespace sepgraph {
                          load_update.added_edges_w[i].v});
                 }
 
-                const auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                const auto adjacency = host_pma.adjacency_view();
                 m_topology_audit_sources = mutations.TouchedSources();
                 std::unordered_map<index_t, std::vector<index_t>> touched_adjacency;
                 touched_adjacency.reserve(m_topology_audit_sources.size());
-                uint64_t graph_edge_count = 0;
-                for (index_t source = 0; source < host_pma.nnodes; ++source) {
-                    graph_edge_count += adjacency.Degree(source);
-                }
+                const uint64_t graph_edge_count = m_chunk_store->EdgeCount();
                 for (const index_t source : m_topology_audit_sources) {
                     touched_adjacency.emplace(
-                        source, topology::MaterializeNeighbors(adjacency, source));
+                        source, m_chunk_store->Neighbors(source));
                 }
 
                 m_topology_audit_expected.reset(
@@ -2837,12 +2950,7 @@ namespace sepgraph {
                     std::abort();
                 }
 
-                const auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                const auto adjacency = host_pma.adjacency_view();
-                uint64_t actual_edge_count = 0;
-                for (index_t source = 0; source < host_pma.nnodes; ++source) {
-                    actual_edge_count += adjacency.Degree(source);
-                }
+                const uint64_t actual_edge_count = m_chunk_store->EdgeCount();
 
                 uint64_t mismatched_sources = 0;
                 index_t first_mismatch = std::numeric_limits<index_t>::max();
@@ -2850,7 +2958,7 @@ namespace sepgraph {
                 topology::SourceTopologyDigest first_actual;
                 for (const index_t source : m_topology_audit_sources) {
                     const auto expected = m_topology_audit_expected->Digest(source);
-                    const auto actual = topology::DigestSource(adjacency, source);
+                    const auto actual = m_chunk_store->Digest(source);
                     if (!(expected == actual)) {
                         if (mismatched_sources == 0) {
                             first_mismatch = source;
@@ -3051,8 +3159,6 @@ namespace sepgraph {
                     std::vector<CpuRelaxProposal<TBuffer>> &gpu_boundary) {
                 Stopwatch sw_cpu_owner(true);
                 GraphDatum &graph_datum = *m_graph_datum;
-                auto &host_pma = m_vcsr_dev_graph_allocator->HostObject();
-                const auto adjacency = host_pma.adjacency_view();
                 const TBuffer infinity = std::numeric_limits<TBuffer>::max();
                 while (!m_cpu_frontier.empty()) {
                     const size_t wave_size = m_cpu_frontier.size();
@@ -3061,11 +3167,13 @@ namespace sepgraph {
                         const index_t src = m_cpu_frontier.front();
                         m_cpu_frontier.pop_front();
                         const TBuffer src_value = m_cpu_node_buffers[src];
-                        const uint64_t degree = adjacency.Degree(src);
+                        const uint64_t degree = m_chunk_store->Descriptor(src).degree;
                         ++stats.cpu_expanded_vertices;
                         stats.cpu_edge_visits += degree;
                         for (uint64_t offset = 0; offset < degree; ++offset) {
-                            const index_t dst = adjacency.EdgeAt(src, offset);
+                            const index_t dst = m_chunk_store->SlabData(
+                                m_chunk_store->Descriptor(src).slab_id)[
+                                    m_chunk_store->Descriptor(src).index + offset];
                             if (dst >= graph_datum.nnodes) continue;
                             const uint64_t candidate_wide =
                                 static_cast<uint64_t>(src_value) +

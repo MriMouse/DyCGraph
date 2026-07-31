@@ -9,8 +9,17 @@
 namespace {
 
 using sepgraph::topology::ChunkArenaOptions;
+using sepgraph::topology::HashSequence;
 using sepgraph::topology::SourceLocalChunkStore;
+using sepgraph::topology::TopologyReplayModel;
 using sepgraph::topology::TopologyMutationBatch;
+
+void AssertMatchesOracle(SourceLocalChunkStore &store,
+                         const TopologyReplayModel &oracle,
+                         index_t source) {
+    assert(store.Neighbors(source) == oracle.Neighbors(source));
+    assert(store.OrderedHash(source) == HashSequence(oracle.Neighbors(source)));
+}
 
 void TestBatchOrderingAndDuplicates() {
     SourceLocalChunkStore store(4, ChunkArenaOptions{128, 128, 4, false});
@@ -144,6 +153,128 @@ void TestPinnedArena() {
     assert(store.ArenaStats().pinned);
 }
 
+void TestTwoPhaseBatchVisibility() {
+    SourceLocalChunkStore store(2, ChunkArenaOptions{64, 64, 4, false});
+    store.LoadSource(0, {1, 1});
+    store.LoadSource(1, {});
+    store.FinalizeLoad();
+
+    TopologyMutationBatch deletions;
+    deletions.deletions = {{0, 1}};
+    const auto deletion_metrics = store.ApplyBatch(deletions);
+    assert(deletion_metrics.epoch == 1);
+    assert((store.Neighbors(0) == std::vector<index_t>{1}));
+    assert(store.Descriptor(0).version == 1);
+    assert(!store.IsPublished());
+
+    TopologyMutationBatch additions;
+    additions.additions = {{0, 0}, {1, 0}};
+    const auto addition_metrics = store.ApplyPendingAdditions(additions);
+    assert(addition_metrics.epoch == 1);
+    assert((store.Neighbors(0) == std::vector<index_t>{1, 0}));
+    assert((store.Neighbors(1) == std::vector<index_t>{0}));
+    assert(store.Descriptor(0).version == 1);
+    assert(store.Descriptor(1).version == 1);
+    assert(store.Publish() == 1);
+    assert(store.IsPublished());
+}
+
+void TestSingleCompactWithRepeatedAndMissingDeletes() {
+    SourceLocalChunkStore store(1, ChunkArenaOptions{64, 64, 8, false});
+    const std::vector<index_t> initial{1, 2, 1, 3, 1, 4};
+    store.LoadSource(0, initial);
+    store.FinalizeLoad();
+    TopologyReplayModel oracle({initial});
+
+    TopologyMutationBatch batch;
+    batch.deletions = {{0, 1}, {0, 1}, {0, 9}, {0, 2}};
+    batch.additions = {{0, 5}, {0, 1}};
+    oracle.ApplyBatch(batch);
+    const auto metrics = store.ApplyBatch(batch);
+
+    AssertMatchesOracle(store, oracle, 0);
+    assert((store.Neighbors(0) == std::vector<index_t>{3, 1, 4, 5, 1}));
+    assert(metrics.missing_deletes == 1);
+    assert(metrics.allocations == 0);
+    assert(metrics.relocation_copied_bytes == 0);
+    assert(metrics.mutation_written_bytes == 5 * sizeof(index_t));
+    store.Publish();
+}
+
+void TestDirectCowRewriteAfterDeletes() {
+    SourceLocalChunkStore store(1, ChunkArenaOptions{64, 64, 4, false});
+    const std::vector<index_t> initial{1, 2, 2, 3};
+    store.LoadSource(0, initial);
+    store.FinalizeLoad();
+    TopologyReplayModel oracle({initial});
+
+    TopologyMutationBatch batch;
+    batch.deletions = {{0, 2}, {0, 2}};
+    batch.additions = {{0, 4}, {0, 5}, {0, 6}};
+    oracle.ApplyBatch(batch);
+    const auto metrics = store.ApplyBatch(batch);
+
+    AssertMatchesOracle(store, oracle, 0);
+    assert((store.Neighbors(0) == std::vector<index_t>{1, 3, 4, 5, 6}));
+    assert(metrics.allocations == 1);
+    assert(metrics.retired_blocks == 1);
+    assert(metrics.relocation_copied_bytes == 2 * sizeof(index_t));
+    assert(metrics.mutation_written_bytes == 5 * sizeof(index_t));
+    store.Publish();
+}
+
+void TestHighDegreeCompactWritesOnce() {
+    constexpr uint64_t kDegree = 4096;
+    constexpr uint64_t kDeletes = 1000;
+    SourceLocalChunkStore store(1, ChunkArenaOptions{8192, 8192, 4, false});
+    std::vector<index_t> initial(kDegree, 7);
+    store.LoadSource(0, initial);
+    store.FinalizeLoad();
+    TopologyReplayModel oracle({initial});
+
+    TopologyMutationBatch batch;
+    batch.deletions.resize(kDeletes, {0, 7});
+    for (index_t destination = 0; destination < 10; ++destination) {
+        batch.additions.push_back({0, destination});
+    }
+    oracle.ApplyBatch(batch);
+    const auto metrics = store.ApplyBatch(batch);
+
+    AssertMatchesOracle(store, oracle, 0);
+    assert(metrics.allocations == 0);
+    assert(metrics.mutation_written_bytes ==
+           (kDegree - kDeletes + batch.additions.size()) * sizeof(index_t));
+    store.Publish();
+}
+
+void TestBatchPreflightFailureIsAtomic() {
+    SourceLocalChunkStore store(2, ChunkArenaOptions{16, 16, 4, false});
+    const std::vector<index_t> source0{1, 2, 3, 4};
+    const std::vector<index_t> source1{5, 6, 7, 8};
+    store.LoadSource(0, source0);
+    store.LoadSource(1, source1);
+    store.FinalizeLoad();
+    const auto descriptor0 = store.Descriptor(0);
+    const auto descriptor1 = store.Descriptor(1);
+
+    TopologyMutationBatch batch;
+    batch.additions = {{0, 9}, {1, 10}};
+    bool failed = false;
+    try {
+        store.ApplyBatch(batch);
+    } catch (const std::runtime_error &) {
+        failed = true;
+    }
+    assert(failed);
+    assert(store.IsPublished());
+    assert(store.Neighbors(0) == source0);
+    assert(store.Neighbors(1) == source1);
+    assert(store.Descriptor(0).index == descriptor0.index);
+    assert(store.Descriptor(1).index == descriptor1.index);
+    assert(store.Descriptor(0).version == descriptor0.version);
+    assert(store.Descriptor(1).version == descriptor1.version);
+}
+
 } // namespace
 
 int main() {
@@ -153,6 +284,11 @@ int main() {
     TestHighDegreeExpansionAndMultipleEpochs();
     TestFixedArenaExhaustion();
     TestPinnedArena();
+    TestTwoPhaseBatchVisibility();
+    TestSingleCompactWithRepeatedAndMissingDeletes();
+    TestDirectCowRewriteAfterDeletes();
+    TestHighDegreeCompactWritesOnce();
+    TestBatchPreflightFailureIsAtomic();
     std::cout << "source_local_chunk_store_test: passed\n";
     return 0;
 }

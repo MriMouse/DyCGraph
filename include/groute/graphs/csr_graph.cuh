@@ -35,11 +35,14 @@
 #include <algorithm>
 #include <random>
 #include <cassert>
+#include <cstdio>
 #include <cstdint>
+#include <limits>
 #include <cuda_runtime.h>
 #include <groute/context.h>
 #include <groute/graphs/common.h>
 #include <groute/graphs/topology_contract.cuh>
+#include <groute/graphs/source_local_chunk_store.h>
 #include "./util.h"
 #include <cstring>
 #include<iostream>
@@ -1517,6 +1520,7 @@ namespace groute
                 struct groute::graphs::host::vertex_sync_element *sync_vertices_;
                 // bool *delta;
                 index_t *edges_;
+                index_t **chunk_slabs_ = nullptr;
                 index_t *weights_;
                 index_t *river;
                 index_t *river_low;
@@ -1577,7 +1581,9 @@ namespace groute
 //                     return __ldg(&(vertices_ + node + 1 - node_offset)->index);
 // #else
                     // printf("end edge node_id %d, end_edge_index %d \n",node,vertices_[node + 1 - node_offset].index);
-                    return sync_vertices_[node + 1 - node_offset].index;
+                    const index_t source = node - node_offset;
+                    return begin_edge(node, node_offset) +
+                           sync_vertices_[source].degree;
 // #endif
                 }
 
@@ -1586,8 +1592,15 @@ namespace groute
 // #if __CUDA_ARCH__ >= 320
                     // return __ldg(edges_ + edge);
 // #else
-                    return edges_[edge];
+                    const uint32_t slab_id = static_cast<uint32_t>(edge >> 32);
+                    const uint32_t offset = static_cast<uint32_t>(edge);
+                    return chunk_slabs_[slab_id][offset];
 // #endif
+                }
+
+                __device__ __forceinline__ index_t degree(index_t node) const
+                {
+                    return sync_vertices_[node].degree;
                 }
                 // __device__ __forceinline__ bool is_delta(index_t node) const
                 // {
@@ -1782,17 +1795,78 @@ namespace groute
         namespace single
         {
 
+            static __global__ void ScatterTopologyPatch(
+                    const sepgraph::topology::TopologyPatchRecord *patch,
+                    uint32_t count,
+                    host::vertex_sync_element *compat_descriptors,
+                    host::vertex_element *vertices,
+                    unsigned long long *cache_invalidations)
+            {
+                const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+                if (tid >= count) return;
+                const auto record = patch[tid];
+                compat_descriptors[record.source].index =
+                    (static_cast<uint64_t>(record.slab_id) << 32) |
+                    static_cast<uint32_t>(record.offset);
+                compat_descriptors[record.source].degree = record.degree;
+                if (vertices[record.source].cache) {
+                    vertices[record.source].cache = false;
+                    vertices[record.source].virtual_degree = 0;
+                    vertices[record.source].third_degree = 0;
+                    atomicAdd(cache_invalidations, 1ULL);
+                }
+            }
+
+            static __global__ void HashPublishedAdjacency(
+                    const sepgraph::topology::TopologyPatchRecord *patch,
+                    uint32_t count,
+                    index_t **slabs,
+                    sepgraph::topology::TopologyDeviceDigest *digests)
+            {
+                const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+                if (tid >= count) return;
+                const auto record = patch[tid];
+                uint64_t hash = 1469598103934665603ULL;
+                for (uint64_t offset = 0; offset < record.degree; ++offset) {
+                    hash ^= static_cast<uint64_t>(
+                        slabs[record.slab_id][record.offset + offset]);
+                    hash *= 1099511628211ULL;
+                }
+                hash ^= static_cast<uint64_t>(record.degree);
+                hash *= 1099511628211ULL;
+                digests[tid] = {record.degree, hash};
+            }
+
             /*
             * @brief A single GPU graph allocator (allocates a complete mirror graph at one GPU)
             */
             struct PMAGraphAllocator
             {
+                struct SparsePublicationResult {
+                    double publication_ms = 0.0;
+                    unsigned long long stale_rejects = 0;
+                    unsigned long long cache_invalidations = 0;
+                    unsigned long long hash_mismatches = 0;
+                };
+
                 typedef dev::PMAGraph DeviceObjectType;
                 // using WeightedDynT = groute::graphs::single::TestGraph<uint32_t,uint32_t,uint32_t,true>;
             public:
                 host::PMAGraph &m_origin_graph;
                 dev::PMAGraph m_dev_mirror;
                 bool m_on_pinned_memory;
+                sepgraph::topology::SourceLocalChunkStore *m_chunk_store = nullptr;
+                sepgraph::topology::TopologyPatchRecord *m_patch_device = nullptr;
+                sepgraph::topology::TopologyDeviceDigest *m_digest_device = nullptr;
+                size_t m_patch_capacity = 0;
+                unsigned long long *m_cache_invalidations = nullptr;
+                index_t **m_chunk_slabs_device = nullptr;
+                sepgraph::topology::TopologyPatchRecord *m_patch_host = nullptr;
+                cudaEvent_t m_publication_begin = nullptr;
+                cudaEvent_t m_publication_end = nullptr;
+                size_t m_publication_count = 0;
+                bool m_publication_pending = false;
+                bool m_publication_audit = false;
                 // WeightedDynT cache_g;
 
             public:
@@ -1811,6 +1885,226 @@ namespace groute
                     // FreeEveryThing();
                     AllocateDevMirror_node_update();
                     m_origin_graph.topology_epoch_.MarkPublished();
+                }
+
+                void BindChunkStore(
+                        sepgraph::topology::SourceLocalChunkStore &store)
+                {
+                    m_chunk_store = &store;
+                    const index_t nnodes = m_origin_graph.nnodes;
+                    std::vector<host::vertex_sync_element> compat(nnodes + 1);
+                    for (index_t source = 0; source < nnodes; ++source) {
+                        const auto &descriptor = store.Descriptor(source);
+                        compat[source].index = descriptor.slab_id ==
+                                sepgraph::topology::SourceLocalChunkStore::kInvalidSlab
+                            ? 0
+                            : (static_cast<uint64_t>(descriptor.slab_id) << 32) |
+                              static_cast<uint32_t>(descriptor.index);
+                        compat[source].degree = descriptor.degree;
+                    }
+                    compat[nnodes] = {0, 0};
+                    GROUTE_CUDA_CHECK(cudaMemcpy(m_dev_mirror.sync_vertices_, compat.data(),
+                        sizeof(compat[0]) * (nnodes + 1), cudaMemcpyHostToDevice));
+                    std::printf("[D1-TOPOLOGY-MEMORY] full_extended_descriptor_bytes=0 recovered_bytes=%llu legacy_descriptor_bytes=%llu\n",
+                        static_cast<unsigned long long>(
+                            sizeof(sepgraph::topology::TopologyDescriptor) * nnodes),
+                        static_cast<unsigned long long>(
+                            sizeof(host::vertex_sync_element) * (nnodes + 1)));
+
+                    std::vector<index_t *> mapped_slabs(store.SlabCount());
+                    for (uint32_t slab = 0; slab < store.SlabCount(); ++slab) {
+                        GROUTE_CUDA_CHECK(cudaHostGetDevicePointer(
+                            reinterpret_cast<void **>(&mapped_slabs[slab]),
+                            const_cast<index_t *>(store.SlabData(slab)), 0));
+                    }
+                    GROUTE_CUDA_CHECK(cudaMalloc(&m_chunk_slabs_device,
+                        sizeof(index_t *) * mapped_slabs.size()));
+                    GROUTE_CUDA_CHECK(cudaMemcpy(m_chunk_slabs_device,
+                        mapped_slabs.data(), sizeof(index_t *) * mapped_slabs.size(),
+                        cudaMemcpyHostToDevice));
+                    m_dev_mirror.chunk_slabs_ = m_chunk_slabs_device;
+                    GROUTE_CUDA_CHECK(cudaMalloc(&m_cache_invalidations,
+                        sizeof(unsigned long long)));
+                }
+
+                void ReserveSparsePublicationCapacity(size_t capacity,
+                                                      bool reserve_audit)
+                {
+                    if (m_patch_capacity != 0 || m_patch_host != nullptr ||
+                        m_patch_device != nullptr || m_digest_device != nullptr) {
+                        std::fprintf(stderr,
+                            "[D2-PUBLISH] protocol_error=publication_capacity_already_reserved\n");
+                        std::abort();
+                    }
+                    m_patch_capacity = capacity;
+                    if (capacity != 0) {
+                        GROUTE_CUDA_CHECK(cudaHostAlloc(
+                            reinterpret_cast<void **>(&m_patch_host),
+                            sizeof(*m_patch_host) * capacity, cudaHostAllocDefault));
+                        GROUTE_CUDA_CHECK(cudaMalloc(&m_patch_device,
+                            sizeof(*m_patch_device) * capacity));
+                        if (reserve_audit) {
+                            GROUTE_CUDA_CHECK(cudaMalloc(&m_digest_device,
+                                sizeof(*m_digest_device) * capacity));
+                        }
+                    }
+                    GROUTE_CUDA_CHECK(cudaEventCreate(&m_publication_begin));
+                    GROUTE_CUDA_CHECK(cudaEventCreate(&m_publication_end));
+                    std::printf("[D2-PUBLICATION-RESERVE] patch_capacity_records=%llu pinned_patch_bytes=%llu device_patch_bytes=%llu device_digest_bytes=%llu audit=%u\n",
+                        static_cast<unsigned long long>(capacity),
+                        static_cast<unsigned long long>(
+                            sizeof(*m_patch_host) * capacity),
+                        static_cast<unsigned long long>(
+                            sizeof(*m_patch_device) * capacity),
+                        static_cast<unsigned long long>(
+                            reserve_audit ? sizeof(*m_digest_device) * capacity : 0),
+                        reserve_audit ? 1U : 0U);
+                }
+
+                void PublishSparse(const std::vector<index_t> &sources,
+                                   cudaStream_t stream,
+                                   bool audit)
+                {
+                    if (m_publication_pending) {
+                        std::fprintf(stderr,
+                            "[D2-PUBLISH] protocol_error=publication_already_pending\n");
+                        std::abort();
+                    }
+                    if (m_chunk_store == nullptr || m_chunk_store->IsPublished() ||
+                        m_chunk_store->PendingEpoch() !=
+                            m_chunk_store->PublishedEpoch() + 1) {
+                        std::fprintf(stderr, "[D1-PUBLISH] protocol_error=invalid_pending_epoch pending=%llu published=%llu\n",
+                            static_cast<unsigned long long>(
+                                m_chunk_store == nullptr ? 0 : m_chunk_store->PendingEpoch()),
+                            static_cast<unsigned long long>(
+                                m_chunk_store == nullptr ? 0 : m_chunk_store->PublishedEpoch()));
+                        std::abort();
+                    }
+                    for (size_t i = 0; i < sources.size(); ++i) {
+                        if (sources[i] >= m_origin_graph.nnodes ||
+                            (i != 0 && sources[i - 1] >= sources[i])) {
+                            std::fprintf(stderr, "[D1-PUBLISH] protocol_error=invalid_patch_sources index=%llu source=%u\n",
+                                static_cast<unsigned long long>(i), sources[i]);
+                            std::abort();
+                        }
+                        const auto &descriptor = m_chunk_store->Descriptor(sources[i]);
+                        const bool invalid_slab = descriptor.slab_id ==
+                            sepgraph::topology::SourceLocalChunkStore::kInvalidSlab;
+                        if (descriptor.version != m_chunk_store->PendingEpoch() ||
+                            (descriptor.degree != 0 && invalid_slab) ||
+                            (!invalid_slab &&
+                             (descriptor.slab_id >= m_chunk_store->SlabCount() ||
+                              descriptor.index > std::numeric_limits<uint32_t>::max()))) {
+                            std::fprintf(stderr, "[D1-PUBLISH] protocol_error=invalid_authoritative_descriptor source=%u version=%u degree=%u slab=%u\n",
+                                sources[i], descriptor.version, descriptor.degree,
+                                descriptor.slab_id);
+                            std::abort();
+                        }
+                    }
+                    if (sources.size() > m_patch_capacity ||
+                        (audit && sources.size() != 0 && m_digest_device == nullptr)) {
+                        std::fprintf(stderr,
+                            "[D2-PUBLISH] protocol_error=publication_capacity_exceeded records=%llu capacity=%llu audit=%u\n",
+                            static_cast<unsigned long long>(sources.size()),
+                            static_cast<unsigned long long>(m_patch_capacity),
+                            audit ? 1U : 0U);
+                        std::abort();
+                    }
+                    for (size_t i = 0; i < sources.size(); ++i) {
+                        const index_t source = sources[i];
+                        const auto &descriptor = m_chunk_store->Descriptor(source);
+                        m_patch_host[i] = {source, descriptor.slab_id, descriptor.index,
+                                           descriptor.degree, descriptor.version};
+                    }
+                    std::printf("[D1-SPARSE-STAGING] patch_capacity_records=%llu patch_bytes=%llu digest_bytes=%llu total_bytes=%llu\n",
+                        static_cast<unsigned long long>(m_patch_capacity),
+                        static_cast<unsigned long long>(
+                            sizeof(sepgraph::topology::TopologyPatchRecord) * m_patch_capacity),
+                        static_cast<unsigned long long>(
+                            m_digest_device == nullptr ? 0 :
+                            sizeof(sepgraph::topology::TopologyDeviceDigest) * m_patch_capacity),
+                        static_cast<unsigned long long>(
+                            sizeof(sepgraph::topology::TopologyPatchRecord) *
+                                m_patch_capacity +
+                            (m_digest_device == nullptr ? 0 :
+                             sizeof(sepgraph::topology::TopologyDeviceDigest) *
+                                m_patch_capacity)));
+                    m_publication_count = sources.size();
+                    m_publication_audit = audit;
+                    m_publication_pending = true;
+                    GROUTE_CUDA_CHECK(cudaEventRecord(m_publication_begin, stream));
+                    GROUTE_CUDA_CHECK(cudaMemsetAsync(m_cache_invalidations, 0,
+                        sizeof(unsigned long long), stream));
+                    if (m_publication_count != 0) {
+                        GROUTE_CUDA_CHECK(cudaMemcpyAsync(m_patch_device, m_patch_host,
+                            sizeof(*m_patch_host) * m_publication_count,
+                            cudaMemcpyHostToDevice, stream));
+                        ScatterTopologyPatch<<<(m_publication_count + 255) / 256, 256, 0, stream>>>(
+                            m_patch_device, m_publication_count, m_dev_mirror.sync_vertices_,
+                            m_dev_mirror.vertices_, m_cache_invalidations);
+                        if (audit) {
+                            HashPublishedAdjacency<<<(m_publication_count + 255) / 256,
+                                256, 0, stream>>>(m_patch_device, m_publication_count,
+                                m_chunk_slabs_device, m_digest_device);
+                        }
+                    }
+                    GROUTE_CUDA_CHECK(cudaEventRecord(m_publication_end, stream));
+                    m_chunk_store->Publish();
+                }
+
+                void WaitForSparsePublication(cudaStream_t consumer_stream) const
+                {
+                    if (!m_publication_pending) {
+                        std::fprintf(stderr,
+                            "[D2-PUBLISH] protocol_error=no_pending_publication_wait\n");
+                        std::abort();
+                    }
+                    GROUTE_CUDA_CHECK(cudaStreamWaitEvent(
+                        consumer_stream, m_publication_end, 0));
+                }
+
+                SparsePublicationResult CompleteSparsePublication()
+                {
+                    if (!m_publication_pending) {
+                        std::fprintf(stderr,
+                            "[D2-PUBLISH] protocol_error=no_pending_publication_complete\n");
+                        std::abort();
+                    }
+                    const cudaError_t ready = cudaEventQuery(m_publication_end);
+                    if (ready != cudaSuccess) {
+                        std::fprintf(stderr,
+                            "[D2-PUBLISH] protocol_error=completion_before_existing_sync cuda_error=%s\n",
+                            cudaGetErrorString(ready));
+                        std::abort();
+                    }
+                    SparsePublicationResult result;
+                    float elapsed = 0.0f;
+                    GROUTE_CUDA_CHECK(cudaEventElapsedTime(
+                        &elapsed, m_publication_begin, m_publication_end));
+                    result.publication_ms = elapsed;
+                    GROUTE_CUDA_CHECK(cudaMemcpy(&result.cache_invalidations,
+                        m_cache_invalidations, sizeof(result.cache_invalidations),
+                        cudaMemcpyDeviceToHost));
+                    if (m_publication_audit && m_publication_count != 0) {
+                        std::vector<sepgraph::topology::TopologyDeviceDigest> gpu_digests(
+                            m_publication_count);
+                        GROUTE_CUDA_CHECK(cudaMemcpy(gpu_digests.data(), m_digest_device,
+                            sizeof(gpu_digests[0]) * gpu_digests.size(),
+                            cudaMemcpyDeviceToHost));
+                        for (size_t i = 0; i < m_publication_count; ++i) {
+                            const auto &descriptor = m_chunk_store->Descriptor(
+                                m_patch_host[i].source);
+                            if (descriptor.degree != gpu_digests[i].degree ||
+                                m_chunk_store->OrderedHash(m_patch_host[i].source) !=
+                                    gpu_digests[i].ordered_hash) {
+                                ++result.hash_mismatches;
+                            }
+                        }
+                    }
+                    m_publication_pending = false;
+                    m_publication_count = 0;
+                    m_publication_audit = false;
+                    return result;
                 }
 
                 const dev::PMAGraph &DeviceObject() const
@@ -1959,7 +2253,9 @@ namespace groute
 
                 void AllocateDevMirror_edge_zero()
                 {
-                    GROUTE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&m_dev_mirror.edge_dst_zc, (void *)m_origin_graph.edges_, 0));
+                    if (m_chunk_store == nullptr) {
+                        GROUTE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&m_dev_mirror.edge_dst_zc, (void *)m_origin_graph.edges_, 0));
+                    }
                 }
                 void AllocateDevMirror_weight_zero()
                 {
@@ -1990,6 +2286,13 @@ namespace groute
                     // GROUTE_CUDA_CHECK(cudaFree(m_dev_mirror.row_start));
                     GROUTE_CUDA_CHECK(cudaFree(m_dev_mirror.vertices_));
                     GROUTE_CUDA_CHECK(cudaFree(m_dev_mirror.sync_vertices_));
+                    if (m_chunk_slabs_device != nullptr) cudaFree(m_chunk_slabs_device);
+                    if (m_patch_host != nullptr) cudaFreeHost(m_patch_host);
+                    if (m_patch_device != nullptr) cudaFree(m_patch_device);
+                    if (m_digest_device != nullptr) cudaFree(m_digest_device);
+                    if (m_cache_invalidations != nullptr) cudaFree(m_cache_invalidations);
+                    if (m_publication_begin != nullptr) cudaEventDestroy(m_publication_begin);
+                    if (m_publication_end != nullptr) cudaEventDestroy(m_publication_end);
                     m_dev_mirror.sync_vertices_ = nullptr;
                     m_dev_mirror.vertices_ = nullptr;
                     m_dev_mirror.edges_ = nullptr;

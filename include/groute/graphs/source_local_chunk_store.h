@@ -134,6 +134,26 @@ public:
 
     ChunkStoreBatchMetrics ApplyBatch(const TopologyMutationBatch &batch) {
         EnsureNoPendingBatch();
+        return ApplyMutationPhase(batch, true);
+    }
+
+    // Deletion repair needs the host graph after deletions but before additions.
+    // This appends the addition phase to the same unpublished topology epoch.
+    ChunkStoreBatchMetrics ApplyPendingAdditions(
+            const TopologyMutationBatch &additions) {
+        if (!batch_pending_) {
+            throw std::logic_error("no pending chunk-store batch");
+        }
+        if (!additions.deletions.empty()) {
+            throw std::invalid_argument(
+                "pending chunk-store phase accepts additions only");
+        }
+        return ApplyMutationPhase(additions, false);
+    }
+
+private:
+    ChunkStoreBatchMetrics ApplyMutationPhase(const TopologyMutationBatch &batch,
+                                              bool begin_epoch) {
         const auto group_begin = Clock::now();
         std::unordered_map<index_t, SourceMutations> grouped;
         grouped.reserve(batch.deletions.size() + batch.additions.size());
@@ -149,7 +169,10 @@ public:
         std::sort(sources.begin(), sources.end());
 
         ChunkStoreBatchMetrics metrics;
-        metrics.epoch = published_epoch_ + 1;
+        metrics.epoch = begin_epoch ? published_epoch_ + 1 : pending_epoch_;
+        if (metrics.epoch > std::numeric_limits<uint32_t>::max()) {
+            throw std::overflow_error("topology source version exhausted");
+        }
         metrics.touched_sources = sources.size();
         metrics.group_ms = Milliseconds(group_begin, Clock::now());
 
@@ -166,54 +189,51 @@ public:
                 continue;
             }
 
-            std::vector<index_t> updated = Neighbors(source);
-            uint64_t successful_deletes = 0;
-            for (const index_t destination : group_it->second.deletions) {
-                const auto position = std::find(
-                    updated.begin(), updated.end(), destination);
-                if (position == updated.end()) {
-                    ++metrics.missing_deletes;
-                } else {
-                    updated.erase(position);
-                    --edge_delta;
-                    ++successful_deletes;
-                }
-            }
+            PreparedSource update;
+            update.source = source;
+            BuildDeletionPlan(source, group_it->second.deletions, update);
+            const uint64_t successful_deletes = update.successful_deletes;
+            metrics.missing_deletes +=
+                group_it->second.deletions.size() - successful_deletes;
+            edge_delta -= static_cast<int64_t>(successful_deletes);
             edge_delta += group_it->second.additions.size();
-            const uint64_t final_degree =
-                updated.size() + group_it->second.additions.size();
+            const uint64_t final_degree = sources_[source].descriptor.degree -
+                successful_deletes + group_it->second.additions.size();
+            if (final_degree > std::numeric_limits<index_t>::max()) {
+                throw std::overflow_error("source degree exceeds index_t");
+            }
             if (successful_deletes == 0 && group_it->second.additions.empty()) continue;
 
             ++metrics.changed_sources;
-            PreparedSource update;
-            update.source = source;
+            update.final_degree = final_degree;
             if (final_degree > sources_[source].block.capacity) {
                 update.expansion = true;
-                updated.insert(updated.end(),
-                               group_it->second.additions.begin(),
-                               group_it->second.additions.end());
-                update.expanded_neighbors = std::move(updated);
                 required_allocations.push_back(RequiredChunkCapacity(
                     final_degree, options_.minimum_chunk_edges));
             }
             prepared.push_back(std::move(update));
         }
         EnsureAllocationsFit(required_allocations);
-        pending_epoch_ = metrics.epoch;
-        batch_pending_ = true;
+        if (begin_epoch) {
+            pending_epoch_ = metrics.epoch;
+            batch_pending_ = true;
+        }
         logical_edge_count_ = static_cast<uint64_t>(
             static_cast<int64_t>(logical_edge_count_) + edge_delta);
-        for (const auto &update : prepared) {
+        for (auto &update : prepared) {
             if (update.expansion) {
-                ExpandSource(update.source, update.expanded_neighbors, metrics);
+                RewriteSourceToNewBlock(
+                    update, grouped.at(update.source), metrics);
             } else {
-                MutateSourceInPlace(
-                    update.source, grouped.at(update.source), metrics);
+                CompactSourceInPlace(
+                    update, grouped.at(update.source), metrics);
             }
         }
         metrics.mutation_ms = Milliseconds(mutation_begin, Clock::now());
         return metrics;
     }
+
+public:
 
     uint64_t Publish() {
         if (!batch_pending_) throw std::logic_error("no chunk-store batch to publish");
@@ -252,6 +272,22 @@ public:
 
     SourceTopologyDigest Digest(index_t source) const {
         return DigestSource(source, Neighbors(source));
+    }
+
+    uint64_t OrderedHash(index_t source) const {
+        const SourceState &state = Source(source);
+        uint64_t hash = 1469598103934665603ULL;
+        if (state.descriptor.degree != 0) {
+            const index_t *edges = slabs_.at(state.descriptor.slab_id).data +
+                                   state.descriptor.index;
+            for (uint64_t offset = 0; offset < state.descriptor.degree; ++offset) {
+                hash ^= static_cast<uint64_t>(edges[offset]);
+                hash *= 1099511628211ULL;
+            }
+        }
+        hash ^= static_cast<uint64_t>(state.descriptor.degree);
+        hash *= 1099511628211ULL;
+        return hash;
     }
 
     const TopologyDescriptor &Descriptor(index_t source) const {
@@ -307,10 +343,22 @@ private:
         std::vector<index_t> additions;
     };
 
+    struct DeletionRun {
+        index_t destination = 0;
+        uint64_t requested = 0;
+        uint64_t matched = 0;
+        uint64_t removed = 0;
+        uint64_t first_match_offset = std::numeric_limits<uint64_t>::max();
+    };
+
     struct PreparedSource {
         index_t source = 0;
         bool expansion = false;
-        std::vector<index_t> expanded_neighbors;
+        bool has_deletions = false;
+        uint64_t successful_deletes = 0;
+        uint64_t final_degree = 0;
+        DeletionRun first_deletion;
+        std::vector<DeletionRun> remaining_deletions;
     };
 
     static double Milliseconds(Clock::time_point begin, Clock::time_point end) {
@@ -436,49 +484,194 @@ private:
         stats_.retired_capacity_edges += block.capacity;
     }
 
-    void MutateSourceInPlace(index_t source,
-                             const SourceMutations &mutations,
-                             ChunkStoreBatchMetrics &metrics) {
-        SourceState &state = Source(source);
-        index_t *edges = state.block.capacity == 0 ? nullptr : BlockData(state.block);
-        uint64_t degree = state.descriptor.degree;
-        for (const index_t destination : mutations.deletions) {
-            if (degree == 0) continue;
-            index_t *position = std::find(edges, edges + degree, destination);
-            if (position == edges + degree) continue;
-            const uint64_t trailing = (edges + degree) - (position + 1);
-            if (trailing != 0) {
-                std::memmove(position, position + 1, trailing * sizeof(index_t));
+    static DeletionRun *FindDeletionRun(
+            PreparedSource &update,
+            index_t destination) {
+        if (!update.has_deletions) return nullptr;
+        if (update.first_deletion.destination == destination) {
+            return &update.first_deletion;
+        }
+        const auto found = std::lower_bound(
+            update.remaining_deletions.begin(),
+            update.remaining_deletions.end(), destination,
+            [](const DeletionRun &run, index_t value) {
+                return run.destination < value;
+            });
+        return found != update.remaining_deletions.end() &&
+                found->destination == destination
+            ? &*found
+            : nullptr;
+    }
+
+    void BuildDeletionPlan(index_t source,
+                           const std::vector<index_t> &deletions,
+                           PreparedSource &update) const {
+        if (deletions.empty()) return;
+        update.has_deletions = true;
+        const SourceState &state = Source(source);
+        const index_t *edges = state.descriptor.degree == 0
+            ? nullptr
+            : slabs_.at(state.descriptor.slab_id).data + state.descriptor.index;
+        if (deletions.size() == 1) {
+            update.first_deletion = {deletions.front(), 1, 0, 0};
+            if (state.descriptor.degree != 0) {
+                const index_t *found = std::find(
+                    edges, edges + state.descriptor.degree,
+                    deletions.front());
+                if (found != edges + state.descriptor.degree) {
+                    update.first_deletion.matched = 1;
+                    update.first_deletion.first_match_offset = found - edges;
+                    update.successful_deletes = 1;
+                }
             }
-            metrics.mutation_written_bytes += trailing * sizeof(index_t);
-            --degree;
+            return;
+        } else {
+            std::vector<index_t> sorted(deletions);
+            std::sort(sorted.begin(), sorted.end());
+            update.first_deletion = {sorted.front(), 1, 0, 0};
+            update.remaining_deletions.reserve(sorted.size() - 1);
+            for (size_t i = 1; i < sorted.size(); ++i) {
+                const index_t destination = sorted[i];
+                if (destination == update.first_deletion.destination) {
+                    ++update.first_deletion.requested;
+                } else if (update.remaining_deletions.empty() ||
+                           update.remaining_deletions.back().destination !=
+                               destination) {
+                    update.remaining_deletions.push_back(
+                        {destination, 1, 0, 0});
+                } else {
+                    ++update.remaining_deletions.back().requested;
+                }
+            }
+        }
+
+        for (uint64_t offset = 0; offset < state.descriptor.degree; ++offset) {
+            DeletionRun *run = FindDeletionRun(update, edges[offset]);
+            if (run != nullptr && run->matched < run->requested) {
+                if (run->matched == 0) run->first_match_offset = offset;
+                ++run->matched;
+                ++update.successful_deletes;
+                if (update.successful_deletes == deletions.size()) break;
+            }
+        }
+    }
+
+    static bool ShouldDelete(PreparedSource &update,
+                             index_t destination) {
+        DeletionRun *run = FindDeletionRun(update, destination);
+        if (run == nullptr || run->removed == run->matched) return false;
+        ++run->removed;
+        return true;
+    }
+
+    void CompactSourceInPlace(PreparedSource &update,
+                              const SourceMutations &mutations,
+                              ChunkStoreBatchMetrics &metrics) {
+        SourceState &state = Source(update.source);
+        index_t *edges = state.block.capacity == 0 ? nullptr : BlockData(state.block);
+        const uint64_t old_degree = state.descriptor.degree;
+        uint64_t write_offset = old_degree;
+        if (update.successful_deletes == 1 &&
+            update.first_deletion.requested == 1 &&
+            update.remaining_deletions.empty()) {
+            const uint64_t deleted_offset =
+                update.first_deletion.first_match_offset;
+            const uint64_t trailing = old_degree - deleted_offset - 1;
+            if (trailing != 0) {
+                std::memmove(edges + deleted_offset, edges + deleted_offset + 1,
+                             trailing * sizeof(index_t));
+                metrics.mutation_written_bytes += trailing * sizeof(index_t);
+            }
+            write_offset = old_degree - 1;
+            update.first_deletion.removed = 1;
+        } else if (update.successful_deletes != 0) {
+            write_offset = 0;
+            for (uint64_t read_offset = 0; read_offset < old_degree;
+                 ++read_offset) {
+                const index_t destination = edges[read_offset];
+                if (ShouldDelete(update, destination)) continue;
+                if (write_offset != read_offset) {
+                    edges[write_offset] = destination;
+                    metrics.mutation_written_bytes += sizeof(index_t);
+                }
+                ++write_offset;
+            }
         }
         if (!mutations.additions.empty()) {
-            std::memcpy(edges + degree, mutations.additions.data(),
+            std::memcpy(edges + write_offset, mutations.additions.data(),
                         mutations.additions.size() * sizeof(index_t));
             metrics.mutation_written_bytes +=
                 mutations.additions.size() * sizeof(index_t);
-            degree += mutations.additions.size();
+            write_offset += mutations.additions.size();
         }
-        state.descriptor.degree = static_cast<index_t>(degree);
-        ++state.descriptor.version;
+        if (write_offset != update.final_degree) {
+            throw std::logic_error("source compaction degree mismatch");
+        }
+        state.descriptor.degree = static_cast<index_t>(write_offset);
+        state.descriptor.version = static_cast<uint32_t>(pending_epoch_);
     }
 
-    void ExpandSource(index_t source,
-                      const std::vector<index_t> &neighbors,
-                      ChunkStoreBatchMetrics &metrics) {
-        SourceState &state = Source(source);
+    void RewriteSourceToNewBlock(PreparedSource &update,
+                                 const SourceMutations &mutations,
+                                 ChunkStoreBatchMetrics &metrics) {
+        SourceState &state = Source(update.source);
         const uint64_t capacity = RequiredChunkCapacity(
-            neighbors.size(), options_.minimum_chunk_edges);
+            update.final_degree, options_.minimum_chunk_edges);
         const auto allocation_begin = Clock::now();
         const Allocation allocation = Allocate(capacity);
         metrics.allocation_ms += Milliseconds(allocation_begin, Clock::now());
         ++metrics.allocations;
         if (allocation.reused) ++metrics.reused_blocks;
-        metrics.relocation_copied_bytes +=
-            static_cast<uint64_t>(state.descriptor.degree) * sizeof(index_t);
-        std::memcpy(BlockData(allocation.block), neighbors.data(),
-                    neighbors.size() * sizeof(index_t));
+
+        const index_t *old_edges = state.descriptor.degree == 0
+            ? nullptr
+            : BlockData(state.block);
+        index_t *new_edges = BlockData(allocation.block);
+        uint64_t write_offset = state.descriptor.degree;
+        if (update.successful_deletes == 0) {
+            if (write_offset != 0) {
+                std::memcpy(new_edges, old_edges,
+                            write_offset * sizeof(index_t));
+            }
+        } else if (update.successful_deletes == 1 &&
+                   update.first_deletion.requested == 1 &&
+                   update.remaining_deletions.empty()) {
+            const uint64_t deleted_offset =
+                update.first_deletion.first_match_offset;
+            const uint64_t trailing = state.descriptor.degree -
+                deleted_offset - 1;
+            if (deleted_offset != 0) {
+                std::memcpy(new_edges, old_edges,
+                            deleted_offset * sizeof(index_t));
+            }
+            if (trailing != 0) {
+                std::memcpy(new_edges + deleted_offset,
+                            old_edges + deleted_offset + 1,
+                            trailing * sizeof(index_t));
+            }
+            --write_offset;
+            update.first_deletion.removed = 1;
+        } else {
+            write_offset = 0;
+            for (uint64_t read_offset = 0;
+                 read_offset < state.descriptor.degree; ++read_offset) {
+                const index_t destination = old_edges[read_offset];
+                if (ShouldDelete(update, destination)) continue;
+                new_edges[write_offset++] = destination;
+            }
+        }
+        metrics.relocation_copied_bytes += write_offset * sizeof(index_t);
+        metrics.mutation_written_bytes += write_offset * sizeof(index_t);
+        if (!mutations.additions.empty()) {
+            std::memcpy(new_edges + write_offset, mutations.additions.data(),
+                        mutations.additions.size() * sizeof(index_t));
+            metrics.mutation_written_bytes +=
+                mutations.additions.size() * sizeof(index_t);
+            write_offset += mutations.additions.size();
+        }
+        if (write_offset != update.final_degree) {
+            throw std::logic_error("source rewrite degree mismatch");
+        }
         if (state.block.capacity != 0) {
             Retire(state.block, pending_epoch_);
             ++metrics.retired_blocks;
@@ -486,9 +679,8 @@ private:
         state.block = allocation.block;
         state.descriptor.index = allocation.block.offset;
         state.descriptor.slab_id = allocation.block.slab_id;
-        state.descriptor.degree = static_cast<index_t>(neighbors.size());
-        ++state.descriptor.version;
-        metrics.mutation_written_bytes += neighbors.size() * sizeof(index_t);
+        state.descriptor.degree = static_cast<index_t>(write_offset);
+        state.descriptor.version = static_cast<uint32_t>(pending_epoch_);
     }
 
     std::vector<SourceState> sources_;

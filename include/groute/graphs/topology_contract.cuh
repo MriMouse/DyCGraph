@@ -27,12 +27,27 @@ struct TopologyDescriptor {
     uint32_t version;
 };
 
+struct TopologyPatchRecord {
+    index_t source;
+    uint32_t slab_id;
+    uint64_t offset;
+    index_t degree;
+    uint32_t version;
+};
+
+struct TopologyDeviceDigest {
+    uint64_t degree;
+    uint64_t ordered_hash;
+};
+
 static_assert(std::is_standard_layout<TopologyDescriptor>::value,
               "topology descriptors must be transferable as POD records");
 static_assert(std::is_trivially_copyable<TopologyDescriptor>::value,
               "topology descriptors must be transferable as POD records");
 static_assert(sizeof(TopologyDescriptor) == 24,
               "topology descriptor ABI changed; update host/device publication together");
+static_assert(sizeof(TopologyPatchRecord) == 24,
+              "sparse topology patch ABI must remain compact");
 
 template <typename Descriptor, typename Edge>
 struct ContiguousAdjacencyView {
