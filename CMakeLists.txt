@@ -119,3 +119,50 @@ set_tests_properties(
 add_executable(source_local_chunk_store_test tests/source_local_chunk_store_test.cpp)
 target_link_libraries(source_local_chunk_store_test ${CUDA_LIBRARIES})
 add_test(NAME source_local_chunk_store_test COMMAND source_local_chunk_store_test)
+
+add_executable(dual_domain_event_runtime_test tests/dual_domain_event_runtime_test.cpp)
+target_link_libraries(dual_domain_event_runtime_test pthread)
+add_test(NAME dual_domain_event_runtime_test COMMAND dual_domain_event_runtime_test)
+
+add_executable(persistent_dependency_graph_test tests/persistent_dependency_graph_test.cpp)
+add_test(NAME persistent_dependency_graph_test COMMAND persistent_dependency_graph_test)
+
+add_executable(destination_local_dependency_store_test
+    tests/destination_local_dependency_store_test.cpp)
+target_link_libraries(destination_local_dependency_store_test ${CUDA_LIBRARIES})
+add_test(NAME destination_local_dependency_store_test
+    COMMAND destination_local_dependency_store_test)
+
+add_executable(dynamic_reverse_index_test tests/dynamic_reverse_index_test.cpp)
+target_link_libraries(dynamic_reverse_index_test pthread)
+add_test(NAME dynamic_reverse_index_test COMMAND dynamic_reverse_index_test)
+
+add_executable(owner_cost_planner_test tests/owner_cost_planner_test.cpp)
+add_test(NAME owner_cost_planner_test COMMAND owner_cost_planner_test)
+
+cuda_add_executable(dependency_warp_mapping_test
+    tests/dependency_warp_mapping_test.cu)
+target_link_libraries(dependency_warp_mapping_test ${CUDA_LIBRARIES})
+add_test(NAME dependency_warp_mapping_test COMMAND dependency_warp_mapping_test)
+
+add_executable(exact_source_frontier_test tests/exact_source_frontier_test.cpp)
+add_test(NAME exact_source_frontier_test COMMAND exact_source_frontier_test)
+
+cuda_add_executable(exact_source_executor_test tests/exact_source_executor_test.cu)
+target_link_libraries(exact_source_executor_test ${CUDA_LIBRARIES})
+add_test(NAME exact_source_executor_test COMMAND exact_source_executor_test)
+
+cuda_add_executable(owner_planner_calibration tests/owner_planner_calibration.cu)
+target_link_libraries(owner_planner_calibration ${CUDA_LIBRARIES})
+add_test(NAME owner_planner_shadow_fixture
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/evaluate_e4r3_shadow.py
+        --calibration ${PROJECT_SOURCE_DIR}/tests/fixtures/owner_planner_calibration.tsv
+        --topology ${PROJECT_SOURCE_DIR}/tests/fixtures/owner_planner_topology.tsv
+        --work ${PROJECT_SOURCE_DIR}/tests/fixtures/owner_planner_work.tsv
+        --dataset fixture
+        --output ${PROJECT_BINARY_DIR}/owner_planner_shadow_fixture.tsv)
+set_tests_properties(owner_planner_shadow_fixture PROPERTIES
+    PASS_REGULAR_EXPRESSION "")
+add_test(NAME owner_planner_shadow_decision
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/check_owner_planner_decision.py
+        ${PROJECT_BINARY_DIR}/owner_planner_shadow_fixture.tsv.decision full)

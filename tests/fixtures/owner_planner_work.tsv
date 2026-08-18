@@ -1,0 +1,2 @@
+cpu_scan_edges	cpu_scan_share	gpu_to_cpu_success	cpu_to_gpu_success
+80	0.08	1	1

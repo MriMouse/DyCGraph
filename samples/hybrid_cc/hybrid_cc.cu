@@ -16,6 +16,8 @@
 
 DEFINE_bool(sparse, false, "use async/push/dd + fusion for high-diameter");
 DEFINE_int32(sssp_cpu_partition_capacity, 0, "Compatibility flag; SSSP insertion only");
+DEFINE_string(sssp_cpu_domain_map, "", "Compatibility flag; SSSP insertion only");
+DEFINE_string(e0b_trace_file, "", "Compatibility flag; SSSP insertion only");
 DECLARE_bool(non_atomic);
 DECLARE_int32(top_ranks);
 DECLARE_bool(print_ranks);

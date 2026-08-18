@@ -13,6 +13,7 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <thread>
+#include <cooperative_groups.h>
 #include <thrust/sort.h>
 #include <cub/cub.cuh>
 #include <framework/common.h>
@@ -22,6 +23,7 @@
 #include <framework/variants/driver.cuh>
 #include <framework/hybrid_policy.h>
 #include <framework/dynamic_reverse_index.h>
+#include <framework/dual_domain_event_runtime.h>
 #include <framework/topology_replay.h>
 #include <framework/algo_variants.cuh>
 #include <utils/cuda_utils.h>
@@ -66,6 +68,8 @@ DECLARE_bool(weight);
 DECLARE_bool(check);
 DECLARE_bool(topology_replay_audit);
 DECLARE_int32(sssp_cpu_partition_capacity);
+DECLARE_string(sssp_cpu_domain_map);
+DECLARE_string(e0b_trace_file);
 
 namespace sepgraph {
     namespace engine {
@@ -93,6 +97,21 @@ namespace sepgraph {
             index_t parent;
         };
 
+        enum class RepairBoundaryEventKind : uint8_t {
+            Invalidation = 0,
+            Replacement = 1
+        };
+
+        template<typename TValue>
+        struct RepairBoundaryEvent {
+            index_t source;
+            TValue value;
+            index_t parent;
+            uint32_t epoch;
+            uint32_t version;
+            RepairBoundaryEventKind kind;
+        };
+
         enum class PartitionOwner : uint8_t {
             GPU = 0,
             CPU = 1
@@ -108,13 +127,18 @@ namespace sepgraph {
                                              TBuffer *node_buffer,
                                              TValue *node_parent,
                                              TValue infinity,
-                                             unsigned int *changed_count) {
+                                             const uint8_t *cpu_owner_flags,
+                                             unsigned int *changed_count,
+                                             index_t *changed_vertices) {
             static_assert(sizeof(TValue) == sizeof(unsigned int),
                           "GPU affected repair requires 32-bit values");
             const uint32_t tid = TID_1D;
             const uint32_t nthreads = TOTAL_THREADS_1D;
             for (uint32_t i = tid; i < affected_count; i += nthreads) {
                 const index_t dst = affected_vertices[i];
+                if (cpu_owner_flags != nullptr && cpu_owner_flags[dst]) {
+                    continue;
+                }
                 TValue best = static_cast<TValue>(atomicAdd(
                     reinterpret_cast<unsigned int *>(&node_value[dst]), 0));
                 index_t best_parent = node_parent[dst];
@@ -142,7 +166,10 @@ namespace sepgraph {
                                static_cast<unsigned int>(best));
                     atomicExch(reinterpret_cast<unsigned int *>(&node_parent[dst]),
                                static_cast<unsigned int>(best_parent));
-                    atomicAdd(changed_count, 1u);
+                    const unsigned int position = atomicAdd(changed_count, 1u);
+                    if (changed_vertices != nullptr) {
+                        changed_vertices[position] = dst;
+                    }
                 }
             }
         }
@@ -189,13 +216,15 @@ namespace sepgraph {
                                               BitmapDeviceObject out_active,
                                               const index_t *segment_end_nodes,
                                               const uint8_t *segment_owners,
+                                              const uint8_t *cpu_home_flags,
                                               uint32_t segment_count,
                                               uint32_t epoch,
                                               uint32_t *node_state_epoch,
                                               unsigned long long *owner_reject_count,
                                               TValue *boundary_values,
                                               index_t *boundary_parents,
-                                              groute::dev::Queue<index_t> boundary_vertices) {
+                                              groute::dev::Queue<index_t> boundary_vertices,
+                                              groute::dev::Queue<index_t> exact_sources) {
             const uint32_t tid = TID_1D;
             const uint32_t nthreads = TOTAL_THREADS_1D;
             const uint32_t begin = work_size[0];
@@ -229,7 +258,10 @@ namespace sepgraph {
                     continue;
                 }
                 const TValue candidate = static_cast<TValue>(candidate_wide);
-                if (segment_owners[lo] == static_cast<uint8_t>(PartitionOwner::CPU)) {
+                const bool cpu_owned = cpu_home_flags != nullptr
+                    ? cpu_home_flags[edge.v] != 0
+                    : segment_owners[lo] == static_cast<uint8_t>(PartitionOwner::CPU);
+                if (cpu_owned) {
                     const TValue old = AtomicMinState(&boundary_values[edge.v], candidate);
                     if (candidate < old) {
                         boundary_parents[edge.v] = edge.u;
@@ -240,8 +272,11 @@ namespace sepgraph {
                 const TValue old_buffer = AtomicMinState(&node_buffer[edge.v], candidate);
                 if (candidate < old_buffer && candidate == node_buffer[edge.v]) {
                     atomicExch(reinterpret_cast<uint32_t *>(&node_parent[edge.v]), edge.u);
-                    node_state_epoch[edge.v] = epoch;
-                    out_active.set_bit_atomic(edge.v);
+                    const uint32_t seed_ticket = epoch << 16;
+                    if (atomicExch(node_state_epoch + edge.v, seed_ticket) !=
+                        seed_ticket) {
+                        exact_sources.append(edge.v);
+                    }
                 }
             }
         }
@@ -260,6 +295,20 @@ namespace sepgraph {
                 const index_t dst = vertices[i];
                 const TBuffer value = atomicExch(&boundary_values[dst], infinity);
                 proposals[i] = {dst, value, boundary_parents[dst]};
+            }
+        }
+
+        template<typename TValue, typename TBuffer>
+        __global__ void GatherSuccessfulPropagation(
+                const index_t *vertices,
+                uint32_t count,
+                const TValue *parents,
+                CpuRelaxProposal<TBuffer> *records) {
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            for (uint32_t i = tid; i < count; i += nthreads) {
+                const index_t dst = vertices[i];
+                records[i] = {dst, TBuffer{}, static_cast<index_t>(parents[dst])};
             }
         }
 
@@ -299,7 +348,212 @@ namespace sepgraph {
             }
         }
 
+        template<typename TValue, typename TBuffer>
+        __global__ void GatherCpuOwnedState(const index_t *vertices,
+                                            uint32_t count,
+                                            const TValue *values,
+                                            const TBuffer *buffers,
+                                            const TValue *parents,
+                                            TValue *cpu_values,
+                                            TBuffer *cpu_buffers,
+                                            TValue *cpu_parents) {
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            for (uint32_t i = tid; i < count; i += nthreads) {
+                const index_t vertex = vertices[i];
+                cpu_values[i] = values[vertex];
+                cpu_buffers[i] = buffers[vertex];
+                cpu_parents[i] = parents[vertex];
+            }
+        }
+
+        template<typename TAppInst, typename TPMAGraph, typename TValue,
+                 typename TBuffer>
+        __global__ void ExpandExactGpuSources(
+                TAppInst app_inst,
+                const index_t *sources,
+                uint32_t source_count,
+                TPMAGraph graph,
+                TValue *values,
+                TBuffer *buffers,
+                TValue *parents,
+                groute::dev::Queue<index_t> changed_vertices,
+                unsigned long long *processed_sources,
+                unsigned long long *processed_edges) {
+            const uint32_t source_index = blockIdx.x;
+            if (source_index >= source_count) return;
+            const index_t source = sources[source_index];
+            __shared__ TBuffer source_value;
+            __shared__ bool expand;
+            if (threadIdx.x == 0) {
+                const auto combined = app_inst.CombineValueBuffer(
+                    source, &values[source], &buffers[source]);
+                source_value = combined.first;
+                expand = combined.second;
+                if (expand) {
+                    atomicAdd(processed_sources, 1ULL);
+                    atomicAdd(processed_edges,
+                        static_cast<unsigned long long>(graph.degree(source)));
+                }
+            }
+            __syncthreads();
+            if (!expand) return;
+
+            const uint64_t edge_begin = graph.begin_edge(source);
+            const uint32_t degree = graph.degree(source);
+            for (uint32_t offset = threadIdx.x; offset < degree;
+                 offset += blockDim.x) {
+                const index_t destination = graph.edge_dest(edge_begin + offset);
+                if (destination == static_cast<index_t>(-1)) continue;
+                const index_t weight = (source + destination) % 128 + 1;
+                if (app_inst.AccumulateBuffer(source, destination, weight,
+                        &parents[destination], &buffers[destination], source_value)) {
+                    changed_vertices.append(destination);
+                }
+            }
+        }
+
+        template<typename TAppInst, typename TPMAGraph, typename TValue,
+                 typename TBuffer>
+        __global__ void RunExactGpuClosure(
+                TAppInst app_inst,
+                groute::dev::Queue<index_t> input,
+                groute::dev::Queue<index_t> output,
+                TPMAGraph graph,
+                TValue *values,
+                TBuffer *buffers,
+                TValue *parents,
+                uint32_t epoch,
+                uint32_t *node_state_epoch,
+                unsigned long long *metrics) {
+            cooperative_groups::grid_group grid =
+                cooperative_groups::this_grid();
+            __shared__ TBuffer source_value;
+            __shared__ bool expand;
+            while (true) {
+                grid.sync();
+                const uint32_t source_count = input.count();
+                if (source_count == 0) break;
+                if (blockIdx.x == 0 && threadIdx.x == 0) {
+                    output.reset();
+                    atomicAdd(metrics + 0,
+                        static_cast<unsigned long long>(source_count));
+                    atomicAdd(metrics + 3, 1ULL);
+                }
+                grid.sync();
+                for (uint32_t source_index = blockIdx.x;
+                     source_index < source_count;
+                     source_index += gridDim.x) {
+                    const index_t source = input.read(source_index);
+                    if (threadIdx.x == 0) {
+                        const auto combined = app_inst.CombineValueBuffer(
+                            source, &values[source], &buffers[source]);
+                        source_value = combined.first;
+                        expand = combined.second;
+                        if (expand) {
+                            atomicAdd(metrics + 1, 1ULL);
+                            atomicAdd(metrics + 2,
+                                static_cast<unsigned long long>(
+                                    graph.degree(source)));
+                        }
+                    }
+                    __syncthreads();
+                    if (expand) {
+                        const uint64_t edge_begin = graph.begin_edge(source);
+                        const uint32_t degree = graph.degree(source);
+                        for (uint32_t offset = threadIdx.x; offset < degree;
+                             offset += blockDim.x) {
+                            const index_t destination =
+                                graph.edge_dest(edge_begin + offset);
+                            if (destination == static_cast<index_t>(-1)) continue;
+                            const index_t weight =
+                                (source + destination) % 128 + 1;
+                            if (app_inst.AccumulateBuffer(source, destination,
+                                    weight, &parents[destination],
+                                    &buffers[destination], source_value)) {
+                                const uint32_t wave_ticket =
+                                    (epoch << 16) |
+                                    (static_cast<uint32_t>(metrics[3]) & 0xffffU);
+                                if (atomicExch(node_state_epoch + destination,
+                                        wave_ticket) != wave_ticket) {
+                                    output.append(destination);
+                                }
+                            }
+                        }
+                    }
+                    __syncthreads();
+                }
+                grid.sync();
+                if (blockIdx.x == 0 && threadIdx.x == 0) input.reset();
+                grid.sync();
+                const auto previous = input;
+                input = output;
+                output = previous;
+            }
+            grid.sync();
+            if (blockIdx.x == 0 && threadIdx.x == 0) {
+                input.reset();
+                output.reset();
+            }
+            grid.sync();
+        }
+
+        template<typename TValue, typename TBuffer>
+        __global__ void GatherSparseCpuState(CpuRelaxProposal<TBuffer> *states,
+                                             uint32_t count,
+                                             const TValue *values,
+                                             const TValue *parents) {
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            for (uint32_t i = tid; i < count; i += nthreads) {
+                const index_t vertex = states[i].dst;
+                states[i].value = static_cast<TBuffer>(values[vertex]);
+                states[i].parent = static_cast<index_t>(parents[vertex]);
+            }
+        }
+
+        template<typename TValue, typename TBuffer>
+        __global__ void ScatterCpuOwnedState(const index_t *vertices,
+                                             uint32_t count,
+                                             const TValue *cpu_values,
+                                             const TBuffer *cpu_buffers,
+                                             const TValue *cpu_parents,
+                                             TValue *values,
+                                             TBuffer *buffers,
+                                             TValue *parents) {
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            for (uint32_t i = tid; i < count; i += nthreads) {
+                const index_t vertex = vertices[i];
+                values[vertex] = cpu_values[i];
+                buffers[vertex] = cpu_buffers[i];
+                parents[vertex] = cpu_parents[i];
+            }
+        }
+
+        template<typename TValue, typename TBuffer>
+        __global__ void ScatterCpuDirtyState(
+                const CpuRelaxProposal<TBuffer> *states,
+                uint32_t count,
+                TValue *values,
+                TBuffer *buffers,
+                TValue *parents) {
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            for (uint32_t i = tid; i < count; i += nthreads) {
+                const CpuRelaxProposal<TBuffer> state = states[i];
+                values[state.dst] = static_cast<TValue>(state.value);
+                buffers[state.dst] = state.value;
+                parents[state.dst] = static_cast<TValue>(state.parent);
+            }
+        }
+
         struct InsertionRoundStats {
+            uint64_t cpu_removed_gpu_sources = 0;
+            uint64_t cpu_removed_gpu_source_edges = 0;
+            uint64_t cpu_state_scatter_vertices = 0;
+            uint64_t cpu_state_scatter_bytes = 0;
+            double cpu_state_scatter_ms = 0.0;
             uint64_t cpu_expanded_vertices = 0;
             uint64_t cpu_edge_visits = 0;
             uint64_t cpu_proposals_success = 0;
@@ -344,15 +598,16 @@ namespace sepgraph {
             // std::unique_ptr<groute::graphs::single::PMAGraphAllocator> m_vcsr_dev_graph_allocator_update;
             std::unique_ptr<groute::graphs::single::CSCGraphAllocator> m_csc_dev_graph_allocator;
             runtime::DynamicReverseIndex m_reverse_index;
-            groute::Queue<index_t> m_device_affected_vertices;
-            std::vector<index_t> m_affected_vertices;
             std::vector<uint64_t> m_gpu_repair_incoming_offsets;
             std::vector<index_t> m_gpu_repair_incoming_sources;
             uint64_t *m_device_gpu_repair_offsets = nullptr;
             index_t *m_device_gpu_repair_sources = nullptr;
-            unsigned int *m_device_gpu_repair_changed = nullptr;
             size_t m_device_gpu_repair_offset_capacity = 0;
             size_t m_device_gpu_repair_source_capacity = 0;
+            groute::Queue<index_t> m_device_affected_vertices;
+            std::vector<index_t> m_affected_vertices;
+            unsigned int *m_device_gpu_repair_changed = nullptr;
+            index_t *m_device_gpu_repair_changed_vertices = nullptr;
             std::vector<uint8_t> m_partition_owners;
             index_t *m_device_partition_end_nodes = nullptr;
             uint8_t *m_device_partition_owners = nullptr;
@@ -366,11 +621,25 @@ namespace sepgraph {
             TBuffer *m_device_gpu_to_cpu_boundary_values = nullptr;
             index_t *m_device_gpu_to_cpu_boundary_parents = nullptr;
             std::vector<uint8_t> m_node_cpu_owner;
+            std::vector<index_t> m_cpu_owned_vertices;
+            index_t *m_device_cpu_owned_vertices = nullptr;
+            TValue *m_device_cpu_owned_values = nullptr;
+            TBuffer *m_device_cpu_owned_buffers = nullptr;
+            TValue *m_device_cpu_owned_parents = nullptr;
+            std::vector<TValue> m_compact_cpu_values;
+            std::vector<TBuffer> m_compact_cpu_buffers;
+            std::vector<TValue> m_compact_cpu_parents;
+            bool m_cpu_domain_map_enabled = false;
+            bool m_cpu_domain_state_initialized = false;
+            uint32_t m_cpu_domain_state_epoch = 0;
             std::vector<index_t> m_cpu_owned_segments;
             std::vector<TValue> m_cpu_node_values;
             std::vector<TBuffer> m_cpu_node_buffers;
             std::vector<index_t> m_cpu_node_parents;
             std::deque<index_t> m_cpu_frontier;
+            std::vector<index_t> m_cpu_dirty_vertices;
+            std::vector<uint32_t> m_repair_source_versions;
+            std::vector<uint32_t> m_repair_source_accepted_versions;
             std::vector<uint8_t> m_insertion_seed_partitions;
             uint32_t m_last_insertion_dirty_partitions = 0;
             std::unique_ptr<topology::SparseTopologyReplayModel> m_topology_audit_expected;
@@ -402,6 +671,16 @@ namespace sepgraph {
             unsigned int* partition_offset_csr;
             unsigned int max_partition_size_csr;
             std::vector<index_t> m_insertion_changed_vertices;
+            struct E0BRegionActivity {
+                uint64_t active_vertices = 0;
+                uint64_t scanned_edges = 0;
+            };
+            std::ofstream m_e0b_trace;
+            std::vector<E0BRegionActivity> m_e0b_region_activity;
+            std::vector<std::pair<index_t, uint64_t>> m_e0b_active_sources;
+            std::vector<std::pair<index_t, index_t>> m_e0b_success_records;
+            std::map<std::pair<index_t, index_t>, uint64_t> m_e0b_success_edges;
+            uint64_t m_e0b_success_total = 0;
             std::vector<CpuRelaxProposal<TBuffer>> m_cpu_boundary_proposals;
             std::vector<CpuRelaxProposal<TBuffer>> m_cpu_compressed_proposals;
             std::vector<index_t> m_cpu_proposal_compress_keys;
@@ -409,8 +688,11 @@ namespace sepgraph {
             std::vector<size_t> m_cpu_proposal_compress_touched_slots;
             groute::Queue<index_t> m_device_gpu_to_cpu_boundary_vertices;
             groute::Queue<index_t> m_device_insertion_changed_vertices;
+            bool m_exact_source_frontier_ready = false;
+            uint32_t m_exact_source_frontier_count = 0;
             CpuRelaxProposal<TBuffer> *m_device_cpu_boundary_proposals = nullptr;
             unsigned long long *m_device_cpu_proposal_success_count = nullptr;
+            unsigned long long *m_device_exact_source_counts = nullptr;
             uint8_t *m_device_cpu_destination_flags = nullptr;
             size_t m_device_cpu_boundary_proposal_capacity = 0;
             // Loader<index_t,index_t,index_t> load_update;
@@ -430,14 +712,21 @@ namespace sepgraph {
             }
 
             void PrepareCpuOwnerRuntimeStorage() {
-                if (FLAGS_sssp_cpu_partition_capacity < 0 ||
-                    FLAGS_sssp_cpu_partition_capacity > FLAGS_SEGMENT) {
+                const bool use_domain_map = !FLAGS_sssp_cpu_domain_map.empty();
+                if (use_domain_map && FLAGS_sssp_cpu_partition_capacity != 0) {
+                    LOG("[E2-DOMAIN] protocol_error=domain_map_conflicts_with_capacity capacity=%d\n",
+                        FLAGS_sssp_cpu_partition_capacity);
+                    std::abort();
+                }
+                if (!use_domain_map &&
+                    (FLAGS_sssp_cpu_partition_capacity < 0 ||
+                     FLAGS_sssp_cpu_partition_capacity > FLAGS_SEGMENT)) {
                     LOG("[DUAL-RUNTIME] protocol_error=invalid_cpu_capacity capacity=%d partitions=%d\n",
                         FLAGS_sssp_cpu_partition_capacity,
                         FLAGS_SEGMENT);
                     std::abort();
                 }
-                if (FLAGS_sssp_cpu_partition_capacity == 0) return;
+                if (!use_domain_map && FLAGS_sssp_cpu_partition_capacity == 0) return;
 
                 GraphDatum &graph_datum = *m_graph_datum;
                 GROUTE_CUDA_CHECK(cudaMalloc(
@@ -459,6 +748,70 @@ namespace sepgraph {
                     m_device_gpu_to_cpu_boundary_values,
                     0xff,
                     sizeof(TBuffer) * graph_datum.nnodes));
+
+                if (use_domain_map) {
+                    std::ifstream input(FLAGS_sssp_cpu_domain_map,
+                                        std::ios::binary | std::ios::ate);
+                    const std::streamsize expected =
+                        static_cast<std::streamsize>(graph_datum.nnodes) *
+                        sizeof(uint16_t);
+                    const std::streamsize actual = input.is_open()
+                        ? static_cast<std::streamsize>(input.tellg()) : -1;
+                    if (!input.is_open() || actual != expected) {
+                        LOG("[E2-DOMAIN] invalid_map path=%s expected_bytes=%lld actual_bytes=%lld\n",
+                            FLAGS_sssp_cpu_domain_map.c_str(),
+                            static_cast<long long>(expected),
+                            static_cast<long long>(actual));
+                        std::abort();
+                    }
+                    input.seekg(0);
+                    std::vector<uint16_t> domains(graph_datum.nnodes);
+                    input.read(reinterpret_cast<char *>(domains.data()), expected);
+                    if (!input) {
+                        LOG("[E2-DOMAIN] read_failed path=%s\n",
+                            FLAGS_sssp_cpu_domain_map.c_str());
+                        std::abort();
+                    }
+                    for (index_t vertex = 0; vertex < graph_datum.nnodes; ++vertex) {
+                        if (domains[vertex] > 1) {
+                            LOG("[E2-DOMAIN] invalid_owner vertex=%u owner=%u\n",
+                                vertex, static_cast<unsigned>(domains[vertex]));
+                            std::abort();
+                        }
+                        if (domains[vertex] == 0) {
+                            m_node_cpu_owner[vertex] = 1;
+                            m_cpu_owned_vertices.push_back(vertex);
+                        }
+                    }
+                    const size_t count = m_cpu_owned_vertices.size();
+                    m_compact_cpu_values.resize(count);
+                    m_compact_cpu_buffers.resize(count);
+                    m_compact_cpu_parents.resize(count);
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_cpu_owned_vertices),
+                        sizeof(TValue) * count));
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_cpu_owned_values),
+                        sizeof(TValue) * count));
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_cpu_owned_buffers),
+                        sizeof(TBuffer) * count));
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_cpu_owned_parents),
+                        sizeof(TValue) * count));
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        m_device_cpu_owned_vertices, m_cpu_owned_vertices.data(),
+                        sizeof(index_t) * count, cudaMemcpyHostToDevice));
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        m_device_cpu_destination_flags, m_node_cpu_owner.data(),
+                        graph_datum.nnodes, cudaMemcpyHostToDevice));
+                    m_cpu_domain_map_enabled = true;
+                    LOG("[E2-DOMAIN] loaded path=%s cpu_vertices=%llu cpu_vertex_share=%.6f\n",
+                        FLAGS_sssp_cpu_domain_map.c_str(),
+                        static_cast<unsigned long long>(count),
+                        graph_datum.nnodes == 0 ? 0.0
+                            : static_cast<double>(count) / graph_datum.nnodes);
+                }
             }
 
             template<typename DevicePtr>
@@ -592,7 +945,6 @@ namespace sepgraph {
                 stats.merge_ms += sw_merge.ms();
             }
 
-
             public:
             Engine(AlgoType algo_type) :
             m_running_info(algo_type),
@@ -624,6 +976,10 @@ namespace sepgraph {
         if (m_device_gpu_repair_changed != nullptr) {
             cudaFree(m_device_gpu_repair_changed);
             m_device_gpu_repair_changed = nullptr;
+        }
+        if (m_device_gpu_repair_changed_vertices != nullptr) {
+            cudaFree(m_device_gpu_repair_changed_vertices);
+            m_device_gpu_repair_changed_vertices = nullptr;
         }
         if (m_device_partition_end_nodes != nullptr) {
             cudaFree(m_device_partition_end_nodes);
@@ -657,9 +1013,29 @@ namespace sepgraph {
             cudaFree(m_device_cpu_proposal_success_count);
             m_device_cpu_proposal_success_count = nullptr;
         }
+        if (m_device_exact_source_counts != nullptr) {
+            cudaFree(m_device_exact_source_counts);
+            m_device_exact_source_counts = nullptr;
+        }
         if (m_device_cpu_destination_flags != nullptr) {
             cudaFree(m_device_cpu_destination_flags);
             m_device_cpu_destination_flags = nullptr;
+        }
+        if (m_device_cpu_owned_vertices != nullptr) {
+            cudaFree(m_device_cpu_owned_vertices);
+            m_device_cpu_owned_vertices = nullptr;
+        }
+        if (m_device_cpu_owned_values != nullptr) {
+            cudaFree(m_device_cpu_owned_values);
+            m_device_cpu_owned_values = nullptr;
+        }
+        if (m_device_cpu_owned_buffers != nullptr) {
+            cudaFree(m_device_cpu_owned_buffers);
+            m_device_cpu_owned_buffers = nullptr;
+        }
+        if (m_device_cpu_owned_parents != nullptr) {
+            cudaFree(m_device_cpu_owned_parents);
+            m_device_cpu_owned_parents = nullptr;
         }
     }
 
@@ -969,7 +1345,12 @@ namespace sepgraph {
             GROUTE_CUDA_CHECK(cudaMalloc(
                 reinterpret_cast<void **>(&m_device_gpu_repair_changed),
                 sizeof(unsigned int)));
+            GROUTE_CUDA_CHECK(cudaMalloc(
+                reinterpret_cast<void **>(&m_device_gpu_repair_changed_vertices),
+                sizeof(index_t) * std::max<uint32_t>(vcsr_graph.nnodes, 1)));
         }
+        m_repair_source_versions.assign(vcsr_graph.nnodes, 0);
+        m_repair_source_accepted_versions.assign(vcsr_graph.nnodes, 0);
         m_stream->Sync();
         const uint64_t changed_queue_capacity_u64 =
             std::max<uint64_t>(std::max<uint64_t>(vcsr_graph.nnodes, 1),
@@ -986,6 +1367,33 @@ namespace sepgraph {
         m_device_gpu_to_cpu_boundary_vertices.ResetAsync(m_stream->cuda_stream);
         m_stream->Sync();
         PrepareCpuOwnerRuntimeStorage();
+        if (!FLAGS_e0b_trace_file.empty()) {
+            if (FLAGS_sssp_cpu_partition_capacity != 0 ||
+                !FLAGS_sssp_cpu_domain_map.empty()) {
+                LOG("[E0B-TRACE] protocol_error=trace_requires_capacity_zero capacity=%d\n",
+                    FLAGS_sssp_cpu_partition_capacity);
+                std::abort();
+            }
+            m_e0b_trace.open(FLAGS_e0b_trace_file,
+                             std::ios::out | std::ios::trunc);
+            if (!m_e0b_trace.is_open()) {
+                LOG("[E0B-TRACE] protocol_error=open_failed path=%s\n",
+                    FLAGS_e0b_trace_file.c_str());
+                std::abort();
+            }
+            m_e0b_trace
+                << "# E0B_TRACE_V1 segments=" << FLAGS_SEGMENT
+                << " fields=type,epoch,round,region_metrics\n";
+            for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                m_e0b_trace << "V\t" << seg << '\t'
+                            << m_groute_context->seg_snode[seg] << '\t'
+                            << m_groute_context->seg_enode[seg] << '\n';
+            }
+            m_e0b_trace.flush();
+            m_e0b_region_activity.resize(FLAGS_SEGMENT);
+            LOG("[E0B-TRACE] enabled=1 path=%s segments=%d\n",
+                FLAGS_e0b_trace_file.c_str(), FLAGS_SEGMENT);
+        }
 
         sw_load.stop();
 
@@ -1197,6 +1605,18 @@ namespace sepgraph {
                sw_total.stop();
                m_running_info.time_total = sw_total.ms();
                LOG("Iterate all time: %f ms (excluded)\n", sw_total.ms());
+               if (m_cpu_domain_map_enabled) {
+                   Stopwatch sw_domain_init(true);
+                   GatherCpuDomainState();
+                   sw_domain_init.stop();
+                   const uint64_t bytes =
+                       static_cast<uint64_t>(m_cpu_owned_vertices.size()) *
+                       (sizeof(TValue) + sizeof(TBuffer) + sizeof(TValue));
+                   LOG("[E2C-PERSISTENT-STATE] event=initialize cpu_vertices=%llu bytes=%llu state_epoch=%u init_ms=%.3f (excluded)\n",
+                       static_cast<unsigned long long>(m_cpu_owned_vertices.size()),
+                       static_cast<unsigned long long>(bytes),
+                       m_cpu_domain_state_epoch, sw_domain_init.ms());
+               }
             }
 
             void PrintCacheL1(){
@@ -2194,6 +2614,113 @@ namespace sepgraph {
                 }
             }
 
+            void GatherCpuDomainState() {
+                if (!m_cpu_domain_map_enabled || m_cpu_owned_vertices.empty()) return;
+                GraphDatum &graph_datum = *m_graph_datum;
+                const uint32_t count = static_cast<uint32_t>(m_cpu_owned_vertices.size());
+                dim3 grid_dims, block_dims;
+                KernelSizing(grid_dims, block_dims, count);
+                GatherCpuOwnedState<TValue, TBuffer><<<grid_dims, block_dims>>>(
+                    m_device_cpu_owned_vertices, count,
+                    graph_datum.GetValueDeviceObject(),
+                    graph_datum.GetBufferDeviceObject(),
+                    graph_datum.GetParentDeviceObject(),
+                    m_device_cpu_owned_values,
+                    m_device_cpu_owned_buffers,
+                    m_device_cpu_owned_parents);
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_compact_cpu_values.data(), m_device_cpu_owned_values,
+                    sizeof(TValue) * count, cudaMemcpyDeviceToHost));
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_compact_cpu_buffers.data(), m_device_cpu_owned_buffers,
+                    sizeof(TBuffer) * count, cudaMemcpyDeviceToHost));
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_compact_cpu_parents.data(), m_device_cpu_owned_parents,
+                    sizeof(TValue) * count, cudaMemcpyDeviceToHost));
+                for (uint32_t i = 0; i < count; ++i) {
+                    const index_t vertex = m_cpu_owned_vertices[i];
+                    m_cpu_node_values[vertex] = m_compact_cpu_values[i];
+                    m_cpu_node_buffers[vertex] = m_compact_cpu_buffers[i];
+                    m_cpu_node_parents[vertex] =
+                        static_cast<index_t>(m_compact_cpu_parents[i]);
+                }
+                m_cpu_domain_state_initialized = true;
+                m_cpu_domain_state_epoch = m_insertion_epoch;
+            }
+
+            void ScatterCpuDomainState() {
+                if (!m_cpu_domain_map_enabled || m_cpu_owned_vertices.empty()) return;
+                GraphDatum &graph_datum = *m_graph_datum;
+                const uint32_t count = static_cast<uint32_t>(m_cpu_owned_vertices.size());
+                for (uint32_t i = 0; i < count; ++i) {
+                    const index_t vertex = m_cpu_owned_vertices[i];
+                    m_compact_cpu_values[i] = m_cpu_node_values[vertex];
+                    m_compact_cpu_buffers[i] = m_cpu_node_buffers[vertex];
+                    m_compact_cpu_parents[i] =
+                        static_cast<TValue>(m_cpu_node_parents[vertex]);
+                }
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_device_cpu_owned_values, m_compact_cpu_values.data(),
+                    sizeof(TValue) * count, cudaMemcpyHostToDevice));
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_device_cpu_owned_buffers, m_compact_cpu_buffers.data(),
+                    sizeof(TBuffer) * count, cudaMemcpyHostToDevice));
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_device_cpu_owned_parents, m_compact_cpu_parents.data(),
+                    sizeof(TValue) * count, cudaMemcpyHostToDevice));
+                dim3 grid_dims, block_dims;
+                KernelSizing(grid_dims, block_dims, count);
+                ScatterCpuOwnedState<TValue, TBuffer><<<grid_dims, block_dims>>>(
+                    m_device_cpu_owned_vertices, count,
+                    m_device_cpu_owned_values,
+                    m_device_cpu_owned_buffers,
+                    m_device_cpu_owned_parents,
+                    graph_datum.GetValueDeviceObject(),
+                    graph_datum.GetBufferDeviceObject(),
+                    graph_datum.GetParentDeviceObject());
+                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+            }
+
+            void ScatterCpuDomainDirtyState(InsertionRoundStats &stats) {
+                if (!m_cpu_domain_map_enabled || m_cpu_dirty_vertices.empty()) return;
+                Stopwatch sw_scatter(true);
+                std::sort(m_cpu_dirty_vertices.begin(), m_cpu_dirty_vertices.end());
+                m_cpu_dirty_vertices.erase(
+                    std::unique(m_cpu_dirty_vertices.begin(), m_cpu_dirty_vertices.end()),
+                    m_cpu_dirty_vertices.end());
+                m_cpu_boundary_proposals.clear();
+                m_cpu_boundary_proposals.reserve(m_cpu_dirty_vertices.size());
+                for (const index_t vertex : m_cpu_dirty_vertices) {
+                    m_cpu_boundary_proposals.push_back({
+                        vertex, m_cpu_node_buffers[vertex],
+                        m_cpu_node_parents[vertex]});
+                }
+                EnsureInsertionDeviceCapacity(
+                    &m_device_cpu_boundary_proposals,
+                    &m_device_cpu_boundary_proposal_capacity,
+                    m_cpu_boundary_proposals.size(), stats);
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_device_cpu_boundary_proposals,
+                    m_cpu_boundary_proposals.data(),
+                    sizeof(CpuRelaxProposal<TBuffer>) * m_cpu_boundary_proposals.size(),
+                    cudaMemcpyHostToDevice));
+                dim3 grid_dims, block_dims;
+                KernelSizing(grid_dims, block_dims, m_cpu_boundary_proposals.size());
+                ScatterCpuDirtyState<TValue, TBuffer><<<grid_dims, block_dims>>>(
+                    m_device_cpu_boundary_proposals,
+                    m_cpu_boundary_proposals.size(),
+                    m_graph_datum->GetValueDeviceObject(),
+                    m_graph_datum->GetBufferDeviceObject(),
+                    m_graph_datum->GetParentDeviceObject());
+                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+                stats.cpu_state_scatter_vertices += m_cpu_dirty_vertices.size();
+                stats.cpu_state_scatter_bytes +=
+                    sizeof(CpuRelaxProposal<TBuffer>) * m_cpu_dirty_vertices.size();
+                m_cpu_dirty_vertices.clear();
+                sw_scatter.stop();
+                stats.cpu_state_scatter_ms += sw_scatter.ms();
+            }
+
             void BeginInsertionEpoch(index_t batch) {
                 Stopwatch sw_epoch_prepare(true);
                 GraphDatum &graph_datum = *m_graph_datum;
@@ -2224,7 +2751,7 @@ namespace sepgraph {
                         cudaMemcpyHostToDevice));
                     GROUTE_CUDA_CHECK(cudaMemset(
                         m_device_node_state_epoch,
-                        0,
+                        0xff,
                         sizeof(uint32_t) * graph_datum.nnodes));
                 }
 
@@ -2237,9 +2764,14 @@ namespace sepgraph {
                 if (m_insertion_epoch == 0) {
                     GROUTE_CUDA_CHECK(cudaMemset(
                         m_device_node_state_epoch,
-                        0,
+                        0xff,
                         sizeof(uint32_t) * graph_datum.nnodes));
                     m_insertion_epoch = 1;
+                } else if ((m_insertion_epoch & 0xffffU) == 0) {
+                    GROUTE_CUDA_CHECK(cudaMemset(
+                        m_device_node_state_epoch,
+                        0xff,
+                        sizeof(uint32_t) * graph_datum.nnodes));
                 }
 
                 Stopwatch sw_owner_plan(true);
@@ -2347,7 +2879,26 @@ namespace sepgraph {
                         sw_owner_plan.ms(),
                         sw_cpu_state_d2h.ms());
                 }
+                if (m_cpu_domain_map_enabled &&
+                    !m_cpu_domain_state_initialized) {
+                    Stopwatch sw_cpu_state_d2h(true);
+                    GatherCpuDomainState();
+                    sw_cpu_state_d2h.stop();
+                    const uint64_t cpu_state_d2h_bytes =
+                        static_cast<uint64_t>(m_cpu_owned_vertices.size()) *
+                        (sizeof(TValue) + sizeof(TBuffer) + sizeof(TValue));
+                    LOG("[E2-DOMAIN-PREP] batch=%u epoch=%u cpu_vertices=%llu cpu_state_d2h_bytes=%llu cpu_state_d2h_ms=%.3f\n",
+                        batch, m_insertion_epoch,
+                        static_cast<unsigned long long>(m_cpu_owned_vertices.size()),
+                        static_cast<unsigned long long>(cpu_state_d2h_bytes),
+                        sw_cpu_state_d2h.ms());
+                } else if (m_cpu_domain_map_enabled) {
+                    LOG("[E2C-PERSISTENT-STATE][batch %u] event=reuse state_epoch=%u cpu_vertices=%llu cpu_state_d2h_bytes=0\n",
+                        batch, m_cpu_domain_state_epoch,
+                        static_cast<unsigned long long>(m_cpu_owned_vertices.size()));
+                }
                 m_cpu_frontier.clear();
+                m_cpu_dirty_vertices.clear();
                 GROUTE_CUDA_CHECK(cudaMemcpy(
                     m_device_partition_owners,
                     m_partition_owners.data(),
@@ -2358,14 +2909,21 @@ namespace sepgraph {
                     0,
                     sizeof(unsigned long long)));
                 m_insertion_epoch_active = true;
+                m_exact_source_frontier_ready = false;
+                m_exact_source_frontier_count = 0;
+                graph_datum.m_wl_array_in_seg[FLAGS_SEGMENT].ResetAsync(
+                    m_stream->cuda_stream);
+                graph_datum.m_wl_array_in_seg[FLAGS_SEGMENT + 1].ResetAsync(
+                    m_stream->cuda_stream);
                 m_insertion_convergence_round = 0;
                 sw_epoch_prepare.stop();
-                LOG("[DUAL-RUNTIME-BEGIN] batch=%u epoch=%u gpu_partitions=%d cpu_partitions=%u cpu_capacity=%u epoch_prepare_ms=%.3f\n",
+                LOG("[DUAL-RUNTIME-BEGIN] batch=%u epoch=%u gpu_partitions=%d cpu_partitions=%u cpu_capacity=%u domain_map=%d epoch_prepare_ms=%.3f\n",
                     batch,
                     m_insertion_epoch,
                     FLAGS_SEGMENT - cpu_capacity,
+                    m_cpu_domain_map_enabled ? 1U : cpu_capacity,
                     cpu_capacity,
-                    cpu_capacity,
+                    m_cpu_domain_map_enabled ? 1 : 0,
                     sw_epoch_prepare.ms());
             }
 
@@ -2380,18 +2938,25 @@ namespace sepgraph {
                 unsigned long long rejected_seeds = 0;
                 const uint32_t boundary_active =
                     m_device_gpu_to_cpu_boundary_vertices.GetCount(*m_stream);
+                const uint32_t exact_input_active =
+                    m_graph_datum->m_wl_array_in_seg[FLAGS_SEGMENT].GetCount(*m_stream);
+                const uint32_t exact_output_active =
+                    m_graph_datum->m_wl_array_in_seg[FLAGS_SEGMENT + 1].GetCount(*m_stream);
                 GROUTE_CUDA_CHECK(cudaMemcpy(
                     &rejected_seeds,
                     m_device_seed_owner_reject_count,
                     sizeof(unsigned long long),
                     cudaMemcpyDeviceToHost));
                 if (rejected_seeds != 0 || local_active != 0 ||
-                    boundary_active != 0 || !m_cpu_frontier.empty()) {
-                    LOG("[DUAL-RUNTIME] protocol_error=epoch_not_quiescent epoch=%u rejected=%llu local_active=%llu boundary=%u cpu_frontier=%zu\n",
+                    boundary_active != 0 || exact_input_active != 0 ||
+                    exact_output_active != 0 || !m_cpu_frontier.empty()) {
+                    LOG("[DUAL-RUNTIME] protocol_error=epoch_not_quiescent epoch=%u rejected=%llu local_active=%llu boundary=%u exact_input=%u exact_output=%u cpu_frontier=%zu\n",
                         m_insertion_epoch,
                         rejected_seeds,
                         static_cast<unsigned long long>(local_active),
                         boundary_active,
+                        exact_input_active,
+                        exact_output_active,
                         m_cpu_frontier.size());
                     std::abort();
                 }
@@ -2480,13 +3045,15 @@ namespace sepgraph {
                             graph_datum.m_wl_bitmap_out_high.DeviceObject(),
                             m_device_partition_end_nodes,
                             m_device_partition_owners,
+                            m_cpu_domain_map_enabled ? m_device_cpu_destination_flags : nullptr,
                             FLAGS_SEGMENT,
                             m_insertion_epoch,
                             m_device_node_state_epoch,
                             m_device_seed_owner_reject_count,
                             m_device_gpu_to_cpu_boundary_values,
                             m_device_gpu_to_cpu_boundary_parents,
-                            m_device_gpu_to_cpu_boundary_vertices.DeviceObject());
+                            m_device_gpu_to_cpu_boundary_vertices.DeviceObject(),
+                            graph_datum.m_wl_array_in_seg[FLAGS_SEGMENT].DeviceObject());
                         stream_s.Sync();
                     }
                     LOG("[SSSP-SEED-FRONTIER] batch=%u added_edges=%u mode=direct_added_edge\n",
@@ -2529,33 +3096,57 @@ namespace sepgraph {
                     publication.cache_invalidations,
                     static_cast<unsigned long long>(zc_cold_edges),
                     publication.hash_mismatches, FLAGS_check ? 1U : 0U);
-                for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
-                    stream_id = seg_idx % FLAGS_n_stream;
-                    if (m_insertion_epoch_active &&
-                        !m_insertion_seed_partitions[seg_idx]) {
-                        graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(
-                            stream[stream_id].cuda_stream);
-                        graph_datum.seg_active_num[seg_idx] = 0;
-                        m_running_info.input_active_count_seg[seg_idx] = 0;
-                        continue;
+                const bool exact_all_gpu = m_insertion_epoch_active &&
+                    !m_cpu_domain_map_enabled &&
+                    FLAGS_sssp_cpu_partition_capacity == 0;
+                if (exact_all_gpu) {
+                    m_exact_source_frontier_ready = true;
+                    m_exact_source_frontier_count =
+                        graph_datum.m_wl_array_in_seg[FLAGS_SEGMENT].GetCount(stream_s);
+                    for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                        graph_datum.seg_active_num[seg] = 0;
+                        m_running_info.input_active_count_seg[seg] = 0;
                     }
-                    seg_snode = m_groute_context->seg_snode[seg_idx];
-                    seg_enode = m_groute_context->seg_enode[seg_idx];
-                    RebuildArrayWorklist(app_inst,
-                        graph_datum,
-                        stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx,
-                        m_insertion_epoch_active ? m_device_node_state_epoch : nullptr,
-                        m_insertion_epoch);
+                    if (m_exact_source_frontier_count != 0) {
+                        graph_datum.seg_active_num[0] = m_exact_source_frontier_count;
+                        m_running_info.input_active_count_seg[0] =
+                            m_exact_source_frontier_count;
+                    }
+                    LOG("[E4-R1-SEED] batch=%u exact_sources=%u seed_partition_rebuilds=0\n",
+                        NumOfSnapShots, m_exact_source_frontier_count);
+                } else {
+                    for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; seg_idx++){
+                        stream_id = seg_idx % FLAGS_n_stream;
+                        if (m_insertion_epoch_active &&
+                            !m_insertion_seed_partitions[seg_idx]) {
+                            graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(
+                                stream[stream_id].cuda_stream);
+                            graph_datum.seg_active_num[seg_idx] = 0;
+                            m_running_info.input_active_count_seg[seg_idx] = 0;
+                            continue;
+                        }
+                        seg_snode = m_groute_context->seg_snode[seg_idx];
+                        seg_enode = m_groute_context->seg_enode[seg_idx];
+                        RebuildArrayWorklist(app_inst,
+                            graph_datum,
+                            stream[stream_id],seg_snode,seg_enode - seg_snode,seg_idx,
+                            m_insertion_epoch_active ? m_device_node_state_epoch : nullptr,
+                            m_insertion_epoch);
+                    }
+                    for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
+                        stream[stream_idx].Sync();
+                    }
+                    RefreshSegmentActiveCountsFromQueues();
                 }
-                for(index_t stream_idx = 0; stream_idx < FLAGS_n_stream ; stream_idx++){
-                    stream[stream_idx].Sync();
-                }
-                RefreshSegmentActiveCountsFromQueues();
                 sw_initial_rebuild.stop();
                 // LOG("DEBUG2 \n");
                 bool convergence = false;
                 m_running_info.current_round = 0;
                 Stopwatch sw_con(true);
+                if (exact_all_gpu) {
+                    RunExactSourceClosure();
+                    convergence = true;
+                }
                 while(!convergence){
                 //   PreComputationBW();
                   ExecutePolicy_Converge(next_policy);
@@ -2568,10 +3159,12 @@ namespace sepgraph {
                            convergence_check++;
                        }
                    }
-                  const uint32_t boundary_active =
-                      FLAGS_sssp_cpu_partition_capacity == 0
-                          ? 0
-                          : m_device_gpu_to_cpu_boundary_vertices.GetCount(*m_stream);
+                  const bool cpu_owner_enabled =
+                      FLAGS_sssp_cpu_partition_capacity != 0 ||
+                      m_cpu_domain_map_enabled;
+                  const uint32_t boundary_active = cpu_owner_enabled
+                      ? m_device_gpu_to_cpu_boundary_vertices.GetCount(*m_stream)
+                      : 0;
                   if(convergence_check == FLAGS_SEGMENT &&
                      m_cpu_frontier.empty() && boundary_active == 0){
                         convergence = true;
@@ -2600,6 +3193,73 @@ namespace sepgraph {
                 LOG("total add time: %f ms (excluded)\n", add_time);
                 // GatherCacheMiss();
                 // GatherTransfer();
+            }
+
+            void RunExactSourceClosure() {
+                GraphDatum &graph_datum = *m_graph_datum;
+                auto &app_inst = *m_app_inst;
+                auto &input = graph_datum.m_wl_array_in_seg[FLAGS_SEGMENT];
+                auto &output = graph_datum.m_wl_array_in_seg[FLAGS_SEGMENT + 1];
+                if (!m_dev_props.cooperativeLaunch) {
+                    LOG("[E4-R1] protocol_error=cooperative_launch_unsupported device=%s\n",
+                        m_dev_props.name);
+                    std::abort();
+                }
+                if (m_device_exact_source_counts == nullptr) {
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_exact_source_counts),
+                        4 * sizeof(unsigned long long)));
+                }
+                GROUTE_CUDA_CHECK(cudaMemset(m_device_exact_source_counts, 0,
+                    4 * sizeof(unsigned long long)));
+                int blocks_per_sm = 0;
+                GROUTE_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                    &blocks_per_sm,
+                    RunExactGpuClosure<AppImplDeviceObject,
+                        decltype(m_vcsr_dev_graph_allocator->DeviceObject()),
+                        TValue, TBuffer>,
+                    128, 0));
+                const int grid_blocks = blocks_per_sm * m_dev_props.multiProcessorCount;
+                if (grid_blocks <= 0) {
+                    LOG("[E4-R1] protocol_error=no_resident_cooperative_blocks\n");
+                    std::abort();
+                }
+                const auto graph = m_vcsr_dev_graph_allocator->DeviceObject();
+                auto input_device = input.DeviceObject();
+                auto output_device = output.DeviceObject();
+                TValue *values = graph_datum.GetValueDeviceObject();
+                TBuffer *buffers = graph_datum.GetBufferDeviceObject();
+                TValue *parents = graph_datum.GetParentDeviceObject();
+                uint32_t epoch = m_insertion_epoch;
+                uint32_t *node_state_epoch = m_device_node_state_epoch;
+                unsigned long long *metrics = m_device_exact_source_counts;
+                void *arguments[] = {&app_inst, &input_device, &output_device,
+                    const_cast<void **>(reinterpret_cast<void *const *>(&graph)),
+                    &values, &buffers, &parents, &epoch, &node_state_epoch,
+                    &metrics};
+                GROUTE_CUDA_CHECK(cudaLaunchCooperativeKernel(
+                    reinterpret_cast<void *>(RunExactGpuClosure<
+                        AppImplDeviceObject, decltype(graph), TValue, TBuffer>),
+                    grid_blocks, 128, arguments, 0, m_stream->cuda_stream));
+                m_stream->Sync();
+                unsigned long long host_metrics[4] = {0, 0, 0, 0};
+                GROUTE_CUDA_CHECK(cudaMemcpy(host_metrics,
+                    m_device_exact_source_counts, sizeof(host_metrics),
+                    cudaMemcpyDeviceToHost));
+                if (host_metrics[3] > 0xffffULL) {
+                    LOG("[E4-R1] protocol_error=wave_ticket_overflow epoch=%u waves=%llu\n",
+                        m_insertion_epoch, host_metrics[3]);
+                    std::abort();
+                }
+                m_insertion_convergence_round = host_metrics[3];
+                m_exact_source_frontier_count = 0;
+                for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                    graph_datum.seg_active_num[seg] = 0;
+                    m_running_info.input_active_count_seg[seg] = 0;
+                }
+                LOG("[E4-R1-CLOSURE] epoch=%u offered_sources=%llu processed_sources=%llu processed_edges=%llu local_waves=%llu seed_partition_rebuilds=0 host_frontier_syncs=0 final_quiescence_syncs=1\n",
+                    m_insertion_epoch, host_metrics[0], host_metrics[1],
+                    host_metrics[2], host_metrics[3]);
             }
 
             void CollectDeletionAffectedVertices(index_t batch) {
@@ -2641,23 +3301,160 @@ namespace sepgraph {
             void EnsureGpuAffectedRepairCapacity(size_t affected_count,
                                                   size_t source_count) {
                 if (affected_count > m_device_gpu_repair_offset_capacity) {
-                    if (m_device_gpu_repair_offsets != nullptr) {
+                    if (m_device_gpu_repair_offsets != nullptr)
                         GROUTE_CUDA_CHECK(cudaFree(m_device_gpu_repair_offsets));
-                    }
                     GROUTE_CUDA_CHECK(cudaMalloc(
                         reinterpret_cast<void **>(&m_device_gpu_repair_offsets),
                         sizeof(uint64_t) * (affected_count + 1)));
                     m_device_gpu_repair_offset_capacity = affected_count;
                 }
                 if (source_count > m_device_gpu_repair_source_capacity) {
-                    if (m_device_gpu_repair_sources != nullptr) {
+                    if (m_device_gpu_repair_sources != nullptr)
                         GROUTE_CUDA_CHECK(cudaFree(m_device_gpu_repair_sources));
-                    }
                     GROUTE_CUDA_CHECK(cudaMalloc(
                         reinterpret_cast<void **>(&m_device_gpu_repair_sources),
                         sizeof(index_t) * source_count));
                     m_device_gpu_repair_source_capacity = source_count;
                 }
+            }
+
+            uint64_t GatherGpuRepairBoundaryEvents(
+                    const std::vector<index_t> &sources,
+                    RepairBoundaryEventKind kind,
+                    uint32_t epoch,
+                    InsertionRoundStats &stats,
+                    std::vector<RepairBoundaryEvent<TValue>> &events) {
+                m_cpu_boundary_proposals.clear();
+                m_cpu_boundary_proposals.reserve(sources.size());
+                for (const index_t source : sources) {
+                    if (!m_node_cpu_owner[source]) {
+                        m_cpu_boundary_proposals.push_back({source, TBuffer{}, 0});
+                    }
+                }
+                std::sort(m_cpu_boundary_proposals.begin(),
+                          m_cpu_boundary_proposals.end(),
+                          [](const CpuRelaxProposal<TBuffer> &lhs,
+                             const CpuRelaxProposal<TBuffer> &rhs) {
+                              return lhs.dst < rhs.dst;
+                          });
+                m_cpu_boundary_proposals.erase(
+                    std::unique(m_cpu_boundary_proposals.begin(),
+                                m_cpu_boundary_proposals.end(),
+                                [](const CpuRelaxProposal<TBuffer> &lhs,
+                                   const CpuRelaxProposal<TBuffer> &rhs) {
+                                    return lhs.dst == rhs.dst;
+                                }),
+                    m_cpu_boundary_proposals.end());
+                if (m_cpu_boundary_proposals.empty()) return 0;
+
+                EnsureInsertionDeviceCapacity(
+                    &m_device_cpu_boundary_proposals,
+                    &m_device_cpu_boundary_proposal_capacity,
+                    m_cpu_boundary_proposals.size(), stats);
+                const size_t bytes = sizeof(CpuRelaxProposal<TBuffer>) *
+                                     m_cpu_boundary_proposals.size();
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_device_cpu_boundary_proposals,
+                    m_cpu_boundary_proposals.data(), bytes,
+                    cudaMemcpyHostToDevice));
+                dim3 grid_dims, block_dims;
+                KernelSizing(grid_dims, block_dims, m_cpu_boundary_proposals.size());
+                GatherSparseCpuState<TValue, TBuffer><<<grid_dims, block_dims>>>(
+                    m_device_cpu_boundary_proposals,
+                    static_cast<uint32_t>(m_cpu_boundary_proposals.size()),
+                    m_graph_datum->GetValueDeviceObject(),
+                    m_graph_datum->GetParentDeviceObject());
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_cpu_boundary_proposals.data(),
+                    m_device_cpu_boundary_proposals, bytes,
+                    cudaMemcpyDeviceToHost));
+                events.clear();
+                events.reserve(m_cpu_boundary_proposals.size());
+                for (const auto &state : m_cpu_boundary_proposals) {
+                    const uint32_t version = ++m_repair_source_versions[state.dst];
+                    events.push_back({state.dst, static_cast<TValue>(state.value),
+                                      state.parent, epoch, version, kind});
+                }
+                return sizeof(RepairBoundaryEvent<TValue>) * events.size();
+            }
+
+            void ScatterCpuRepairEvents(
+                    const std::vector<RepairBoundaryEvent<TValue>> &events,
+                    InsertionRoundStats &stats) {
+                if (events.empty()) return;
+                m_cpu_boundary_proposals.clear();
+                m_cpu_boundary_proposals.reserve(events.size());
+                for (const auto &event : events) {
+                    m_cpu_boundary_proposals.push_back(
+                        {event.source, static_cast<TBuffer>(event.value), event.parent});
+                }
+                EnsureInsertionDeviceCapacity(
+                    &m_device_cpu_boundary_proposals,
+                    &m_device_cpu_boundary_proposal_capacity,
+                    m_cpu_boundary_proposals.size(), stats);
+                const size_t bytes = sizeof(CpuRelaxProposal<TBuffer>) *
+                                     m_cpu_boundary_proposals.size();
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_device_cpu_boundary_proposals,
+                    m_cpu_boundary_proposals.data(), bytes,
+                    cudaMemcpyHostToDevice));
+                dim3 grid_dims, block_dims;
+                KernelSizing(grid_dims, block_dims, m_cpu_boundary_proposals.size());
+                ScatterCpuDirtyState<TValue, TBuffer><<<grid_dims, block_dims>>>(
+                    m_device_cpu_boundary_proposals,
+                    m_cpu_boundary_proposals.size(),
+                    m_graph_datum->GetValueDeviceObject(),
+                    m_graph_datum->GetBufferDeviceObject(),
+                    m_graph_datum->GetParentDeviceObject());
+                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+                stats.cpu_state_scatter_vertices += events.size();
+                stats.cpu_state_scatter_bytes += bytes;
+            }
+
+            struct CpuAffectedClosureStats {
+                uint64_t relaxations = 0;
+                uint64_t scanned_edges = 0;
+                uint64_t rounds = 0;
+            };
+
+            CpuAffectedClosureStats RunCpuOwnedAffectedPullClosure() {
+                const TValue infinity = std::numeric_limits<TValue>::max();
+                CpuAffectedClosureStats stats;
+                bool changed = false;
+                do {
+                    ++stats.rounds;
+                    changed = false;
+                    for (size_t i = 0; i < m_affected_vertices.size(); ++i) {
+                        const index_t dst = m_affected_vertices[i];
+                        if (!m_node_cpu_owner[dst]) continue;
+                        TValue best = m_cpu_node_values[dst];
+                        index_t best_parent = m_cpu_node_parents[dst];
+                        for (uint64_t edge = m_gpu_repair_incoming_offsets[i];
+                             edge < m_gpu_repair_incoming_offsets[i + 1]; ++edge) {
+                            ++stats.scanned_edges;
+                            const index_t src = m_gpu_repair_incoming_sources[edge];
+                            const TValue src_value = m_cpu_node_values[src];
+                            if (src_value == infinity) continue;
+                            const uint64_t candidate_wide =
+                                static_cast<uint64_t>(src_value) +
+                                static_cast<uint64_t>(
+                                    AppImplDeviceObject::DeletionEdgeWeight(src, dst));
+                            if (candidate_wide < static_cast<uint64_t>(best)) {
+                                best = static_cast<TValue>(candidate_wide);
+                                best_parent = src;
+                            }
+                        }
+                        if (best < m_cpu_node_values[dst]) {
+                            m_cpu_node_values[dst] = best;
+                            m_cpu_node_buffers[dst] = best;
+                            m_cpu_node_parents[dst] = best_parent;
+                            m_cpu_dirty_vertices.push_back(dst);
+                            ++stats.relaxations;
+                            changed = true;
+                        }
+                    }
+                } while (changed);
+                return stats;
             }
 
             void RunGpuAffectedRepair(index_t batch) {
@@ -2667,9 +3464,8 @@ namespace sepgraph {
                 }
 
                 Stopwatch sw_topology(true);
-                m_reverse_index.MaterializeIncoming(
-                    m_affected_vertices,
-                    m_gpu_repair_incoming_offsets,
+                const auto incoming_metrics = m_reverse_index.MaterializeIncoming(
+                    m_affected_vertices, m_gpu_repair_incoming_offsets,
                     m_gpu_repair_incoming_sources);
                 sw_topology.stop();
 
@@ -2697,37 +3493,396 @@ namespace sepgraph {
                 dim3 grid_dims, block_dims;
                 KernelSizing(grid_dims, block_dims, m_affected_vertices.size());
                 Stopwatch sw_closure(true);
-                unsigned int changed = 0;
-                uint32_t iterations = 0;
-                do {
-                    GROUTE_CUDA_CHECK(cudaMemset(
-                        m_device_gpu_repair_changed, 0, sizeof(unsigned int)));
-                    GpuAffectedPullRelax<AppImplDeviceObject, TValue, TBuffer>
-                        <<<grid_dims, block_dims>>>(
-                            *m_app_inst,
-                            m_device_affected_vertices.GetDeviceDataPtr(),
-                            static_cast<uint32_t>(m_affected_vertices.size()),
-                            m_device_gpu_repair_offsets,
-                            m_device_gpu_repair_sources,
-                            graph_datum.GetValueDeviceObject(),
-                            graph_datum.GetBufferDeviceObject(),
-                            graph_datum.GetParentDeviceObject(),
-                            std::numeric_limits<TValue>::max(),
-                            m_device_gpu_repair_changed);
-                    GROUTE_CUDA_CHECK(cudaMemcpy(
-                        &changed,
-                        m_device_gpu_repair_changed,
-                        sizeof(unsigned int),
-                        cudaMemcpyDeviceToHost));
-                    ++iterations;
-                    if (iterations > m_affected_vertices.size() + 1) {
-                        LOG("[B2-GPU-REPAIR] protocol_error=no_convergence batch=%u iterations=%u affected=%llu\n",
-                            batch,
-                            iterations,
-                            static_cast<unsigned long long>(m_affected_vertices.size()));
+                const bool owner_local_repair = m_cpu_domain_map_enabled;
+                if (owner_local_repair) {
+                    if (!m_cpu_domain_state_initialized) {
+                        LOG("[E2C-DELETE] protocol_error=repair_before_state_initialize batch=%u\n",
+                            batch);
                         std::abort();
                     }
-                } while (changed != 0);
+                    const TValue infinity = std::numeric_limits<TValue>::max();
+                    for (const index_t vertex : m_affected_vertices) {
+                        if (m_node_cpu_owner[vertex]) {
+                            m_cpu_node_values[vertex] = infinity;
+                            m_cpu_node_buffers[vertex] = infinity;
+                            m_cpu_node_parents[vertex] =
+                                std::numeric_limits<index_t>::max();
+                        }
+                    }
+                }
+
+                unsigned int changed = 0;
+                uint32_t iterations = 0;
+                uint64_t cpu_relaxations = 0;
+                uint64_t boundary_bytes = 0;
+                uint64_t boundary_events_sent = 0;
+                uint64_t boundary_events_accepted = 0;
+                uint64_t boundary_events_rejected = 0;
+                InsertionRoundStats repair_stats{};
+                const uint32_t repair_epoch = m_cpu_domain_state_epoch + 1;
+                std::vector<index_t> pending_gpu_sources;
+                std::unordered_set<index_t> gpu_sources_with_cpu_dependency;
+                std::unordered_set<index_t> cpu_sources_with_gpu_dependency;
+                uint64_t gpu_owned_incoming_edges = 0;
+                if (owner_local_repair) {
+                    for (size_t i = 0; i < m_affected_vertices.size(); ++i) {
+                        if (!m_node_cpu_owner[m_affected_vertices[i]]) {
+                            gpu_owned_incoming_edges +=
+                                m_gpu_repair_incoming_offsets[i + 1] -
+                                m_gpu_repair_incoming_offsets[i];
+                        }
+                        for (uint64_t edge = m_gpu_repair_incoming_offsets[i];
+                             edge < m_gpu_repair_incoming_offsets[i + 1]; ++edge) {
+                            const index_t source = m_gpu_repair_incoming_sources[edge];
+                            if (m_node_cpu_owner[m_affected_vertices[i]] &&
+                                !m_node_cpu_owner[source]) {
+                                pending_gpu_sources.push_back(source);
+                                gpu_sources_with_cpu_dependency.insert(source);
+                            } else if (!m_node_cpu_owner[m_affected_vertices[i]] &&
+                                       m_node_cpu_owner[source]) {
+                                cpu_sources_with_gpu_dependency.insert(source);
+                            }
+                        }
+                    }
+                }
+
+                if (!owner_local_repair) {
+                    do {
+                        GROUTE_CUDA_CHECK(cudaMemset(
+                            m_device_gpu_repair_changed, 0, sizeof(unsigned int)));
+                        GpuAffectedPullRelax<AppImplDeviceObject, TValue, TBuffer>
+                            <<<grid_dims, block_dims>>>(
+                                *m_app_inst,
+                                m_device_affected_vertices.GetDeviceDataPtr(),
+                                static_cast<uint32_t>(m_affected_vertices.size()),
+                                m_device_gpu_repair_offsets,
+                                m_device_gpu_repair_sources,
+                                graph_datum.GetValueDeviceObject(),
+                                graph_datum.GetBufferDeviceObject(),
+                                graph_datum.GetParentDeviceObject(),
+                                std::numeric_limits<TValue>::max(),
+                                nullptr,
+                                m_device_gpu_repair_changed,
+                                nullptr);
+                        GROUTE_CUDA_CHECK(cudaMemcpy(
+                            &changed,
+                            m_device_gpu_repair_changed,
+                            sizeof(unsigned int),
+                            cudaMemcpyDeviceToHost));
+                        ++iterations;
+                        if (iterations > m_affected_vertices.size() + 1) {
+                            LOG("[B2-GPU-REPAIR] protocol_error=no_convergence batch=%u iterations=%u affected=%llu\n",
+                                batch,
+                                iterations,
+                                static_cast<unsigned long long>(m_affected_vertices.size()));
+                            std::abort();
+                        }
+                    } while (changed != 0);
+                } else {
+                    using BoundaryEvent = RepairBoundaryEvent<TValue>;
+                    const size_t channel_capacity = std::max<size_t>(
+                        1, std::max(m_affected_vertices.size(),
+                                    pending_gpu_sources.size()));
+                    runtime::DualDomainEventRuntime<BoundaryEvent> event_runtime(
+                        channel_capacity);
+                    runtime::SourceVersionGate cpu_version_gate(graph_datum.nnodes);
+                    runtime::SourceVersionGate gpu_version_gate(graph_datum.nnodes);
+                    event_runtime.BeginEpoch(repair_epoch);
+                    cpu_version_gate.BeginEpoch(repair_epoch);
+                    gpu_version_gate.BeginEpoch(repair_epoch);
+                    std::atomic<bool> stop_cpu{false};
+                    std::atomic<uint64_t> cpu_relaxations_async{0};
+                    std::atomic<uint64_t> sent_async{0};
+                    std::atomic<uint64_t> accepted_async{0};
+                    std::atomic<uint64_t> rejected_async{0};
+                    std::atomic<uint64_t> boundary_bytes_async{0};
+                    std::atomic<uint64_t> cpu_scanned_edges_async{0};
+                    std::atomic<uint64_t> cpu_closure_rounds_async{0};
+                    std::atomic<uint64_t> cpu_closure_calls_async{0};
+                    std::atomic<uint64_t> cpu_idle_polls_async{0};
+                    std::atomic<uint64_t> event_candidate_records_async{0};
+                    std::atomic<bool> cpu_initial_work{true};
+                    using RuntimeClock = std::chrono::steady_clock;
+                    const auto runtime_origin = RuntimeClock::now();
+                    auto runtime_ms = [&]() {
+                        return std::chrono::duration<double, std::milli>(
+                            RuntimeClock::now() - runtime_origin).count();
+                    };
+                    std::vector<std::pair<double, double>> cpu_useful_intervals;
+                    std::vector<std::pair<double, double>> gpu_useful_intervals;
+                    event_runtime.AddLocalWork(runtime::ExecutionDomain::CPU);
+                    Stopwatch sw_dependency_fence(true);
+                    do {
+                        GROUTE_CUDA_CHECK(cudaMemset(
+                            m_device_gpu_repair_changed, 0,
+                            sizeof(unsigned int)));
+                        GpuAffectedPullRelax<AppImplDeviceObject, TValue, TBuffer>
+                            <<<grid_dims, block_dims>>>(
+                                *m_app_inst,
+                                m_device_affected_vertices.GetDeviceDataPtr(),
+                                static_cast<uint32_t>(m_affected_vertices.size()),
+                                m_device_gpu_repair_offsets,
+                                m_device_gpu_repair_sources,
+                                graph_datum.GetValueDeviceObject(),
+                                graph_datum.GetBufferDeviceObject(),
+                                graph_datum.GetParentDeviceObject(),
+                                std::numeric_limits<TValue>::max(),
+                                m_device_cpu_destination_flags,
+                                m_device_gpu_repair_changed,
+                                nullptr);
+                        GROUTE_CUDA_CHECK(cudaMemcpy(
+                            &changed, m_device_gpu_repair_changed,
+                            sizeof(unsigned int), cudaMemcpyDeviceToHost));
+                        ++iterations;
+                    } while (changed != 0);
+                    sw_dependency_fence.stop();
+                    std::vector<BoundaryEvent> initial_events;
+                    event_candidate_records_async.fetch_add(
+                        pending_gpu_sources.size(), std::memory_order_relaxed);
+                    boundary_bytes_async.fetch_add(
+                        GatherGpuRepairBoundaryEvents(
+                            pending_gpu_sources,
+                            RepairBoundaryEventKind::Invalidation,
+                            repair_epoch, repair_stats, initial_events),
+                        std::memory_order_relaxed);
+                    for (const auto &event : initial_events) {
+                        if (!event_runtime.TryPublish(
+                                runtime::ExecutionDomain::GPU, event)) {
+                            LOG("[E3B-DELETE] protocol_error=initial_channel_capacity events=%llu capacity=%llu\n",
+                                static_cast<unsigned long long>(initial_events.size()),
+                                static_cast<unsigned long long>(channel_capacity));
+                            std::abort();
+                        }
+                        sent_async.fetch_add(1, std::memory_order_relaxed);
+                    }
+
+                    std::thread cpu_executor([&]() {
+                        std::vector<BoundaryEvent> accepted_events;
+                        while (!stop_cpu.load(std::memory_order_acquire)) {
+                            accepted_events.clear();
+                            bool run_closure = cpu_initial_work.exchange(
+                                false, std::memory_order_acq_rel);
+                            BoundaryEvent event{};
+                            while (event_runtime.TryReceive(
+                                       runtime::ExecutionDomain::CPU, event)) {
+                                if (cpu_version_gate.Accept(
+                                        event.epoch, event.source, event.version)) {
+                                    if (accepted_events.empty() && !run_closure) {
+                                        event_runtime.AddLocalWork(
+                                            runtime::ExecutionDomain::CPU);
+                                    }
+                                    run_closure = true;
+                                    m_cpu_node_values[event.source] = event.value;
+                                    m_cpu_node_parents[event.source] = event.parent;
+                                    accepted_events.push_back(event);
+                                    accepted_async.fetch_add(1, std::memory_order_relaxed);
+                                } else {
+                                    rejected_async.fetch_add(1, std::memory_order_relaxed);
+                                }
+                                event_runtime.CompleteEvent(
+                                    runtime::ExecutionDomain::CPU);
+                            }
+                            if (!run_closure) {
+                                cpu_idle_polls_async.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                std::this_thread::yield();
+                                continue;
+                            }
+                            m_cpu_dirty_vertices.clear();
+                            const double cpu_begin_ms = runtime_ms();
+                            const CpuAffectedClosureStats closure_stats =
+                                RunCpuOwnedAffectedPullClosure();
+                            cpu_useful_intervals.push_back(
+                                {cpu_begin_ms, runtime_ms()});
+                            cpu_relaxations_async.fetch_add(
+                                closure_stats.relaxations, std::memory_order_relaxed);
+                            cpu_scanned_edges_async.fetch_add(
+                                closure_stats.scanned_edges, std::memory_order_relaxed);
+                            cpu_closure_rounds_async.fetch_add(
+                                closure_stats.rounds, std::memory_order_relaxed);
+                            cpu_closure_calls_async.fetch_add(
+                                1, std::memory_order_relaxed);
+                            event_candidate_records_async.fetch_add(
+                                m_cpu_dirty_vertices.size(), std::memory_order_relaxed);
+                            for (const index_t vertex : m_cpu_dirty_vertices) {
+                                const uint32_t version =
+                                    ++m_repair_source_versions[vertex];
+                                const BoundaryEvent output{
+                                    vertex, m_cpu_node_values[vertex],
+                                    m_cpu_node_parents[vertex], repair_epoch,
+                                    version, RepairBoundaryEventKind::Replacement};
+                                while (!event_runtime.TryPublish(
+                                           runtime::ExecutionDomain::CPU, output)) {
+                                    std::this_thread::yield();
+                                }
+                                sent_async.fetch_add(1, std::memory_order_relaxed);
+                                boundary_bytes_async.fetch_add(
+                                    sizeof(BoundaryEvent), std::memory_order_relaxed);
+                            }
+                            event_runtime.CompleteLocalWork(
+                                runtime::ExecutionDomain::CPU);
+                        }
+                    });
+
+                    bool gpu_active = false;
+                    uint64_t coordinator_polls = 0;
+                    uint64_t coordinator_idle_polls = 0;
+                    Stopwatch sw_async_runtime(true);
+                    while (true) {
+                        ++coordinator_polls;
+                        std::vector<BoundaryEvent> cpu_events;
+                        BoundaryEvent cpu_event{};
+                        bool activates_gpu = false;
+                        while (event_runtime.TryReceive(
+                                   runtime::ExecutionDomain::GPU, cpu_event)) {
+                            if (gpu_version_gate.Accept(
+                                    cpu_event.epoch, cpu_event.source,
+                                    cpu_event.version)) {
+                                cpu_events.push_back(cpu_event);
+                                accepted_async.fetch_add(1, std::memory_order_relaxed);
+                                activates_gpu = activates_gpu ||
+                                    cpu_sources_with_gpu_dependency.count(
+                                        cpu_event.source) != 0;
+                            } else {
+                                rejected_async.fetch_add(1, std::memory_order_relaxed);
+                            }
+                            if (activates_gpu && !gpu_active) {
+                                event_runtime.AddLocalWork(
+                                    runtime::ExecutionDomain::GPU);
+                                gpu_active = true;
+                            }
+                            event_runtime.CompleteEvent(
+                                runtime::ExecutionDomain::GPU);
+                        }
+                        ScatterCpuRepairEvents(cpu_events, repair_stats);
+
+                        if (gpu_active) {
+                            const double gpu_begin_ms = runtime_ms();
+                            GROUTE_CUDA_CHECK(cudaMemset(
+                                m_device_gpu_repair_changed, 0,
+                                sizeof(unsigned int)));
+                            GpuAffectedPullRelax<AppImplDeviceObject, TValue, TBuffer>
+                                <<<grid_dims, block_dims>>>(
+                                    *m_app_inst,
+                                    m_device_affected_vertices.GetDeviceDataPtr(),
+                                    static_cast<uint32_t>(m_affected_vertices.size()),
+                                    m_device_gpu_repair_offsets,
+                                    m_device_gpu_repair_sources,
+                                    graph_datum.GetValueDeviceObject(),
+                                    graph_datum.GetBufferDeviceObject(),
+                                    graph_datum.GetParentDeviceObject(),
+                                    std::numeric_limits<TValue>::max(),
+                                    m_device_cpu_destination_flags,
+                                    m_device_gpu_repair_changed,
+                                    m_device_gpu_repair_changed_vertices);
+                            GROUTE_CUDA_CHECK(cudaMemcpy(
+                                &changed, m_device_gpu_repair_changed,
+                                sizeof(unsigned int), cudaMemcpyDeviceToHost));
+                            gpu_useful_intervals.push_back(
+                                {gpu_begin_ms, runtime_ms()});
+                            ++iterations;
+                            if (iterations > m_affected_vertices.size() + 1) {
+                                LOG("[E3B-DELETE] protocol_error=no_convergence batch=%u iterations=%u\n",
+                                    batch, iterations);
+                                std::abort();
+                            }
+                            if (changed != 0) {
+                                std::vector<index_t> changed_sources(changed);
+                                GROUTE_CUDA_CHECK(cudaMemcpy(
+                                    changed_sources.data(),
+                                    m_device_gpu_repair_changed_vertices,
+                                    sizeof(index_t) * changed,
+                                    cudaMemcpyDeviceToHost));
+                                pending_gpu_sources.clear();
+                                for (const index_t source : changed_sources) {
+                                    if (gpu_sources_with_cpu_dependency.count(source) != 0) {
+                                        pending_gpu_sources.push_back(source);
+                                    }
+                                }
+                                std::vector<BoundaryEvent> gpu_events;
+                                event_candidate_records_async.fetch_add(
+                                    pending_gpu_sources.size(),
+                                    std::memory_order_relaxed);
+                                boundary_bytes_async.fetch_add(
+                                    GatherGpuRepairBoundaryEvents(
+                                        pending_gpu_sources,
+                                        RepairBoundaryEventKind::Replacement,
+                                        repair_epoch, repair_stats, gpu_events),
+                                    std::memory_order_relaxed);
+                                for (const auto &event : gpu_events) {
+                                    while (!event_runtime.TryPublish(
+                                               runtime::ExecutionDomain::GPU,
+                                               event)) {
+                                        std::this_thread::yield();
+                                    }
+                                    sent_async.fetch_add(1, std::memory_order_relaxed);
+                                }
+                            } else {
+                                event_runtime.CompleteLocalWork(
+                                    runtime::ExecutionDomain::GPU);
+                                gpu_active = false;
+                            }
+                        }
+
+                        if (event_runtime.ObserveQuiescence(repair_epoch)) break;
+                        if (!gpu_active) {
+                            ++coordinator_idle_polls;
+                            std::this_thread::yield();
+                        }
+                    }
+                    stop_cpu.store(true, std::memory_order_release);
+                    cpu_executor.join();
+                    sw_async_runtime.stop();
+                    double cpu_useful_ms = 0.0;
+                    double gpu_useful_ms = 0.0;
+                    double useful_overlap_ms = 0.0;
+                    for (const auto &interval : cpu_useful_intervals) {
+                        cpu_useful_ms += interval.second - interval.first;
+                    }
+                    for (const auto &interval : gpu_useful_intervals) {
+                        gpu_useful_ms += interval.second - interval.first;
+                    }
+                    for (const auto &cpu_interval : cpu_useful_intervals) {
+                        for (const auto &gpu_interval : gpu_useful_intervals) {
+                            useful_overlap_ms += std::max(
+                                0.0, std::min(cpu_interval.second,
+                                              gpu_interval.second) -
+                                     std::max(cpu_interval.first,
+                                              gpu_interval.first));
+                        }
+                    }
+                    const auto runtime_snapshot = event_runtime.Snapshot();
+                    cpu_relaxations = cpu_relaxations_async.load();
+                    boundary_bytes = boundary_bytes_async.load();
+                    boundary_events_sent = sent_async.load();
+                    boundary_events_accepted = accepted_async.load();
+                    boundary_events_rejected = rejected_async.load();
+                    const uint64_t candidate_records =
+                        event_candidate_records_async.load();
+                    const double coalescing_ratio = candidate_records == 0 ? 0.0 :
+                        1.0 - static_cast<double>(boundary_events_sent) /
+                                  static_cast<double>(candidate_records);
+                    LOG("[E3B-RUNTIME][batch %u] gpu_iterations=%u coordinator_polls=%llu coordinator_idle_polls=%llu cpu_idle_polls=%llu channel_capacity=%llu peak_inflight=%llu dependency_fence_ms=%.3f async_runtime_ms=%.3f cpu_useful_ms=%.3f gpu_useful_ms=%.3f useful_overlap_ms=%.3f cpu_closure_calls=%llu cpu_closure_rounds=%llu cpu_scanned_edges=%llu gpu_scanned_edges=%llu event_candidate_records=%llu coalescing_ratio=%.6f global_barriers=1 cpu_to_gpu_queued=%llu gpu_to_cpu_queued=%llu local_credit=%llu event_credit=%llu\n",
+                        batch, iterations,
+                        static_cast<unsigned long long>(coordinator_polls),
+                        static_cast<unsigned long long>(coordinator_idle_polls),
+                        static_cast<unsigned long long>(cpu_idle_polls_async.load()),
+                        static_cast<unsigned long long>(channel_capacity),
+                        static_cast<unsigned long long>(event_runtime.PeakOutstandingEvents()),
+                        sw_dependency_fence.ms(), sw_async_runtime.ms(),
+                        cpu_useful_ms, gpu_useful_ms, useful_overlap_ms,
+                        static_cast<unsigned long long>(cpu_closure_calls_async.load()),
+                        static_cast<unsigned long long>(cpu_closure_rounds_async.load()),
+                        static_cast<unsigned long long>(cpu_scanned_edges_async.load()),
+                        static_cast<unsigned long long>(
+                            gpu_owned_incoming_edges * iterations),
+                        static_cast<unsigned long long>(candidate_records),
+                        coalescing_ratio,
+                        static_cast<unsigned long long>(runtime_snapshot.cpu_to_gpu_queued),
+                        static_cast<unsigned long long>(runtime_snapshot.gpu_to_cpu_queued),
+                        static_cast<unsigned long long>(runtime_snapshot.local_work),
+                        static_cast<unsigned long long>(runtime_snapshot.outstanding_events));
+                }
                 FinalizeGpuAffectedRepair<TValue, TBuffer><<<grid_dims, block_dims>>>(
                     m_device_affected_vertices.GetDeviceDataPtr(),
                     static_cast<uint32_t>(m_affected_vertices.size()),
@@ -2736,6 +3891,29 @@ namespace sepgraph {
                     graph_datum.m_node_reset_datum);
                 GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
                 sw_closure.stop();
+                if (owner_local_repair) {
+                    ++m_cpu_domain_state_epoch;
+                    const long long outstanding_credit =
+                        static_cast<long long>(boundary_events_sent) -
+                        static_cast<long long>(boundary_events_accepted) -
+                        static_cast<long long>(boundary_events_rejected);
+                    LOG("[E3B-DELETE][batch %u] cpu_affected_relax=%llu boundary_bytes=%llu events_sent=%llu events_accepted=%llu stale_or_duplicate=%llu outstanding_credit=%lld cpu_state_scatter_vertices=%llu cpu_state_scatter_bytes=%llu state_epoch=%u\n",
+                        batch,
+                        static_cast<unsigned long long>(cpu_relaxations),
+                        static_cast<unsigned long long>(boundary_bytes),
+                        static_cast<unsigned long long>(boundary_events_sent),
+                        static_cast<unsigned long long>(boundary_events_accepted),
+                        static_cast<unsigned long long>(boundary_events_rejected),
+                        outstanding_credit,
+                        static_cast<unsigned long long>(repair_stats.cpu_state_scatter_vertices),
+                        static_cast<unsigned long long>(repair_stats.cpu_state_scatter_bytes),
+                        m_cpu_domain_state_epoch);
+                    if (outstanding_credit != 0) {
+                        LOG("[E3B-DELETE] protocol_error=credit_leak batch=%u outstanding=%lld\n",
+                            batch, outstanding_credit);
+                        std::abort();
+                    }
+                }
 
                 const uint64_t h2d_bytes =
                     sizeof(uint64_t) * m_gpu_repair_incoming_offsets.size() +
@@ -2744,10 +3922,13 @@ namespace sepgraph {
                     sizeof(uint64_t) * (m_device_gpu_repair_offset_capacity + 1) +
                     sizeof(index_t) * m_device_gpu_repair_source_capacity +
                     sizeof(unsigned int);
-                LOG("[B2-GPU-REPAIR][batch %u] affected=%llu incoming_edges=%llu topology_ms=%.3f allocation_ms=%.3f h2d_bytes=%llu h2d_ms=%.3f iterations=%u closure_ms=%.3f device_bytes=%llu\n",
+                LOG("[B2-GPU-REPAIR][batch %u] affected=%llu incoming_edges=%llu base_edges_scanned=%llu delta_records_scanned=%llu merge_output_sources=%llu topology_ms=%.3f allocation_ms=%.3f h2d_bytes=%llu h2d_ms=%.3f iterations=%u closure_ms=%.3f device_bytes=%llu\n",
                     batch,
                     static_cast<unsigned long long>(m_affected_vertices.size()),
                     static_cast<unsigned long long>(m_gpu_repair_incoming_sources.size()),
+                    static_cast<unsigned long long>(incoming_metrics.base_edges_scanned),
+                    static_cast<unsigned long long>(incoming_metrics.delta_records_scanned),
+                    static_cast<unsigned long long>(incoming_metrics.output_sources),
                     sw_topology.ms(),
                     sw_allocate.ms(),
                     static_cast<unsigned long long>(h2d_bytes),
@@ -3098,7 +4279,8 @@ namespace sepgraph {
 
             void StageGpuToCpuBoundary(InsertionRoundStats &stats) {
                 if (!m_insertion_epoch_active ||
-                    FLAGS_sssp_cpu_partition_capacity == 0) return;
+                    (FLAGS_sssp_cpu_partition_capacity == 0 &&
+                     !m_cpu_domain_map_enabled)) return;
 
                 GraphDatum &graph_datum = *m_graph_datum;
                 const TBuffer infinity = std::numeric_limits<TBuffer>::max();
@@ -3150,7 +4332,53 @@ namespace sepgraph {
                         m_cpu_node_buffers[proposal.dst] = proposal.value;
                         m_cpu_node_parents[proposal.dst] = proposal.parent;
                         m_cpu_frontier.push_back(proposal.dst);
+                        m_cpu_dirty_vertices.push_back(proposal.dst);
                     }
+                }
+            }
+
+            void StageCpuOwnedActiveSources(InsertionRoundStats &stats) {
+                if (!m_cpu_domain_map_enabled || !m_insertion_epoch_active) return;
+                GraphDatum &graph_datum = *m_graph_datum;
+                uint64_t staged = 0;
+                uint64_t staged_edges = 0;
+                for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                    const index_t count = graph_datum.seg_active_num[seg];
+                    if (count == 0) continue;
+                    std::vector<index_t> active_sources(count);
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        active_sources.data(),
+                        graph_datum.m_wl_array_in_seg[seg].GetDeviceDataPtr(),
+                        sizeof(index_t) * count, cudaMemcpyDeviceToHost));
+                    std::vector<index_t> gpu_sources;
+                    gpu_sources.reserve(count);
+                    for (const index_t src : active_sources) {
+                        if (src < graph_datum.nnodes && m_node_cpu_owner[src]) {
+                            m_cpu_frontier.push_back(src);
+                            ++staged;
+                            staged_edges += m_chunk_store->Descriptor(src).degree;
+                        } else {
+                            gpu_sources.push_back(src);
+                        }
+                    }
+                    if (!gpu_sources.empty()) {
+                        GROUTE_CUDA_CHECK(cudaMemcpy(
+                            graph_datum.m_wl_array_in_seg[seg].GetDeviceDataPtr(),
+                            gpu_sources.data(),
+                            sizeof(index_t) * gpu_sources.size(),
+                            cudaMemcpyHostToDevice));
+                    }
+                    graph_datum.seg_active_num[seg] = gpu_sources.size();
+                    m_running_info.input_active_count_seg[seg] = gpu_sources.size();
+                }
+                stats.cpu_removed_gpu_sources += staged;
+                stats.cpu_removed_gpu_source_edges += staged_edges;
+                if (staged != 0) {
+                    LOG("[E2-DOMAIN-SOURCE] epoch=%u round=%llu staged_cpu_sources=%llu removed_gpu_source_edges=%llu\n",
+                        m_insertion_epoch,
+                        static_cast<unsigned long long>(m_insertion_convergence_round + 1),
+                        static_cast<unsigned long long>(staged),
+                        static_cast<unsigned long long>(staged_edges));
                 }
             }
 
@@ -3189,6 +4417,7 @@ namespace sepgraph {
                                     m_cpu_node_buffers[dst] = candidate;
                                     m_cpu_node_parents[dst] = src;
                                     m_cpu_frontier.push_back(dst);
+                                    m_cpu_dirty_vertices.push_back(dst);
                                     ++stats.cpu_local_relax_success;
                                 }
                             } else {
@@ -3207,22 +4436,26 @@ namespace sepgraph {
                     InsertionRoundStats &stats) {
                 GraphDatum &graph_datum = *m_graph_datum;
                 if (!cpu_closure_ran) return;
-                for (const index_t seg : m_cpu_owned_segments) {
-                    const index_t begin = m_groute_context->seg_snode[seg];
-                    const index_t end = m_groute_context->seg_enode[seg];
-                    const size_t count = end - begin;
-                    GROUTE_CUDA_CHECK(cudaMemcpy(
-                        graph_datum.GetValueDeviceObject() + begin,
-                        m_cpu_node_values.data() + begin,
-                        sizeof(TValue) * count, cudaMemcpyHostToDevice));
-                    GROUTE_CUDA_CHECK(cudaMemcpy(
-                        graph_datum.GetBufferDeviceObject() + begin,
-                        m_cpu_node_buffers.data() + begin,
-                        sizeof(TBuffer) * count, cudaMemcpyHostToDevice));
-                    GROUTE_CUDA_CHECK(cudaMemcpy(
-                        graph_datum.GetParentDeviceObject() + begin,
-                        m_cpu_node_parents.data() + begin,
-                        sizeof(index_t) * count, cudaMemcpyHostToDevice));
+                if (m_cpu_domain_map_enabled) {
+                    ScatterCpuDomainDirtyState(stats);
+                } else {
+                    for (const index_t seg : m_cpu_owned_segments) {
+                        const index_t begin = m_groute_context->seg_snode[seg];
+                        const index_t end = m_groute_context->seg_enode[seg];
+                        const size_t count = end - begin;
+                        GROUTE_CUDA_CHECK(cudaMemcpy(
+                            graph_datum.GetValueDeviceObject() + begin,
+                            m_cpu_node_values.data() + begin,
+                            sizeof(TValue) * count, cudaMemcpyHostToDevice));
+                        GROUTE_CUDA_CHECK(cudaMemcpy(
+                            graph_datum.GetBufferDeviceObject() + begin,
+                            m_cpu_node_buffers.data() + begin,
+                            sizeof(TBuffer) * count, cudaMemcpyHostToDevice));
+                        GROUTE_CUDA_CHECK(cudaMemcpy(
+                            graph_datum.GetParentDeviceObject() + begin,
+                            m_cpu_node_parents.data() + begin,
+                            sizeof(index_t) * count, cudaMemcpyHostToDevice));
+                    }
                 }
 
                 for (const auto &proposal : gpu_boundary) {
@@ -3243,6 +4476,128 @@ namespace sepgraph {
                     sizeof(CpuRelaxProposal<TBuffer>) * gpu_boundary.size();
             }
 
+            void CaptureE0BActiveWork() {
+                if (!m_e0b_trace.is_open() || !m_insertion_epoch_active) return;
+                std::fill(m_e0b_region_activity.begin(),
+                          m_e0b_region_activity.end(), E0BRegionActivity{});
+                m_e0b_active_sources.clear();
+                m_e0b_success_records.clear();
+                m_e0b_success_edges.clear();
+                m_e0b_success_total = 0;
+                for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                    const index_t count = m_graph_datum->seg_active_num[seg];
+                    if (count == 0) continue;
+                    const index_t stream_id = seg % FLAGS_n_stream;
+                    std::vector<index_t> active_sources(count);
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        active_sources.data(),
+                        m_graph_datum->m_wl_array_in_seg[seg].GetDeviceDataPtr(),
+                        sizeof(index_t) * count,
+                        cudaMemcpyDeviceToHost));
+                    E0BRegionActivity &activity = m_e0b_region_activity[seg];
+                    activity.active_vertices += count;
+                    for (const index_t src : active_sources) {
+                        if (src >= m_graph_datum->nnodes) {
+                            LOG("[E0B-TRACE] protocol_error=active_source_oob src=%u nnodes=%u\n",
+                                src, m_graph_datum->nnodes);
+                            std::abort();
+                        }
+                        activity.scanned_edges +=
+                            m_chunk_store->Descriptor(src).degree;
+                        m_e0b_active_sources.push_back(
+                            {src, m_chunk_store->Descriptor(src).degree});
+                    }
+                    (void)stream_id;
+                }
+            }
+
+            void CaptureE0BSuccessfulPropagation(uint32_t changed_count) {
+                if (!m_e0b_trace.is_open() || !m_insertion_epoch_active ||
+                    changed_count == 0) return;
+                InsertionRoundStats allocation_stats;
+                EnsureInsertionDeviceCapacity(&m_device_cpu_boundary_proposals,
+                                              &m_device_cpu_boundary_proposal_capacity,
+                                              changed_count,
+                                              allocation_stats);
+                dim3 grid_dims, block_dims;
+                KernelSizing(grid_dims, block_dims, changed_count);
+                GatherSuccessfulPropagation<TValue, TBuffer>
+                    <<<grid_dims, block_dims, 0, m_stream->cuda_stream>>>(
+                        m_device_insertion_changed_vertices.GetDeviceDataPtr(),
+                        changed_count,
+                        m_graph_datum->GetParentDeviceObject(),
+                        m_device_cpu_boundary_proposals);
+                m_cpu_boundary_proposals.resize(changed_count);
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    m_cpu_boundary_proposals.data(),
+                    m_device_cpu_boundary_proposals,
+                    sizeof(CpuRelaxProposal<TBuffer>) * changed_count,
+                    cudaMemcpyDeviceToHost));
+                std::sort(m_cpu_boundary_proposals.begin(),
+                          m_cpu_boundary_proposals.end(),
+                          [](const CpuRelaxProposal<TBuffer> &lhs,
+                             const CpuRelaxProposal<TBuffer> &rhs) {
+                              return lhs.dst != rhs.dst
+                                  ? lhs.dst < rhs.dst
+                                  : lhs.parent < rhs.parent;
+                          });
+                index_t previous_dst = std::numeric_limits<index_t>::max();
+                for (const auto &record : m_cpu_boundary_proposals) {
+                    if (record.dst == previous_dst) continue;
+                    previous_dst = record.dst;
+                    if (record.dst >= m_graph_datum->nnodes ||
+                        record.parent >= m_graph_datum->nnodes) continue;
+                    const index_t src_region = FindSegmentForVertexHost(record.parent);
+                    const index_t dst_region = FindSegmentForVertexHost(record.dst);
+                    if (src_region >= FLAGS_SEGMENT || dst_region >= FLAGS_SEGMENT) {
+                        LOG("[E0B-TRACE] protocol_error=region_lookup_failed src=%u dst=%u\n",
+                            record.parent, record.dst);
+                        std::abort();
+                    }
+                    ++m_e0b_success_edges[{src_region, dst_region}];
+                    m_e0b_success_records.push_back({record.parent, record.dst});
+                    ++m_e0b_success_total;
+                }
+            }
+
+            void EmitE0BTrace(const InsertionRoundStats &stats, double round_wall_ms) {
+                if (!m_e0b_trace.is_open() || !m_insertion_epoch_active) return;
+                uint64_t active_total = 0;
+                uint64_t scanned_total = 0;
+                for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                    const E0BRegionActivity &activity = m_e0b_region_activity[seg];
+                    active_total += activity.active_vertices;
+                    scanned_total += activity.scanned_edges;
+                    if (activity.active_vertices == 0) continue;
+                    m_e0b_trace << "A\t" << m_insertion_epoch << '\t'
+                                << (m_insertion_convergence_round + 1) << '\t'
+                                << seg << '\t' << activity.active_vertices << '\t'
+                                << activity.scanned_edges << '\n';
+                }
+                for (const auto &source : m_e0b_active_sources) {
+                    m_e0b_trace << "S\t" << m_insertion_epoch << '\t'
+                                << (m_insertion_convergence_round + 1) << '\t'
+                                << source.first << '\t' << source.second << '\n';
+                }
+                for (const auto &entry : m_e0b_success_edges) {
+                    m_e0b_trace << "P\t" << m_insertion_epoch << '\t'
+                                << (m_insertion_convergence_round + 1) << '\t'
+                                << entry.first.first << '\t' << entry.first.second
+                                << '\t' << entry.second << '\n';
+                }
+                for (const auto &edge : m_e0b_success_records) {
+                    m_e0b_trace << "E\t" << m_insertion_epoch << '\t'
+                                << (m_insertion_convergence_round + 1) << '\t'
+                                << edge.first << '\t' << edge.second << '\n';
+                }
+                m_e0b_trace << "R\t" << m_insertion_epoch << '\t'
+                            << (m_insertion_convergence_round + 1) << '\t'
+                            << active_total << '\t' << scanned_total << '\t'
+                            << m_e0b_success_total << '\t' << stats.gpu_service_ms
+                            << '\t' << round_wall_ms << '\n';
+                m_e0b_trace.flush();
+            }
+
             void ExecutePolicy_Converge(AlgoVariant *algo_variant) {
                 auto &app_inst = *m_app_inst;
                 GraphDatum &graph_datum = *m_graph_datum;
@@ -3258,27 +4613,70 @@ namespace sepgraph {
                 uint64_t active_edge_span_upper_bound = 0;
                 uint32_t active_partitions = 0;
                 uint32_t kernel_launches = 0;
-                InsertionRoundStats cpu_stats;
-                StageGpuToCpuBoundary(cpu_stats);
-                const bool cpu_closure_ran = !m_cpu_frontier.empty();
-                std::vector<CpuRelaxProposal<TBuffer>> gpu_boundary;
-                m_device_insertion_changed_vertices.ResetAsync(m_stream->cuda_stream);
-                m_stream->Sync();
-                for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; ++seg_idx) {
-                    if (graph_datum.seg_active_num[seg_idx] == 0) {
-                        continue;
-                    }
-                    active_sources += graph_datum.seg_active_num[seg_idx];
-                    active_edge_span_upper_bound +=
-                        m_groute_context->seg_nedge_csr[seg_idx];
-                    active_partitions++;
-                }
-                index_t stream_id;
                 using RoundClock = std::chrono::steady_clock;
                 RoundClock::time_point gpu_start;
                 RoundClock::time_point gpu_end;
                 RoundClock::time_point cpu_start;
                 RoundClock::time_point cpu_end;
+                const bool exact_all_gpu = m_insertion_epoch_active &&
+                    !m_cpu_domain_map_enabled &&
+                    FLAGS_sssp_cpu_partition_capacity == 0;
+                InsertionRoundStats cpu_stats;
+                if (!m_exact_source_frontier_ready) CaptureE0BActiveWork();
+                StageGpuToCpuBoundary(cpu_stats);
+                StageCpuOwnedActiveSources(cpu_stats);
+                const bool cpu_closure_ran = !m_cpu_frontier.empty();
+                std::vector<CpuRelaxProposal<TBuffer>> gpu_boundary;
+                groute::Queue<index_t> &exact_input =
+                    graph_datum.m_wl_array_in_seg[FLAGS_SEGMENT];
+                groute::Queue<index_t> &exact_output =
+                    graph_datum.m_wl_array_in_seg[FLAGS_SEGMENT + 1];
+                if (exact_all_gpu) {
+                    exact_output.ResetAsync(m_stream->cuda_stream);
+                } else {
+                    m_device_insertion_changed_vertices.ResetAsync(
+                        m_stream->cuda_stream);
+                }
+                m_stream->Sync();
+                if (m_insertion_epoch_active && m_device_exact_source_counts == nullptr) {
+                    GROUTE_CUDA_CHECK(cudaMalloc(
+                        reinterpret_cast<void **>(&m_device_exact_source_counts),
+                        4 * sizeof(unsigned long long)));
+                }
+                if (m_insertion_epoch_active) {
+                    GROUTE_CUDA_CHECK(cudaMemset(m_device_exact_source_counts, 0,
+                        4 * sizeof(unsigned long long)));
+                }
+                if (exact_all_gpu && m_exact_source_frontier_ready) {
+                    active_sources = m_exact_source_frontier_count;
+                    active_partitions = active_sources == 0 ? 0 : 1;
+                    const auto &vcsr_graph =
+                        m_vcsr_dev_graph_allocator->DeviceObject();
+                    if (active_sources != 0) {
+                        gpu_start = RoundClock::now();
+                        ExpandExactGpuSources<<<active_sources, 128, 0,
+                            stream[0].cuda_stream>>>(
+                            app_inst,
+                            exact_input.GetDeviceDataPtr(),
+                            active_sources, vcsr_graph,
+                            graph_datum.GetValueDeviceObject(),
+                            graph_datum.GetBufferDeviceObject(),
+                            graph_datum.GetParentDeviceObject(),
+                            exact_output.DeviceObject(),
+                            m_device_exact_source_counts,
+                            m_device_exact_source_counts + 1);
+                        kernel_launches = 1;
+                    }
+                } else {
+                    for (index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT; ++seg_idx) {
+                        if (graph_datum.seg_active_num[seg_idx] == 0) continue;
+                        active_sources += graph_datum.seg_active_num[seg_idx];
+                        active_edge_span_upper_bound +=
+                            m_groute_context->seg_nedge_csr[seg_idx];
+                        active_partitions++;
+                    }
+                }
+                index_t stream_id;
                 const auto gpu_submit_start = RoundClock::now();
                 std::thread cpu_worker;
                 const auto launch_cpu_worker = [&]() {
@@ -3290,6 +4688,7 @@ namespace sepgraph {
                     });
                 };
                 for(index_t seg_idx = 0; seg_idx < FLAGS_SEGMENT ; seg_idx++){
+                    if (exact_all_gpu && m_exact_source_frontier_ready) break;
                     if (graph_datum.seg_active_num[seg_idx] == 0) {
                         continue;
                     }
@@ -3311,23 +4710,38 @@ namespace sepgraph {
                         if (kernel_launches == 0) {
                             gpu_start = RoundClock::now();
                         }
-                        m_vcsr_dev_graph_allocator->SwitchZC();
-                        zcflag = true;
-                        RunSyncPushDDB_Delta(app_inst,seg_snode,seg_enode,seg_sedge_csr,seg_idx,zcflag,
-                           vcsr_graph,
-                           graph_datum,
-                               m_engine_options,
-                               stream[stream_id],
-                               m_device_insertion_changed_vertices.DeviceObject(),
-                               m_insertion_epoch_active,
-                               m_insertion_epoch_active ? m_device_cpu_destination_flags : nullptr,
-                               m_insertion_epoch_active
-                                   ? m_device_gpu_to_cpu_boundary_vertices.DeviceObject()
-                                   : groute::dev::Queue<index_t>(nullptr, nullptr, 0),
-                               m_insertion_epoch_active
-                               ? m_device_gpu_to_cpu_boundary_values : nullptr,
-                           m_insertion_epoch_active
-                               ? m_device_gpu_to_cpu_boundary_parents : nullptr);
+                        if (exact_all_gpu) {
+                            ExpandExactGpuSources<<<graph_datum.seg_active_num[seg_idx],
+                                128, 0, stream[stream_id].cuda_stream>>>(
+                                app_inst,
+                                graph_datum.m_wl_array_in_seg[seg_idx].GetDeviceDataPtr(),
+                                graph_datum.seg_active_num[seg_idx], vcsr_graph,
+                                graph_datum.GetValueDeviceObject(),
+                                graph_datum.GetBufferDeviceObject(),
+                                graph_datum.GetParentDeviceObject(),
+                                m_device_insertion_changed_vertices.DeviceObject(),
+                                m_device_exact_source_counts,
+                                m_device_exact_source_counts + 1);
+                        } else {
+                            m_vcsr_dev_graph_allocator->SwitchZC();
+                            zcflag = true;
+                            RunSyncPushDDB_Delta(app_inst,seg_snode,seg_enode,seg_sedge_csr,seg_idx,zcflag,
+                               vcsr_graph,
+                               graph_datum,
+                                   m_engine_options,
+                                   stream[stream_id],
+                                   m_device_insertion_changed_vertices.DeviceObject(),
+                                   m_insertion_epoch_active,
+                                   m_insertion_epoch_active ? m_device_cpu_destination_flags : nullptr,
+                                   m_insertion_epoch_active
+                                       ? m_device_gpu_to_cpu_boundary_vertices.DeviceObject()
+                                       : groute::dev::Queue<index_t>(nullptr, nullptr, 0),
+                                   m_insertion_epoch_active
+                                   ? m_device_gpu_to_cpu_boundary_values : nullptr,
+                                   m_insertion_epoch_active
+                                   ? m_device_gpu_to_cpu_boundary_parents : nullptr,
+                                   graph_datum.seg_active_num[seg_idx]);
+                        }
                         kernel_launches++;
                         launch_cpu_worker();
                     }
@@ -3344,6 +4758,25 @@ namespace sepgraph {
                      stream[stream_idx].Sync();
                }
                gpu_end = RoundClock::now();
+               unsigned long long exact_counts[2] = {0, 0};
+               if (m_insertion_epoch_active && !m_cpu_domain_map_enabled &&
+                   FLAGS_sssp_cpu_partition_capacity == 0) {
+                   GROUTE_CUDA_CHECK(cudaMemcpy(exact_counts,
+                       m_device_exact_source_counts, sizeof(exact_counts),
+                       cudaMemcpyDeviceToHost));
+                   if (exact_counts[0] == 0 && exact_counts[1] != 0) {
+                       LOG("[E4-R1] protocol_error=edges_without_processed_source epoch=%u round=%llu sources=%llu edges=%llu\n",
+                           m_insertion_epoch,
+                           static_cast<unsigned long long>(m_insertion_convergence_round + 1),
+                           exact_counts[0], exact_counts[1]);
+                       std::abort();
+                   }
+                   LOG("[E4-R1-EXACT] epoch=%u round=%llu offered_sources=%llu processed_sources=%llu logical_edges=%llu processed_edges=%llu partition_rebuilds=0 frontier_syncs=1\n",
+                       m_insertion_epoch,
+                       static_cast<unsigned long long>(m_insertion_convergence_round + 1),
+                       static_cast<unsigned long long>(active_sources),
+                       exact_counts[0], exact_counts[1], exact_counts[1]);
+               }
                if (cpu_worker.joinable()) {
                    cpu_worker.join();
                }
@@ -3377,8 +4810,13 @@ namespace sepgraph {
                CommitCpuOwnedClosure(gpu_boundary, cpu_closure_ran, cpu_stats);
                StageGpuToCpuBoundary(cpu_stats);
 
-               PostComputationBW();
+               if (exact_all_gpu) {
+                   AdvanceExactSourceFrontier(exact_input, exact_output);
+               } else {
+                   PostComputationBW();
+               }
                sw_execution.stop();
+               EmitE0BTrace(cpu_stats, sw_execution.ms());
                const uint64_t reported_round = m_insertion_epoch_active
                    ? m_insertion_convergence_round + 1
                    : m_running_info.current_round;
@@ -3403,16 +4841,21 @@ namespace sepgraph {
                        next_active_partitions,
                        sw_execution.ms());
                }
-               LOG("[DUAL-RUNTIME-ROUND] epoch=%u round=%llu gpu_kernels=%u gpu_vertices=%llu gpu_edge_span_upper_bound=%llu cpu_vertices=%llu cpu_edges=%llu cpu_closure_rounds=%llu cpu_local_relax=%llu gpu_to_cpu_items=%llu gpu_to_cpu_bytes=%llu cpu_to_gpu_items=%llu cpu_to_gpu_bytes=%llu cpu_to_gpu_success=%llu gpu_submit_ms=%.3f gpu_service_ms=%.3f cpu_service_ms=%.3f overlap_ms=%.3f cpu_wait_ms=%.3f gpu_wait_ms=%.3f concurrent=%d proposal_alloc_ms=%.3f proposal_compress_ms=%.3f proposal_h2d_ms=%.3f proposal_merge_ms=%.3f dirty_partitions=%u barriers=1 wall_ms=%.3f\n",
+               LOG("[DUAL-RUNTIME-ROUND] epoch=%u round=%llu gpu_kernels=%u gpu_vertices=%llu gpu_edge_span_upper_bound=%llu removed_gpu_sources=%llu removed_gpu_source_edges=%llu cpu_vertices=%llu cpu_edges=%llu cpu_closure_rounds=%llu cpu_local_relax=%llu cpu_state_scatter_vertices=%llu cpu_state_scatter_bytes=%llu cpu_state_scatter_ms=%.3f gpu_to_cpu_items=%llu gpu_to_cpu_bytes=%llu cpu_to_gpu_items=%llu cpu_to_gpu_bytes=%llu cpu_to_gpu_success=%llu gpu_submit_ms=%.3f gpu_service_ms=%.3f cpu_service_ms=%.3f overlap_ms=%.3f cpu_wait_ms=%.3f gpu_wait_ms=%.3f concurrent=%d proposal_alloc_ms=%.3f proposal_compress_ms=%.3f proposal_h2d_ms=%.3f proposal_merge_ms=%.3f dirty_partitions=%u barriers=1 wall_ms=%.3f\n",
                    m_insertion_epoch,
                    static_cast<unsigned long long>(reported_round),
                    kernel_launches,
                    static_cast<unsigned long long>(active_sources),
                    static_cast<unsigned long long>(active_edge_span_upper_bound),
+                   static_cast<unsigned long long>(cpu_stats.cpu_removed_gpu_sources),
+                   static_cast<unsigned long long>(cpu_stats.cpu_removed_gpu_source_edges),
                    static_cast<unsigned long long>(cpu_stats.cpu_expanded_vertices),
                    static_cast<unsigned long long>(cpu_stats.cpu_edge_visits),
                    static_cast<unsigned long long>(cpu_stats.cpu_closure_rounds),
                    static_cast<unsigned long long>(cpu_stats.cpu_local_relax_success),
+                   static_cast<unsigned long long>(cpu_stats.cpu_state_scatter_vertices),
+                   static_cast<unsigned long long>(cpu_stats.cpu_state_scatter_bytes),
+                   cpu_stats.cpu_state_scatter_ms,
                    static_cast<unsigned long long>(cpu_stats.gpu_to_cpu_boundary_items),
                    static_cast<unsigned long long>(cpu_stats.gpu_to_cpu_boundary_bytes),
                    static_cast<unsigned long long>(cpu_stats.cpu_to_gpu_boundary_proposals),
@@ -3460,6 +4903,7 @@ namespace sepgraph {
                             if (seg < FLAGS_SEGMENT) dirty_segments[seg] = 1;
                         }
                     }
+                    CaptureE0BSuccessfulPropagation(changed_count);
                 }
                 m_last_insertion_dirty_partitions = static_cast<uint32_t>(
                     std::count(dirty_segments.begin(), dirty_segments.end(), uint8_t{1}));
@@ -3506,6 +4950,28 @@ namespace sepgraph {
                 sw_unique.stop();
                 m_running_info.time_overhead_wl_unique += sw_unique.ms();
           }
+
+            void AdvanceExactSourceFrontier(groute::Queue<index_t> &input,
+                                            groute::Queue<index_t> &output) {
+                GraphDatum &graph_datum = *m_graph_datum;
+                const uint32_t changed_count = output.GetCount(*m_stream);
+                input.Swap(output);
+                m_exact_source_frontier_ready = true;
+                m_exact_source_frontier_count = changed_count;
+                m_last_insertion_dirty_partitions = 0;
+                for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg) {
+                    graph_datum.seg_active_num[seg] = 0;
+                    m_running_info.input_active_count_seg[seg] = 0;
+                }
+                if (changed_count != 0) {
+                    graph_datum.seg_active_num[0] = changed_count;
+                    m_running_info.input_active_count_seg[0] = changed_count;
+                }
+                LOG("[E4-R1-FRONTIER] epoch=%u round=%llu changed_events=%u bitmap_scanned_vertices=0 rebuilt_partitions=0\n",
+                    m_insertion_epoch,
+                    static_cast<unsigned long long>(m_insertion_convergence_round + 1),
+                    changed_count);
+            }
 
             index_t FindSegmentForVertexHost(index_t vertex) const {
                 index_t lo = 0;

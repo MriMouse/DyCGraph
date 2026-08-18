@@ -23,8 +23,12 @@ DEFINE_int32(sssp_max_batches,
              10, "Maximum number of update batches processed by hybrid_sssp");
 DEFINE_int32(sssp_cpu_partition_capacity,
              0, "Number of stable vertex-range partitions owned by the CPU during an insertion epoch");
+DEFINE_string(sssp_cpu_domain_map,
+              "", "Binary uint16 vertex domain map (0=CPU, 1=GPU) for E2 insertion ownership");
 DEFINE_bool(sssp_print_checksum,
             false, "Print final SSSP distance and parent checksums");
+DEFINE_string(e0b_trace_file,
+              "", "Write E0-B insertion propagation trace to this file (capacity 0 only)");
 DECLARE_int32(top_ranks);
 DECLARE_bool(print_ranks);
 DECLARE_string(output);
@@ -119,14 +123,12 @@ namespace hybrid_sssp
         {
             // TBuffer old_buffer = *p_buffer;
             TBuffer new_buffer = buffer + weight;
-            TBuffer old_buffer=atomicMin(p_buffer, buffer + weight);;
-            if(new_buffer< old_buffer){
-
+            TBuffer old_buffer = atomicMin(p_buffer, new_buffer);
+            if (new_buffer < old_buffer) {
                 TValue old_parent = *p_parent;
-                do{
-                    old_parent = atomicCAS(p_parent,old_parent,src);
-
-                } while (new_buffer==*p_buffer && (*p_parent) !=src);
+                do {
+                    old_parent = atomicCAS(p_parent, old_parent, src);
+                } while (new_buffer == *p_buffer && *p_parent != src);
             }
             return new_buffer < old_buffer ? 1 : 0;
         }

@@ -1,0 +1,5 @@
+metric	value
+cpu_edges_per_ms	100
+gpu_edges_per_ms	1000
+boundary_events_per_ms	50
+placement_ns_per_edge	0

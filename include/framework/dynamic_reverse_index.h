@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <thread>
 #include <unordered_map>
@@ -16,6 +17,12 @@ namespace runtime {
 
 class DynamicReverseIndex {
 public:
+    struct MaterializeMetrics {
+        uint64_t base_edges_scanned = 0;
+        uint64_t delta_records_scanned = 0;
+        uint64_t output_sources = 0;
+    };
+
     DynamicReverseIndex() : nnodes_(0) {}
 
     template <typename PMAGraph>
@@ -62,6 +69,10 @@ public:
                 sources_[position] = src;
             }
         });
+        for (index_t dst = 0; dst < nnodes_; ++dst) {
+            std::sort(sources_.begin() + offsets_[dst],
+                      sources_.begin() + offsets_[static_cast<size_t>(dst) + 1]);
+        }
     }
 
     void ApplyInsert(index_t src, index_t dst) {
@@ -74,53 +85,24 @@ public:
 
     template <typename Visitor>
     void ForEachIncoming(index_t dst, Visitor visitor) const {
-        if (dst >= nnodes_) {
-            return;
-        }
-        const uint64_t begin = offsets_[dst];
-        const uint64_t end = offsets_[static_cast<size_t>(dst) + 1];
-        std::unordered_map<index_t, uint32_t> base_counts;
-        base_counts.reserve(static_cast<size_t>(end - begin));
-        for (uint64_t edge = begin; edge < end; ++edge) {
-            ++base_counts[sources_[edge]];
-        }
-        for (const auto &entry : base_counts) {
-            const index_t src = entry.first;
-            const auto delta_it = edge_count_deltas_.find(EdgeKey(src, dst));
-            const int64_t delta = delta_it == edge_count_deltas_.end()
-                                      ? 0
-                                      : delta_it->second;
-            if (static_cast<int64_t>(entry.second) + delta > 0) {
-                visitor(src);
-            }
-        }
-
-        const auto delta_it = delta_sources_by_dst_.find(dst);
-        if (delta_it == delta_sources_by_dst_.end()) {
-            return;
-        }
-        for (const index_t src : delta_it->second) {
-            if (base_counts.find(src) != base_counts.end()) {
-                continue;
-            }
-            const auto count_it = edge_count_deltas_.find(EdgeKey(src, dst));
-            if (count_it != edge_count_deltas_.end() && count_it->second > 0) {
-                visitor(src);
-            }
-        }
+        MergeIncoming(dst, visitor, nullptr);
     }
 
-    void MaterializeIncoming(const std::vector<index_t> &destinations,
+    MaterializeMetrics MaterializeIncoming(
+                             const std::vector<index_t> &destinations,
                              std::vector<uint64_t> &offsets,
                              std::vector<index_t> &sources) const {
+        MaterializeMetrics metrics;
         offsets.assign(destinations.size() + 1, 0);
         sources.clear();
         for (size_t i = 0; i < destinations.size(); ++i) {
-            ForEachIncoming(destinations[i], [&](index_t src) {
+            MergeIncoming(destinations[i], [&](index_t src) {
                 sources.push_back(src);
-            });
+            }, &metrics);
             offsets[i + 1] = sources.size();
         }
+        metrics.output_sources = sources.size();
+        return metrics;
     }
 
     uint64_t BaseEdgeCount() const { return sources_.size(); }
@@ -165,6 +147,44 @@ private:
             delta_sources_by_dst_[dst].push_back(src);
         }
         edge_count_deltas_[key] += delta;
+    }
+
+    template <typename Visitor>
+    void MergeIncoming(index_t dst, Visitor visitor,
+                       MaterializeMetrics *metrics) const {
+        if (dst >= nnodes_) return;
+        const uint64_t begin = offsets_[dst];
+        const uint64_t end = offsets_[static_cast<size_t>(dst) + 1];
+        if (metrics != nullptr) metrics->base_edges_scanned += end - begin;
+
+        const auto delta_it = delta_sources_by_dst_.find(dst);
+        std::vector<index_t> sorted_delta;
+        if (delta_it != delta_sources_by_dst_.end()) sorted_delta = delta_it->second;
+        std::sort(sorted_delta.begin(), sorted_delta.end());
+        if (metrics != nullptr) {
+            metrics->delta_records_scanned += sorted_delta.size();
+        }
+
+        uint64_t base_pos = begin;
+        size_t delta_pos = 0;
+        while (base_pos < end || delta_pos < sorted_delta.size()) {
+            const index_t base_src = base_pos < end
+                ? sources_[base_pos] : std::numeric_limits<index_t>::max();
+            const index_t delta_src = delta_pos < sorted_delta.size()
+                ? sorted_delta[delta_pos] : std::numeric_limits<index_t>::max();
+            const index_t src = std::min(base_src, delta_src);
+            int64_t count = 0;
+            while (base_pos < end && sources_[base_pos] == src) {
+                ++count;
+                ++base_pos;
+            }
+            if (delta_pos < sorted_delta.size() && sorted_delta[delta_pos] == src) {
+                const auto count_it = edge_count_deltas_.find(EdgeKey(src, dst));
+                if (count_it != edge_count_deltas_.end()) count += count_it->second;
+                ++delta_pos;
+            }
+            if (count > 0) visitor(src);
+        }
     }
 
     index_t nnodes_;

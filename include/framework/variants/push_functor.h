@@ -379,6 +379,10 @@ namespace sepgraph
 
             __device__ __forceinline__ bool operator()(uint64_t edge, Payload<TBuffer> meta_data)
             {
+                if (m_cpu_home_flags != nullptr &&
+                    m_cpu_home_flags[meta_data.m_src] == 1) {
+                    return true;
+                }
                 index_t dst = m_vcsr_graph.edge_dest(edge);
                 index_t weight = (meta_data.m_src + dst)%128 + 1;
 
@@ -1005,6 +1009,10 @@ namespace sepgraph
 
             __device__ __forceinline__ bool operator()(uint64_t edge, Payload<TBuffer> meta_data)
             {
+                if (m_cpu_home_flags != nullptr &&
+                    m_cpu_home_flags[meta_data.m_src] == 1) {
+                    return true;
+                }
                 index_t dst = m_cache_g[edge];
                 // printf("have cache %d %d\n",meta_data.m_src,dst);
                 index_t weight = (meta_data.m_src + dst) % 128 + 1;
