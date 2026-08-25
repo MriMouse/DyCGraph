@@ -29,6 +29,10 @@ DEFINE_bool(sssp_print_checksum,
             false, "Print final SSSP distance and parent checksums");
 DEFINE_string(e0b_trace_file,
               "", "Write E0-B insertion propagation trace to this file (capacity 0 only)");
+DEFINE_string(f1_cache_trace_file,
+              "", "Write F1-L cache candidate trace (audit runs only)");
+DEFINE_string(f1_component_trace_file,
+              "", "Write F1-C deletion affected-component trace");
 DECLARE_int32(top_ranks);
 DECLARE_bool(print_ranks);
 DECLARE_string(output);
@@ -126,9 +130,9 @@ namespace hybrid_sssp
             TBuffer old_buffer = atomicMin(p_buffer, new_buffer);
             if (new_buffer < old_buffer) {
                 TValue old_parent = *p_parent;
-                do {
+                while (new_buffer == *p_buffer && *p_parent != src) {
                     old_parent = atomicCAS(p_parent, old_parent, src);
-                } while (new_buffer == *p_buffer && *p_parent != src);
+                }
             }
             return new_buffer < old_buffer ? 1 : 0;
         }
@@ -155,11 +159,11 @@ namespace hybrid_sssp
             TValue old_parent = *p_parent;
         // TValue curr_buffer = *p_buffer;
             // if(new_buffer == curr_buffer){
-            do{
-                if(new_buffer==old_value){
+            if (new_buffer <= old_value) {
+                while (new_buffer == *p_buffer && *p_parent != src) {
                     old_parent = atomicCAS(p_parent,old_parent,src);
                 }
-            } while (new_buffer==old_value && old_parent !=src);
+            }
             return 1;
         }
 
@@ -393,7 +397,9 @@ bool HybridSSSP()
     bool success = true;
     engine.compute_hot_vertices_sssp();
     engine.confirm_candidate_batch();
+    engine.TraceCacheCandidates(std::numeric_limits<uint32_t>::max());
     engine.LoadCache();
+    engine.MarkCachePublished();
     // engine.PrintCacheNode();
     engine.get_update_file();
     std::pair<index_t,index_t> local_begin;
@@ -463,15 +469,23 @@ bool HybridSSSP()
         Stopwatch sw_candidate(true);
         engine.confirm_candidate_batch();
         sw_candidate.stop();
+        engine.TraceCacheCandidates(NumOfSnapShots);
         Stopwatch sw_eviction(true);
-        engine.evication_cache();
+        const bool refresh_cache = engine.CacheRefreshRequired();
+        if (refresh_cache) engine.evication_cache();
         sw_eviction.stop();
         Stopwatch sw_compact(true);
-        engine.compact_cache();
+        if (refresh_cache) engine.compact_cache();
         sw_compact.stop();
         Stopwatch sw_cache_load(true);
-        engine.LoadCache();
+        if (refresh_cache) {
+            engine.LoadCache();
+            engine.MarkCachePublished();
+        }
         sw_cache_load.stop();
+        LOG("[F1-CACHE-PUBLISH] batch=%u refresh=%u eviction_ms=%.3f compact_ms=%.3f load_ms=%.3f\n",
+            NumOfSnapShots, refresh_cache ? 1U : 0U, sw_eviction.ms(),
+            sw_compact.ms(), sw_cache_load.ms());
         sw_paper_batch.stop();
         paper_algorithm_ms += sw_paper_batch.ms();
         const double attributed_ms =

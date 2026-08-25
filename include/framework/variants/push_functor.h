@@ -1183,10 +1183,26 @@ namespace sepgraph
 
                 if (dst!=UINT32_MAX)
                 {
-                        if (AtomicInvalidateParent(&m_parent_array[dst],
-                                                   meta_data.m_src)) {
-                            m_buffer_array[dst] = m_app_inst.GetInitBuffer(dst);
-                            m_value_array[dst] = m_app_inst.GetInitValue(dst);
+                        const TValue src_value = m_value_array[meta_data.m_src];
+                        const uint64_t candidate =
+                            static_cast<uint64_t>(src_value) +
+                            static_cast<uint64_t>(m_app_inst.DeletionEdgeWeight(
+                                meta_data.m_src, dst));
+                        const index_t parent = m_parent_array[dst];
+                        const bool parent_tight = parent != UINT32_MAX &&
+                            m_value_array[parent] != static_cast<TValue>(UINT32_MAX) &&
+                            static_cast<uint64_t>(m_value_array[parent]) +
+                                static_cast<uint64_t>(m_app_inst.DeletionEdgeWeight(
+                                    parent, dst)) ==
+                                static_cast<uint64_t>(m_value_array[dst]);
+                        const bool invalid_dependency = parent == meta_data.m_src ||
+                            (src_value != static_cast<TValue>(UINT32_MAX) &&
+                             candidate == static_cast<uint64_t>(m_value_array[dst]) &&
+                             !parent_tight);
+                        if (invalid_dependency &&
+                            atomicExch(reinterpret_cast<unsigned int *>(
+                                           &m_parent_array[dst]),
+                                       UINT32_MAX) != UINT32_MAX) {
                             m_reset_nodes[dst] = true;
                             m_affected_vertices.append(dst);
                         }
@@ -1265,11 +1281,26 @@ namespace sepgraph
                 index_t dst = (uint32_t)m_cache_g[edge];
                 if (dst!=UINT32_MAX)
                 {
-                        // m_weight_array[edge] = (meta_data.m_src + dst) % 128;
-                        if (AtomicInvalidateParent(&m_parent_array[dst],
-                                                   meta_data.m_src)) {
-                            m_buffer_array[dst] = m_app_inst.GetInitBuffer(dst);
-                            m_value_array[dst] = m_app_inst.GetInitValue(dst);
+                        const TValue src_value = m_value_array[meta_data.m_src];
+                        const uint64_t candidate =
+                            static_cast<uint64_t>(src_value) +
+                            static_cast<uint64_t>(m_app_inst.DeletionEdgeWeight(
+                                meta_data.m_src, dst));
+                        const index_t parent = m_parent_array[dst];
+                        const bool parent_tight = parent != UINT32_MAX &&
+                            m_value_array[parent] != static_cast<TValue>(UINT32_MAX) &&
+                            static_cast<uint64_t>(m_value_array[parent]) +
+                                static_cast<uint64_t>(m_app_inst.DeletionEdgeWeight(
+                                    parent, dst)) ==
+                                static_cast<uint64_t>(m_value_array[dst]);
+                        const bool invalid_dependency = parent == meta_data.m_src ||
+                            (src_value != static_cast<TValue>(UINT32_MAX) &&
+                             candidate == static_cast<uint64_t>(m_value_array[dst]) &&
+                             !parent_tight);
+                        if (invalid_dependency &&
+                            atomicExch(reinterpret_cast<unsigned int *>(
+                                           &m_parent_array[dst]),
+                                       UINT32_MAX) != UINT32_MAX) {
                             m_reset_nodes[dst] = true;
                             m_affected_vertices.append(dst);
                         }

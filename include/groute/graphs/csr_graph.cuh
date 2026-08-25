@@ -1798,9 +1798,7 @@ namespace groute
             static __global__ void ScatterTopologyPatch(
                     const sepgraph::topology::TopologyPatchRecord *patch,
                     uint32_t count,
-                    host::vertex_sync_element *compat_descriptors,
-                    host::vertex_element *vertices,
-                    unsigned long long *cache_invalidations)
+                    host::vertex_sync_element *compat_descriptors)
             {
                 const uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
                 if (tid >= count) return;
@@ -1809,11 +1807,60 @@ namespace groute
                     (static_cast<uint64_t>(record.slab_id) << 32) |
                     static_cast<uint32_t>(record.offset);
                 compat_descriptors[record.source].degree = record.degree;
-                if (vertices[record.source].cache) {
-                    vertices[record.source].cache = false;
-                    vertices[record.source].virtual_degree = 0;
-                    vertices[record.source].third_degree = 0;
+            }
+
+            static __device__ bool ReserveCachePatchOrInvalidate(
+                    host::vertex_element &vertex,
+                    index_t degree,
+                    uint64_t cache_capacity,
+                    index_t *cache_tail,
+                    unsigned long long *cache_invalidations)
+            {
+                bool patch_in_place = vertex.cache;
+                if (patch_in_place && degree > vertex.virtual_degree) {
+                    const index_t new_start = atomicAdd(cache_tail, degree);
+                    if (static_cast<uint64_t>(new_start) + degree <= cache_capacity)
+                        vertex.virtual_start = new_start;
+                    else
+                        patch_in_place = false;
+                }
+                if (patch_in_place) vertex.virtual_degree = degree;
+                if (vertex.cache && !patch_in_place) {
+                    vertex.cache = false;
+                    vertex.virtual_degree = 0;
+                    vertex.third_degree = 0;
                     atomicAdd(cache_invalidations, 1ULL);
+                }
+                return patch_in_place;
+            }
+
+            static __global__ void PatchOrInvalidateCachedAdjacency(
+                    const sepgraph::topology::TopologyPatchRecord *patch,
+                    uint32_t count,
+                    index_t **slabs,
+                    index_t *cache_edges,
+                    uint64_t cache_capacity,
+                    index_t *cache_tail,
+                    host::vertex_element *vertices,
+                    unsigned long long *cache_invalidations)
+            {
+                const uint32_t record_index = blockIdx.x;
+                if (record_index >= count) return;
+                const auto record = patch[record_index];
+                __shared__ bool patch_in_place;
+                if (threadIdx.x == 0) {
+                    auto &vertex = vertices[record.source];
+                    patch_in_place = ReserveCachePatchOrInvalidate(
+                        vertex, record.degree, cache_capacity, cache_tail,
+                        cache_invalidations);
+                }
+                __syncthreads();
+                if (!patch_in_place) return;
+                const uint64_t destination = vertices[record.source].virtual_start;
+                for (uint64_t offset = threadIdx.x; offset < record.degree;
+                     offset += blockDim.x) {
+                    cache_edges[destination + offset] =
+                        slabs[record.slab_id][record.offset + offset];
                 }
             }
 
@@ -1847,6 +1894,7 @@ namespace groute
                     unsigned long long stale_rejects = 0;
                     unsigned long long cache_invalidations = 0;
                     unsigned long long hash_mismatches = 0;
+                    uint64_t cache_tail = 0;
                 };
 
                 typedef dev::PMAGraph DeviceObjectType;
@@ -1963,7 +2011,9 @@ namespace groute
 
                 void PublishSparse(const std::vector<index_t> &sources,
                                    cudaStream_t stream,
-                                   bool audit)
+                                   bool audit,
+                                   index_t *cache_edges,
+                                   uint64_t cache_capacity)
                 {
                     if (m_publication_pending) {
                         std::fprintf(stderr,
@@ -2040,7 +2090,11 @@ namespace groute
                             sizeof(*m_patch_host) * m_publication_count,
                             cudaMemcpyHostToDevice, stream));
                         ScatterTopologyPatch<<<(m_publication_count + 255) / 256, 256, 0, stream>>>(
-                            m_patch_device, m_publication_count, m_dev_mirror.sync_vertices_,
+                            m_patch_device, m_publication_count,
+                            m_dev_mirror.sync_vertices_);
+                        PatchOrInvalidateCachedAdjacency<<<m_publication_count, 256, 0, stream>>>(
+                            m_patch_device, m_publication_count, m_chunk_slabs_device,
+                            cache_edges, cache_capacity, m_dev_mirror.river,
                             m_dev_mirror.vertices_, m_cache_invalidations);
                         if (audit) {
                             HashPublishedAdjacency<<<(m_publication_count + 255) / 256,
@@ -2085,6 +2139,10 @@ namespace groute
                     GROUTE_CUDA_CHECK(cudaMemcpy(&result.cache_invalidations,
                         m_cache_invalidations, sizeof(result.cache_invalidations),
                         cudaMemcpyDeviceToHost));
+                    index_t cache_tail = 0;
+                    GROUTE_CUDA_CHECK(cudaMemcpy(&cache_tail, m_dev_mirror.river,
+                        sizeof(cache_tail), cudaMemcpyDeviceToHost));
+                    result.cache_tail = cache_tail;
                     if (m_publication_audit && m_publication_count != 0) {
                         std::vector<sepgraph::topology::TopologyDeviceDigest> gpu_digests(
                             m_publication_count);

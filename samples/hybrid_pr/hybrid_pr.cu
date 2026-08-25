@@ -18,6 +18,8 @@ DEFINE_bool(sparse, false, "disable load-balancing for sparse graph");
 DEFINE_int32(sssp_cpu_partition_capacity, 0, "Compatibility flag; SSSP insertion only");
 DEFINE_string(sssp_cpu_domain_map, "", "Compatibility flag; SSSP insertion only");
 DEFINE_string(e0b_trace_file, "", "Compatibility flag; SSSP insertion only");
+DEFINE_string(f1_cache_trace_file, "", "Compatibility flag; SSSP only");
+DEFINE_string(f1_component_trace_file, "", "Compatibility flag; SSSP only");
 DECLARE_double(error);
 DECLARE_int32(top_ranks);
 DECLARE_bool(print_ranks);

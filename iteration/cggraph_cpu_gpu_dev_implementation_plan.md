@@ -4,15 +4,15 @@
 
 ## 动态工作区：当前状态、下一步与维护规则
 
-**当前状态（2026-08-17）**：E 不再继续补齐旧意义上的 CPU full runtime。E4-R1（exact-source insertion executor）与 E4-R2（affected incoming sorted merge）作为已通过 gate 的生产基座保留；E4-R3-A/B 作为成本模型和 shadow 证据保留；E4-R3-C 明确取消，而不是待修任务，因为 `--sssp_cpu_domain_map` 仍走已淘汰的 partition-round dispatcher。E 的当前生产结论是 all-GPU exact-source propagation，后续若 F 的真实同 cohort 证据证明 CPU 能删除关键路径，再由统一 runtime 条件式重新开放 CPU executor。证据见第 9.3 节和第 10 节 E4-R。
+**当前状态（2026-08-24）**：E4-R1（exact-source insertion executor）与 E4-R2（affected incoming sorted merge）作为生产基座保留；F1-C 已完成并否决 deletion CPU graph-computation owner。对 CPU 有利的离线下界中，Twitter/Friendster 仍分别慢 `22.4%/95.6%`，因此 F2-F4 未启动并由 F1-C gate 取消。R-MAT 的正 crossover 只保留为 workload boundary，不外推到真实图。当前生产结论是 all-GPU exact-source propagation，CPU 聚焦 touched-source topology mutation、reverse delta、descriptor/cache publication。
 
-**唯一下一步**：直接进入大图优先的 F，不再执行 E4-R3-C。先在 Twitter、Friendster、Europe OSM（简称 TW/FS/EU）的 100k mixed-update cohort 完成 F0-L 关键路径审计，再执行 F1-L 的“CPU 整段接管”replay，依次筛选 host-local topology transaction、affected dependency preparation、事件驱动 hot-set/cache patch 和 deletion sparse-tail service。只有候选能够从 GPU 或串行路径删除完整服务、且净收益在至少两张大图稳定为正，才进入 F2 生产接入；insertion propagation 降为 F3 条件分支，不再作为 F 的默认主线。不修补旧 full candidate，不 sweep capacity/packet/ranking，也不以小图上 CPU/GPU 胜负决定架构。
+**下一步（2026-08-24 调整）**：F 已正式结束，P0 已完成；P1 已确认 Europe 原 correctness 失败仅由 initial SSSP 在 1000 轮硬截断造成。删除该伪收敛条件后，initial 自然收敛约 `11742` 轮并通过 Bellman；同一路径 batch 0 deletion-stage、batch 与 final Bellman 全部通过。P1 仍需决定是否现在支付约 `120s/batch` 补齐 10-batch gate，或先用 TW/FS 进入 P2；不得恢复固定轮数并把未收敛状态当成功。
 
 **可用对照与数据（2026-08-17）**：原版外部 baseline 位于 `/home/wangshaoyan/proJect/CG/C-GpuStreamGraph`（仅作阶段性端到端对照；F 日常对照仍是本仓库同 runtime 的 all-GPU）。已可用合成大图 R-MAT：`data/input_rmat_fs_like_50p_100k.txt`（805M base edges，略小于 Friendster）、配套 `update_rmat_fs_like_50p_100k.txt` 与 `stream_size_rmat_fs_like_50p_100k.txt`（10×100k mixed batch）；参数/复现信息见 `data/rmat_fs_like_50p_100k.metadata.json`。
 
 **如何维护本文档**：
 
-1. **当前计划只更新本节和正在执行的 F**：每次开始/完成当前任务，更新状态、下一步、gate 和链接；E5 只保留历史口径，不把尚未验证的候选设计写成既成事实。
+1. **当前计划只更新本节和正在执行的 P0-P5 转向**：每次开始/完成当前任务，更新状态、下一步、gate 和链接；E5/F2-F4 只保留历史口径，不把已被 gate 取消或尚未验证的候选设计写成当前任务。
 2. **完成后回填时间线**：在第 10 节对应阶段追加一段“实现—实验—结论—对下一步的影响”，保留关键数据、日志路径、失败原因和代码删除项。
 3. **压缩规则**：只合并同一阶段中已经被后续结论完全覆盖的重复计划、相同实验的重复解释和已失效的预测；不删除阶段本身、创新点、工作量、关键正确性/性能证据、路线转向原因或论文可用的负结果。
 4. **阅读顺序**：继续开发先读本节、E4-R 与 F；写论文/报告或理解代码演进时顺读第 10 节；查不变语义、实验口径和创新点时读第 0--9、11 节。
@@ -744,18 +744,21 @@ E4 完成条件同步调整：R1/R2 必须通过；R3-A/B 提供 planner substra
 
 以下内容明确不属于 E 的主迭代：调整 packet/source 数、增加 degree threshold、单独扩大 CPU 线程数、CUDA Graph/persistent kernel launch 优化、proposal 格式微调、按数据集选择 capacity、把 batch 工作移出 paper timer。这些只能在 E 的架构和算法 gate 已成立后作为独立工程收尾，不能用于证明 E 的科研贡献。
 
-#### 迭代 F：大图任务接管优先的异构关键路径收敛（2026-08-17 起）
+#### 迭代 F：deletion sub-DAG 双执行域计算（已结束，2026-08-24）
 
-F 直接接在 E4-R1/R2 之后，不要求先完成 E4-R3-C。主问题改为：**在 TW/FS/EU 这类大图的真实 mixed batch 中，CPU 能否凭借 host-local topology、update stream 和多核内存带宽，整段接管一种系统任务，使 GPU 不再执行对应全量扫描、publication、状态搬运或稀疏尾部服务，并最终降低完整 batch 关键路径。** CPU 是否维护状态、承担多少边、利用率多高都不是目标；只有删除的 GPU/串行毫秒减去 CPU、边界和版本成本后仍为正，才算协同。
+> **最终状态**：F1-C 唯一生死门未通过，F2-F4 均未进入实现。两张真实图在偏向 CPU 的成本下界中仍无净收益，继续补 production snapshot、owner runtime 或更多 cohort 只会增加已被否决路线的实现成本。F 的生产 capture 已移除，离线 trace/replay、真实图负结果和 R-MAT crossover boundary 保留为 artifact；cache patch 的工程验证转交 P0，不再延长 F。
+
+F 直接接在 E4-R1/R2 之后，不复用 E4-R3-C 的 partition-round dispatcher。主问题收敛为：**在真实 deletion affected dependency graph 的 SCC condensation DAG 中，能否找到 predecessor/state visibility 可闭合且计算量足够大的 sub-DAG，让 CPU 与 GPU 并发完成互斥的图算法服务，从而删除 GPU 关键路径上的同一 repair work。** weak component 只作结构上界，不再是默认 owner 单元；单个 SCC 也不能被强行切成碎任务。CPU 不是 metadata 辅助线程：它必须完成 owner sub-DAG 的 incoming traversal、min-plus reduce、value/parent commit、non-sink local frontier expansion 和 closure。cache/topology touched-only patch 只为该架构消除实现税，不作为 F 的科研主贡献。
 
 第三方实现只作为机制参考，不作为移植目标：
 
 - `CGgraph-V1.5` 证明真实 frontier 应按 degree prefix-sum 和设备实测服务能力做互斥切分；但其全量 state H2D/merge、固定 active-work 阈值和数据集预跑比例不能进入本项目。
+- `CGgraph-V1.5` 的 sink 语义必须精确区分：CPU/GPU 仍执行对 sink 的 relax/value 更新，sink 只是不会被加入下一轮 frontier；`notSinkBitset` 同时用于 CPU/GPU 分工时的有效 edge-work 估计，避免把零出度顶点分配成传播任务。本项目保留 sink 的 incoming reduce、value/parent commit 和 visited 状态，但在 owner planner 的 propagation work 与 frontier partition 中排除其出边贡献；不能把 sink 从本轮迭代计算中删除。
 - `GraphBolt/KickStarter` 证明 deletion 可以分成 deleted-parent seed、affected trimming、一次 incoming pull 和后续增量传播；但其 `O(V)` bitset 清零/扫描不能用于大图生产路径。
 - `RadixGraph` 证明旧快照可读、新版本日志构造、时间戳可见性和读者退出后回收能够支持读写并发；本项目只借鉴 batch-epoch publication，不接受逐边时间戳、链式全版本或独占全图 snapshot compaction。
 - `POEGA` 的高低度划分可作 irregularity 消融，但固定 `degree_limit` 不是 planner，也不能作为 TW/FS/EU 的 dataset-specific gate。
 
-当前不需要继续泛读其他仓库。只有 F1-L 暴露出具体结构缺口（例如 touched-only cache patch、旧版本回收或 affected dependency 表示）时，才围绕该缺口定向检索；禁止先移植完整动态图库再判断是否有关键路径收益。
+当前不需要继续泛读其他仓库。只有 F1-C 暴露出具体结构缺口（例如 SCC/boundary closure、terminal sink 裁剪或 owner-local state 表示）时，才围绕该缺口定向检索；禁止先移植完整动态图库再判断是否有关键路径收益。
 
 ##### F0-L：TW/FS/EU 关键路径与可接管任务审计
 
@@ -776,59 +779,120 @@ headroom_upper_ms  = baseline_window_ms - unavoidable_dependency_fence_ms
 
 F0-L gate：至少一个任务在至少两张大图中占 `paper_algorithm_ms >= 10%`，或单独可形成 `>= 5%` 的保守 net headroom；并且能明确指出 CPU 接管后 GPU 将删除哪些 kernel、全图扫描、H2D 或同步。仅观察到 CPU 空闲、GPU 利用率低、CPU 边量大或某个小 kernel 较慢均不通过。若 insertion closure 仍低于完整 batch 的 5%，propagation 不进入下一主步骤。
 
-##### F1-L：CPU 整段接管 replay 与候选生死门
+##### F1-C：deletion sub-DAG 可行性与唯一生死门
 
-F1-L 只做独立 replay/benchmark，不接旧 dispatcher。它按 F0-L 的 trace 对以下任务逐项比较当前路径与 CPU host-local 完整服务，优先级固定为：
+F1-C 是一个完整、有界的可行性阶段，不再把 trace 字段、单图重采、analyzer 指标或 fixture 各自命名为新迭代。已有结构工具和多图 trace 统一视为 F1-C 的已完成证据；后续只允许一次候选审计补全和一次同语义 crossover replay，然后作进入 F2 或结束 owner 路线的决策。
 
-1. **Topology transaction**：update normalize/deduplicate、PMA source-local COW、reverse counted delta、descriptor patch、cache invalidation record 由一个 batch epoch 事务产出；比较当前串行 mutation/publication 与 CPU 构造加 touched-only publish。
-2. **Affected dependency preparation**：CPU 从旧 dependency seed 和新 reverse delta 构造紧凑 affected incoming/witness 输入；只有连同 GPU 端被删除的 materialize/H2D/scan 一起计入，不能只测 sorted merge。
-3. **Hot-set/cache patch**：CPU 消费真实 access/change event，维护固定容量 residency 元数据并产出 admitted/evicted/changed adjacency patch；比较对象是被替代的 candidate + eviction + compact + load 完整服务，不能只测 patch memcpy。
-4. **Deletion sparse-tail service**：只在同一 TW/FS/EU batch 内按可解释结构类别（affected incoming、degree irregularity、host residency、state transfer）replay CPU/GPU 完整 reduce/commit；禁止按 dataset id、固定 degree threshold 或成功结果反向挑 cohort。
-5. **Insertion propagation reference**：仅保留 R1 exact source/version 的 CPU/GPU 同语义 crossover，用于判断是否开放 F3，不阻塞前四项。
+候选执行关系必须先分清，不能把所有 predecessor-closed sub-DAG 都按并发收益处理：
 
-每个 replay 必须处理相同逻辑记录和相同最终语义，CPU 使用启动前固定的 persistent worker pool；计入 state gather/scatter、boundary、publication、quiescence、NUMA/RSS 和 GPU 被删除服务。不得用 synthetic edge loop、CPU 只扫不提交、GPU hot 数据对 CPU cold 数据、timer 外预处理或小图阈值作为证据。
+1. **独立 weak component / 无跨 owner 依赖的 branch bundle**：CPU 与 GPU 可真正并发，各自 closure 后共同 quiescence；这是首选候选。
+2. **CPU 上游 predecessor-closed prefix -> GPU successor**：CPU 输入只需稳定 snapshot，但 GPU 后继必须等待 CPU 最终 state publication；这是串行替代，不得把 CPU/GPU wall 写成无条件 `max()`，只有 CPU 完整服务本身快于被删除 GPU 服务时才可能胜出。
+3. **GPU predecessor -> CPU downstream suffix**：CPU 输入会随 GPU closure 改变，需要 iterative event/version；在前两类未胜出前不实现，也不能用来绕过 snapshot/critical-path gate。
+
+现有按确定性拓扑序生成的 25/50/75/100% work prefix 只用于暴露结构与成本范围，不是生产 planner。最终候选必须同时报告 `snapshot input cut`、`CPU-owned internal service`、`CPU -> GPU successor cut`、GPU 可独立执行 work、GPU 必须等待的 dependent work 和 sink terminal commit；只报告 incoming/internal/outgoing 总数不足以批准 replay。
+
+F1-C 的工作收敛为：
+
+1. **结构与语义证据（已完成）**：trace/analyzer 已覆盖 affected CSR、sink、weak component、SCC condensation、snapshot boundary 和真实 changed-source event；TW/FS/R-MAT 连续 10 batch 已证明 predecessor-closed 候选的 iterative changed-boundary 为零。Europe 当前 source/update cohort 的 affected 全为零，属于无效样本，不能用于 gate。
+2. **候选审计补全（唯一允许的分析补项）**：在已有 condensation DAG 上增加 CPU→GPU successor cut、independent GPU work、dependent GPU work 和 critical-path depth/work；按上述三类执行关系分组。优先选择完整独立 component 或无跨 owner 依赖的 bundle；只有独立 work 不足时才保留上游 prefix 作为“串行 CPU 替代”候选。补项只扩展离线 analyzer，不改 production runtime，不再重采已有有效 trace；Europe 只在能从现有数据/程序语义确定合法非空 source 后补一个连续 10-batch cohort，否则明确缺失，不反复试 source。
+3. **同语义 crossover replay（F 的唯一实现实验）**：persistent、NUMA-aware CPU worker 完整执行候选的 snapshot gather、incoming traversal、min-plus reduce、value/parent commit、sink terminal commit、non-sink expansion、closure 和 sparse publication；GPU replay 处理互斥的剩余 destination work，并删除 CPU 已接管的相同 service。至少覆盖 Twitter、Friendster 和 R-MAT 的代表 cohort；R-MAT 只决定 workload boundary。replay 必须分别给出独立候选的 `max(CPU service, GPU independent service) + final fence`，以及 prefix 候选的 `CPU service + GPU dependent successor service`；不得把两类公式混用。
+4. **支撑工程项（F1-C0，2026-08-18 已完成首轮）**：cache identity trace 揭示的放大并不只是 snapshot/diff 观测成本。旧路径中，任一 touched hot source 失效都会触发整批 `evication_cache -> compact_cache -> LoadCache`，把 source-local topology patch 放大为整个用户指定 cache 的重排与重载。生产路径现改为 producer-native touched-only cache publication：degree 不增长时复用原 cache slot；degree 增长时只把该 source 的当前 adjacency 追加搬迁到同一 `--cache` 分配的未用尾部并更新 descriptor；只有尾部容量不足才失效并回退原全量 compact。candidate 阶段精确检查所有 desired resident 是否仍有有效 cache entry，resident set 与 payload 都有效时跳过 eviction/compact/load；检查与 eviction delta 标记分离，skip 不遗留脏 delta。实现不新增常驻 GPU allocation，并修正历史 `type[1]` 实际按两个 `int` 注册的越界声明。
+
+   Twitter100k、batch 0、`cache=2`、`check=false` 的单次 screening 中，patch 为 `18,769` records，cache invalidation 从 `17,723` 降至 `0`；旧 eviction/compact/load 为 `7.868/51.368/35.268 ms`，新路径均为 `0`，publication 为 `2.202 ms`，`total_batch` 从 `157.043` 降至 `50.961 ms`（约 `67.5%`）。随后同图 10-batch performance screening 的 10/10 batch 均为 zero invalidation/refresh skip，candidate + eviction + compact + load 从冻结 F0-L 中位基线 `1096.049 ms` 降为 `42.656 ms`（减少 `1053.393 ms`，`96.1%`）；完整 `paper_algorithm_ms` 从 F0-L 三次运行中位数 `1618.501 ms` 降为单次新路径的 `594.654 ms`（减少 `1023.847 ms`，`63.3%`）。cache tail 从初始 `196,289,923` 增至 batch 9 后 `220,503,704`，仅占 `536,870,921` edge capacity 的 `41.1%`，本 cohort 未触发容量回退。该完整时间仍是单次 10-batch screening，需交错重复后才可作为正式统计结论。
+
+   Twitter 连续 10-batch `check=true` cohort 的 10/10 deletion-stage 与 10/10 batch check 全部通过，10/10 cache refresh skip；最终 `relaxable_edges=0`、`missing_tight_witnesses=0`，distance checksum 为冻结值 `12687655862474487153`，overall test passed。Wiki100k 的 degree-growth correctness cohort 进一步覆盖 `97,246` touched source：`cache_invalidations=0`、refresh skip、eviction/compact/load 均为 `0`，topology audit 为 zero mismatch，batch/final Bellman、tight witness 与最终检查通过；其 `check=true + topology_replay_audit=true` 的 `total_batch=1184.820 ms` 仅作正确性证据，不用于性能横比。后续仍需通过可控小容量/长序列验证尾部耗尽后的 full-compact fallback，并在 FS/EU 上完成同一 10-batch gate。
+
+   trace 审计同时发现旧“identity unchanged”只比较 resident vertex ID，漏报同一 ID 的 degree-only 变化；现已改为精确比较 `(vertex, degree)`。cache 修复只消除既有实现税，不独立通过 F gate，也不把 CPU metadata 工作宣称为异构计算收益；F1-C 主线仍要求 CPU 接管完整 deletion sub-DAG graph service。
+5. **关闭项**：insertion exact closure 在现有主图低于完整 batch 的 0.2%，不继续 CPU 分担；不恢复 static vertex owner、source ranking、packet capacity sweep 或 partition rounds；不再为 changed-source channel、任意拓扑前缀比例或单一 trace 指标单开迭代。
+
+**F1-C 已完成证据（2026-08-19--20）**：production trace v2 与离线 analyzer 已统一覆盖 affected CSR、out-degree、sink、weak component、有向 SCC/condensation、snapshot boundary 和逐轮真实 changed source；trace 关闭时不增加 D2H。analyzer 的拓扑前缀仅作诊断，sink 始终参与本轮 reduce/commit，只有 propagation work 为零。chain + terminal-sink + duplicate-boundary fixture、trace round-trip 和 Wiki `check=true` 端到端验证均通过。原始多图结果位于 `logs/f1c2_trace_v2_20260820/`。
+
+**候选审计与 crossover replay（2026-08-20）**：离线 analyzer 现按既有 work 排序保留 top-8 候选，并为它们计算 CPU→GPU direct successor cut（edge/source/destination）、CPU complete-service work、GPU independent/dependent complete-service work 与各自 SCC critical-path depth/work。一个 service unit 精确包含 incoming reduce、每顶点 commit 以及非 sink 的 outgoing expansion，故 sink 只省传播，不省 reduce/commit。Twitter、Friendster、R-MAT 的连续有效 trace 中，每个 batch 的 top candidate 都是 `successor_cut_edges=0`、`dependent_gpu_service_work=0` 的完整独立 component，仍为 `changed_boundary_sources=0`。一次性稀疏状态采集仅保存 `affected ∪ incoming-source` 的输入 value/parent 与 affected 最终 value/parent；三个 cohort 各只采集一次、各回放一次，结果保存在 `logs/f1_crossover_capture_20260820/`。离线 `f1_crossover_replay` 使用 persistent CPU worker 实际执行候选的 incoming min-plus reduce、commit、sink terminal commit 与 closure，GPU 对互斥的剩余 destination 执行同一语义 closure，最后稀疏合并并做 value 校验。三个 cohort 的 10/10 batch 均为 `overall_value_mismatches=0`；parent 差异是并行相同最短路的平局选择，仅作诊断。中位 independent window 为 Twitter `4.514 ms`、Friendster `44.536 ms`、R-MAT `78.908 ms`；其中 `snapshot_ms` 是离线稀疏记录索引时间，生产 snapshot 的口径由下述收尾决定单独处理。R-MAT 仍只定义 workload boundary，不进入真实图性能 gate。生产采集 flag、CUDA gather kernel、state writer 与 capture members 已在回放后移除；正常执行路径不含这项实验代码。含 cut 的低排名 prefix 若未来被选择必须使用 CPU service + successor fence + dependent GPU service；本轮不再新增 trace、production owner runtime 或参数扫描。
+
+**F1-C 收尾决定（2026-08-20）**：上段的 `snapshot_ms` 是离线稀疏记录重建和索引成本，并非生产 authoritative GPU state 的 D2H snapshot，不能把它声称为生产 snapshot 已主导。为避免这一口径错误，按同一 deletion repair 可见边界重新比较已有日志：all-GPU 的中位 `topology + H2D + closure` 为 Twitter `3.688 ms`、Friendster `22.770 ms`、R-MAT `133.701 ms`；一次 crossover 的离线 candidate window 为 `4.514/44.536/78.908 ms`。后者仍未计入真实 D2H sparse gather、常驻 CPU state/mirror 维护、GPU 输入上传分配和生产 version/publication，因此只是对 CPU owner 有利的下界。即使在该下界，Twitter 慢 `22.4%`，Friendster 慢 `95.6%`；两张真实图均无 `net_cpu_takeover_gain > 0`。R-MAT 快 `41.0%` 只说明高 closure、无 cache 的合成边界可能存在 crossover，不满足真实图 gate。故 F1-C 否决 deletion CPU graph-computation owner，不进入 F2，也不为该路线追加采样、阈值、owner map、partition 或持久状态 runtime。临时 production capture 已回收；离线 trace/replay 与负结果保留。
+
+**下一方向**：CPU 仍应服务于它已证明更匹配的 producer-side touched-source topology mutation、reverse-delta construction、descriptor/cache publication，而非在 deletion SSSP closure 中成为 second graph executor。后续若开始新迭代，应按 F 失败后的 dual-version topology pipeline 重新立项：先验证 CPU 构造 next epoch 的 touched-source topology 能否与 GPU 读取 current epoch 重叠，并将 reader fence、epoch publication、内存峰值和完整 `paper_algorithm_ms` 一起计入；不得把本次 R-MAT crossover 外推为通用 CPU owner 收益。
+
+Twitter、Friendster、R-MAT 各完成连续 10 batch。Twitter top 诊断候选的 internal incoming / snapshot source / non-sink outgoing work 分别为 `34--4,030 / 461--37,857 / 1,146--43,029`；Friendster 为 `1,154--40,796 / 15,221--532,964 / 24,463--560,067`；R-MAT 为 `3,066--364,234 / 76,365--2,836,582 / 88,169--8,922,964`。R-MAT 因 67M vertex 在 V100 `cache=2` OOM，按机制口径使用 `cache=0`，不进入真实图性能 gate。Europe 当前 source/update cohort 10 batch affected 均为零，是无效样本。
+
+三组有效数据的 top predecessor-closed 候选全部 `changed_boundary_sources=0`。这不是需要继续采样的概率结论，而是 affected-only pull 与 predecessor closure 的结构性质：能在 repair 中改变并影响候选的 source 必为 affected predecessor，因而已属于 internal state。F 不建设 iterative changed-source runtime。剩余未知量是一次性 snapshot/mirror 成本、CPU→GPU successor cut 与 dependent GPU critical path；真实图 snapshot source 常比 internal incoming 大一个数量级，且上游 prefix 可能把原 GPU 并行工作改成 CPU 后接 GPU 的串行链。这些未知量统一留给下一次候选补全和唯一 crossover replay，不再拆成小迭代。
+
+每个 replay 必须处理相同逻辑记录和相同最终语义，CPU 使用启动前固定的 persistent worker pool；计入 state gather/scatter、CPU→GPU successor publication、quiescence、NUMA/RSS 和 GPU 被删除服务。不得用 synthetic edge loop、CPU 只扫不提交、GPU hot 数据对 CPU cold 数据、timer 外预处理或小图阈值作为证据。snapshot state 必须从生产 authoritative state 的真实位置读取；若为了 replay 先常驻一份 CPU 全量 value/parent mirror，其维护成本和内存必须完整计入，不能把它当免费输入。
 
 统一决策量为：
 
 ```text
 baseline_window_ms = 当前生产路径在同一 ready/visible 边界间的 wall
-candidate_window_ms = CPU 接管后从相同 ready 到相同 visible 边界的 wall
+independent_candidate_ms = snapshot + max(CPU complete service, GPU independent service) + final publication/fence
+prefix_candidate_ms = snapshot + CPU complete service + successor publication + GPU dependent successor service + final fence
 net_cpu_takeover_gain = baseline_window_ms - candidate_window_ms
 ```
 
-`candidate_window_ms` 已包含 CPU complete service、剩余 GPU service 的 `max()` 关系、boundary/publication、version/reclamation 和最终 fence；不得再把 overlap 作为额外正收益重复相加。
+决策时按候选关系将 `candidate_window_ms` 取为 `independent_candidate_ms` 或 `prefix_candidate_ms`。二者都已包含 CPU complete service、剩余 GPU service、snapshot/publication、version/reclamation 和最终 fence；不得把 overlap 作为额外正收益重复相加，也不得把 prefix 的 dependent GPU work放进 `max()`。
 
-F1-L gate：候选规则不含 dataset id，在至少两张大图上 `net_cpu_takeover_gain > 0` 且重复方向稳定，并保守预测完整 `paper_algorithm_ms` 至少下降 5%，才允许进入 F2。若只有 cache=0 胜出，结论限定为 cold/out-of-core；若只在单图胜出，保留为 workload boundary，不进入默认生产。失败候选立即停止，不调 packet、线程数、degree limit 或 capacity。insertion propagation 只有同样通过该 gate 才批准 F3。
+F1-C gate：CPU 必须承担非零完整 sub-DAG graph service，且 GPU 删除相同 repair service。只有至少两张真实大图 `net_cpu_takeover_gain > 0`、重复方向稳定，并保守预测完整 10-batch `paper_algorithm_ms` 至少下降 5%，才允许进入 F2。R-MAT 单独胜出只证明 workload boundary。若独立 component/bundle 工作不足、prefix 串行 fence 抵消收益、snapshot/mirror 占优、sink 排除后有效 work不足或 removable GPU repair本身受 Amdahl 限制，则 F 直接否决计算 owner runtime；不再新增 vertex map、METIS、source packet、固定比例、partition round或 owner阈值变体。
 
-##### F2：胜出任务的 batch-epoch 版本化生产接入
+##### F2：胜出 sub-DAG runtime 的生产接入（已取消：F1-C 未通过）
 
-F2 只实现 F1-L 胜出的任务，不预先同时实现所有候选。共同协议是在同一个 mixed batch 的 `[P0-TIMER]` 内保留 `epoch e` 旧 published view，CPU 构造 `epoch e+1` 的 topology/dependency/cache patch，GPU 继续完成被证明可与之并发的旧状态服务；二者完成后一次性发布 `e+1`，repair/insertion 只读新版本。这里不提前执行下一 batch，也不改变结果可见顺序。
+F2 只实现 F1-C replay 胜出的同一种执行关系，不把 replay 扩张成通用双向 runtime。若独立 component/bundle 胜出，CPU/GPU 各自保有 owner-local state 与队列并发 closure，最终一次共同 quiescence；若上游 prefix 的串行替代仍胜出，则 CPU 完整 closure 后只做一次 min-reduced successor state/witness publication，再启动 dependent GPU successor service。当前语义下不建设逐轮 changed-source channel，不做每轮全量 state gather/merge，也不提前执行下一 batch。
 
 版本协议的硬约束：
 
 1. topology mutation、reverse delta、descriptor patch 和 cache invalidation 共享同一 batch epoch，GPU 不得观察半提交邻接。
 2. 旧版本至少保留到所有 GPU reader quiescent；按 touched source/group 延迟回收，禁止逐边 MVCC、`O(V)` mirror 或第二份常驻 GPU topology。
 3. publication 和 cache patch 按 `touched sources + delta records + changed cached records` 缩放；未变化的 cached adjacency 不 compact、不 reload。
-4. 若接管 affected preparation或 deletion tail，authoritative state、witness 和 changed-source event 的 owner/epoch 必须闭合，GPU 不得重复执行 CPU 已接管的服务。
+4. authoritative state、witness、snapshot epoch、CPU→GPU successor publication 和最终可见性必须闭合，GPU 不得重复执行 CPU 已接管的服务；独立候选不得凭空产生跨 owner event，prefix 候选不得隐藏 successor fence。
 5. 比较必须包含同一代码基座的串行单版本、版本化 CPU 接管和 all-GPU exact-source 对照，所有异步工作在 batch timer 内结清。
 
 F2 gate：TW/FS/EU 连续 10 batch 的 Bellman、distance checksum、tight witness、topology hash 和 epoch audit 全部通过；至少两张大图的完整 `paper_algorithm_ms` 稳定下降，且收益能由 deleted GPU kernels/scans/H2D、overlap wall、patch bytes、changed records 和峰值内存闭合。若只降低子项而 total batch 不降，候选否决，不继续调 allocator、slab、prefetch 或线程数。
 
-##### F3：条件式 CPU propagation/deletion closure（仅当对应 F1-L replay 通过）
+##### F3：sub-DAG decomposition 与调度泛化（未启动；F1-C 未通过）
 
-F3 才允许 CPU 成为算法状态 executor。它复用 `ExactSourceFrontier`、source-version gate、local/event credit 和 batch-epoch topology view；CPU source 的 traversal、authoritative state 和 local queue必须同 owner，跨域只发送 min-reduced changed-source/witness event。禁止复用 E2/E3 的 segment-round dispatcher、每轮 join、全量 state snapshot、固定 degree split 或 `PostComputationBW()`。
+F3 在已证明收益的 runtime 上扩展 SCC condensation component/bundle 选择与跨 batch 稳定性；weak component 既是独立并发候选，也是 sub-DAG 搜索上界，不再单列“是否让 CPU 计算”：CPU 在 F2 已是完整算法 executor。禁止复用 E2/E3 的 segment-round dispatcher、每轮 join、全量 state snapshot、固定 degree split 或 `PostComputationBW()`。
 
-correctness gate 覆盖 CPU-only chain、GPU-only chain、双向跨域 chain、重复/乱序 version、删除 replacement 和连续 mixed batch；性能 gate 使用 F1-L 已冻结的结构类别，并把 F2 版本、boundary 和回收成本计入完整 timer。若真实 planner 选择 all-GPU，则不保留生产 CPU executor，机制测试和负结果留在独立 artifact。
+correctness gate 覆盖 CPU-only chain、GPU-only chain、双向跨域 chain、重复/乱序 version、删除 replacement、sink terminal commit 和连续 mixed batch；性能 gate 使用 F1-C 已冻结的 sub-DAG 结构类别，并把 F2 版本、boundary 和回收成本计入完整 timer。若真实 planner 选择 all-GPU，则不保留生产 CPU executor，机制测试和负结果留在独立 artifact。
 
-##### F4：收敛与论文决策
+##### F4：收敛与论文决策（历史决策框架；当前结论已由 F1-C 给出）
 
 F4 只允许三种结论：
 
-1. **CPU 系统任务接管胜出**：F2 证明 topology/dependency/cache 中至少一种 host-local 完整服务降低大图 batch 关键路径；论文主线是 CPU-managed versioned graph service + GPU exact incremental closure。
-2. **CPU 算法 closure 也胜出**：在第一项成立或不被其成本抵消的前提下，F3 进一步证明某个可解释 cold/irregular cohort 能删除 GPU critical-path service，保留统一双域 runtime。
-3. **all-GPU 算法路径胜出**：F1-L/F2 均不能改善完整 timer；删除生产 CPU propagation/planner 和旧 dispatcher，保留 R1/R2、任务 crossover 与大图负结果作为系统边界。CPU 仍可作为 host topology 的实现细节，但不能宣称异构性能贡献。
+1. **deletion sub-DAG 双域计算胜出**：F2 证明 CPU 完整接管可解释 component/bundle 或 prefix、GPU 不重复同一 destination/internal work，且至少两张真实大图的完整 batch 时间下降；论文主线必须如实对应胜出的执行关系，即 independent closure overlap 或含 successor fence 的串行异构替代，不能笼统写成稀疏 boundary event。
+2. **仅特定结构胜出**：R-MAT 或单张真实图存在足够大的低边界 sub-DAG，但默认 gate 未通过；保留为 workload crossover/结构边界，不包装成通用生产收益。
+3. **all-GPU 算法路径胜出**：F1-C/F2 不能改善完整 timer；不实现生产 CPU sub-DAG runtime，保留 R1/R2、结构 trace/replay 与大图负结果。cache touched-only 修复仍可作为独立工程优化，但不能宣称 CPU 图计算贡献。
 
 共同验收只以 TW/FS/EU 100k mixed-update、相同用户 `cache`、交错重复、完整 `paper_algorithm_ms`、正确性和内存峰值为主；Wiki/Orkut 和小图只作回归，不要求每张图强行存在 CPU owner，也不以 CPU edge share 作为完成条件。
+
+##### F 失败后的转向（已执行）
+
+F1-C 已否决 CPU graph-computation owner。停止继续增加 owner map、划分器、packet、比例、阈值和 production CPU closure runtime；可复现负结果与 crossover trace 保留，未胜出的 production capture 已移除。下一阶段由 P 接管：先收口 cache patch 和 Europe cohort，再用新基线画像决定是否存在值得实现的 dual-version topology overlap；该方向在 P3 批准前仍只是候选。
+
+#### 迭代 P：新基线收口与下一架构决策（2026-08-24 起）
+
+详细论证与 P3-P5 候选见 `iteration/路线复核与下一阶段执行指引_20260823.md`。当前只执行 P0-P2，不提前写新 runtime，也不把阶段性 screening 做成论文封版实验。
+
+##### P0：F1-C0 工程收口
+
+> **状态（2026-08-24）：已完成。** Friendster 100k `check=true` 连续 10 batch 的 deletion-stage/batch check 与最终 Bellman 全部通过，最终 `reachable=54222900`、`relaxable_edges=0`、`missing_tight_witnesses=0`，日志位于 `logs/p0_cache_closeout_20260824T080611Z/`。新增 `cache_tail_fallback_test`，与 production `ReserveCachePatchOrInvalidate` 共用同一 device helper，定向覆盖尾部容量不足后的 cache invalidation、tail reservation 和 refresh gate；三个 cache tests 全部通过，`hybrid_sssp` 重建通过。
+
+1. Friendster 做一次 `check=true` 的 10-batch correctness 回归，确认 cache patch、拓扑审计与最终 Bellman 闭合。
+2. 用受控小容量定向触发 `cache_tail` 耗尽，验证 `patch failure -> full compact/load`；补定向测试。
+3. Twitter 做已知 checksum 回归和一次性能 sanity screening。
+
+P0 gate：Friendster correctness、fallback 定向路径、构建与现有 CTest 全部通过，且无数量级性能回退。正式 3/5-repeat 不阻塞 P0。
+
+##### P1：Europe cohort 有效化
+
+> **状态（2026-08-24）：数据有效化完成，单 batch correctness 通过。** 新 symmetric-expanded 99% base 有 `107028226` 条有向边，最大 WCC `32200324` 点、覆盖 `58.9%` update 端点，确定性选择 `source=1`。原失败由 `Start()` 在 initial SSSP 第 1000 轮无条件标记 convergence 引起；删除该分支后，initial 在约 `11742` 轮自然 quiescence，耗时 `259.8--261.5s`，Bellman 通过。batch 0 的 `affected=24098451`、deletion repair `86.99s`、insertion closure `31.50s`，完整 `paper_algorithm_ms=120439.090`；deletion-stage、batch 和 final Bellman 均通过，最终 `reachable=31972301`。日志位于 `logs/p1_europe_natural_init_20260824T133914Z/` 与 `logs/p1_europe_natural_batch1_20260824T134504Z/`。未发生 owner 参与或内存规模爆炸；剩余 gate 是补足 10 batch。
+
+按 update 端点与源可达域的可解释关系选择 source，不盲扫、不按性能挑选。10 batch 中多数 batch 至少触发一种有效增量工作，整个 cohort 同时包含非零 deletion repair 与 insertion closure 样本，并通过 `check=true`。只有证据证明 update 流本身无效时才修生成脚本并记录参数。
+
+##### P2：轻量关键路径画像
+
+> **状态（2026-08-24）：运行中。** `scripts/temp_scripts/run_p2_lightweight_screening.sh` 串行执行 TW/FS/EU 各一次 10-batch screening；TW/FS 为 `check=false` 性能画像，EU 使用 symmetric-expanded 99% base、`source=1`、`check=true`，同时补齐 P1 10-batch correctness。运行目录为 `logs/p2_lightweight_20260824T135650Z/`。
+
+在含 cache patch 的当前二进制上，对 TW/FS/EU 各做一次关键路径 screening，必要时补第二次交错运行。复用现有 F0-L 脚本，记录各阶段占比、执行方和读取的拓扑版本，输出 hotness/candidate 增量维护收益上界与合法 topology overlap 上界。P2 只服务 P3 决策，不要求论文级重复或残差 `<=2%`。
+
+P2 完成后进入 P3 强制决策：若 hotness/candidate 仍是主要成本，优先做 touched-only 增量维护；只有至少两张真实图的合法 topology overlap 上界达到 `5%`，才批准 dual-version runtime。
 
 ## 11. 实验与验收要求
 
@@ -841,9 +905,9 @@ F4 只允许三种结论：
 - **A2：CPU 机会必须由工作而非设备空闲推导**。只有在主图上同时看到可观 CPU-ready work、CPU 路径的含通信净服务成本，以及 GPU 关键路径可被覆盖，才进入 B。单看 CPU idle、GPU utilization 或某个 kernel 慢都不足以选方案。
 - **B/C 条件假设**。B1 先决定 deletion 的合法执行域，B2 只稀疏化胜出路径，B3 再检验 fixed-owner insertion 并发。C 检验一个联合假设：source-local chunked adjacency 能否把 CPU 更新的物理影响限定为 touched sources，并使 GPU topology publication 从 `O(V)` 全量 mirror 变为 `O(touched sources)` 紧凑 patch，且在计入 relocation、cache invalidation 和后续 ZC 扫边后仍降低完整 batch 时间。若只降低 update/s 或 H2D 子项，但端到端成本被 compaction、allocator 或 cache refresh 抵消，则该假设被否定，不转而扩大 CPU ownership 掩盖结果。
 - **E：通用 topology-first 事件 substrate（历史，已由 F 收紧）**。E4-R 的 exact source/version 与 affected-only reverse merge 保留；E4-R3-C 已取消，production propagation 暂为 all-GPU，不再以“完成 CPU full runtime”作为 F 的前置条件。
-- **F0-L/F1-L：大图任务接管可行性假设**。TW/FS/EU 的完整 paper timer 中必须存在可由 CPU 整段替代或与 GPU 合法并发的 topology/dependency/cache/deletion 服务；收益按被删除的完整 GPU/串行服务计算，不按 CPU edge share、利用率或 synthetic throughput计算。
-- **F2：batch-epoch 版本化假设**。若 CPU 构造 `epoch e+1` 的 touched-only topology/dependency/cache patch 与 GPU 读取 `epoch e` 的旧状态服务具有版本独立性，则两者可在同 batch timer 内形成 `max()` 而不是串行和；旧版本只保留到 reader quiescent，禁止逐边 MVCC 和全量副本。
-- **F3：条件式算法双执行域假设**。只有对应 F1-L 完整 replay 通过时，CPU/GPU 才共享 exact-source/event runtime；owner-local closure、跨域 changed-source/witness event 和 credit quiescence必须减少 GPU critical path，不能以固定 CPU quota、degree threshold、partition round 或最后全图 sweep制造参与。
+- **F1-C：SCC-condensation sub-DAG crossover 假设**。真实 deletion affected dependency graph 中存在独立 component/bundle，或虽有 predecessor->successor 依赖但 CPU 完整 prefix service 加 successor fence 仍低于原 GPU service；CPU 完整接管 incoming traversal、reduce/commit、non-sink expansion 与 closure 后，GPU 可删除相同 destination/internal service。sink 仍参与本轮 reduce/commit，但不贡献下一轮 frontier、owner propagation work 或 outgoing edge work；收益不按 CPU 利用率、metadata 工作或 synthetic throughput 计算。
+- **F2：真实执行关系假设**。独立候选的关键路径可按 `snapshot + max(CPU service, GPU independent service) + final fence` 计算；prefix 候选必须按 `snapshot + CPU service + successor publication + GPU dependent service + final fence` 计算。当前 affected-only 语义下 iterative changed-boundary 为零，不建设无必要的每轮 state gather/event channel。
+- **F3：结构泛化假设**。independent component/bundle、SCC condensation sub-DAG 与 sink terminal closure 的选择可由实际 incoming/outgoing work、snapshot source、CPU->GPU cut、dependent successor work 和设备同语义服务曲线统一决定；weak component 只作候选上界，不能使用 dataset id、固定 CPU quota、degree threshold、partition round 或最后全图 sweep 制造参与。
 
 ## 12. 构建与运行模板
 

@@ -25,6 +25,9 @@
 #include <framework/dynamic_reverse_index.h>
 #include <framework/dual_domain_event_runtime.h>
 #include <framework/topology_replay.h>
+#include <framework/cache_patch_trace.h>
+#include <framework/cache_refresh_gate.h>
+#include <framework/affected_component_trace.h>
 #include <framework/algo_variants.cuh>
 #include <utils/cuda_utils.h>
 #include <utils/graphs/traversal.h>
@@ -70,6 +73,8 @@ DECLARE_bool(topology_replay_audit);
 DECLARE_int32(sssp_cpu_partition_capacity);
 DECLARE_string(sssp_cpu_domain_map);
 DECLARE_string(e0b_trace_file);
+DECLARE_string(f1_cache_trace_file);
+DECLARE_string(f1_component_trace_file);
 
 namespace sepgraph {
     namespace engine {
@@ -153,7 +158,9 @@ namespace sepgraph {
                     const uint64_t candidate_wide =
                         static_cast<uint64_t>(src_value) +
                         static_cast<uint64_t>(TAppInst::DeletionEdgeWeight(src, dst));
-                    if (candidate_wide < static_cast<uint64_t>(best)) {
+                    if (candidate_wide < static_cast<uint64_t>(best) ||
+                        (candidate_wide == static_cast<uint64_t>(best) &&
+                         (best_parent == UINT32_MAX || src < best_parent))) {
                         best = static_cast<TValue>(candidate_wide);
                         best_parent = src;
                     }
@@ -161,11 +168,13 @@ namespace sepgraph {
                 const TValue old_value = static_cast<TValue>(atomicMin(
                     reinterpret_cast<unsigned int *>(&node_value[dst]),
                     static_cast<unsigned int>(best)));
-                if (best < old_value) {
+                if (best <= old_value && best_parent != UINT32_MAX) {
                     atomicExch(reinterpret_cast<unsigned int *>(&node_buffer[dst]),
                                static_cast<unsigned int>(best));
                     atomicExch(reinterpret_cast<unsigned int *>(&node_parent[dst]),
                                static_cast<unsigned int>(best_parent));
+                }
+                if (best < old_value) {
                     const unsigned int position = atomicAdd(changed_count, 1u);
                     if (changed_vertices != nullptr) {
                         changed_vertices[position] = dst;
@@ -660,8 +669,9 @@ namespace sepgraph {
             WEdge* del_edges_h=nullptr;
             WEdge* del_edges_d=nullptr;
             uint32_t* work_size_d = nullptr;
-            int type[1];
+            int type[2] = {0, 0};
             int *type_device=nullptr;
+            bool type_host_registered = false;
             //partition_information
             unsigned int partitions_csc;
             unsigned int* partition_offset_csc;
@@ -676,6 +686,12 @@ namespace sepgraph {
                 uint64_t scanned_edges = 0;
             };
             std::ofstream m_e0b_trace;
+            std::ofstream m_f1_cache_trace;
+            std::ofstream m_f1_component_trace;
+            std::vector<cache_patch::CandidateRecord> m_f1_previous_cache_candidates;
+            uint64_t m_f1_previous_cache_edges = 0;
+            bool m_f1_cache_trace_initialized = false;
+            cache_patch::RefreshGate m_cache_refresh_gate;
             std::vector<E0BRegionActivity> m_e0b_region_activity;
             std::vector<std::pair<index_t, uint64_t>> m_e0b_active_sources;
             std::vector<std::pair<index_t, index_t>> m_e0b_success_records;
@@ -1122,6 +1138,49 @@ namespace sepgraph {
                 cudaDeviceSynchronize();
             }
 
+            index_t CacheCandidateCount() {
+                GraphDatum &graph_datum = *m_graph_datum;
+                const index_t nnodes = graph_datum.nnodes;
+                if (nnodes == 0 || graph_datum.num_of_cache == 0) return 0;
+                index_t final_prefix = 0;
+                index_t final_degree = 0;
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    &final_prefix, graph_datum.d_sum + nnodes - 1,
+                    sizeof(final_prefix), cudaMemcpyDeviceToHost));
+                GROUTE_CUDA_CHECK(cudaMemcpy(
+                    &final_degree, graph_datum.d_v + nnodes - 1,
+                    sizeof(final_degree), cudaMemcpyDeviceToHost));
+                if (static_cast<uint64_t>(final_prefix) + final_degree <
+                    graph_datum.num_of_cache) return nnodes;
+                index_t low = 0;
+                index_t high = nnodes - 1;
+                while (low < high) {
+                    const index_t middle = low + (high - low) / 2;
+                    index_t prefix = 0;
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        &prefix, graph_datum.d_sum + middle + 1,
+                        sizeof(prefix), cudaMemcpyDeviceToHost));
+                    if (static_cast<uint64_t>(prefix) < graph_datum.num_of_cache) {
+                        low = middle + 1;
+                    } else {
+                        high = middle;
+                    }
+                }
+                return low;
+            }
+
+            void EnsureTypeDevicePointer() {
+                if (!type_host_registered) {
+                    GROUTE_CUDA_CHECK(cudaHostRegister(
+                        type, sizeof(type), cudaHostRegisterMapped));
+                    type_host_registered = true;
+                }
+                if (type_device == nullptr) {
+                    GROUTE_CUDA_CHECK(cudaHostGetDevicePointer(
+                        reinterpret_cast<void **>(&type_device), type, 0));
+                }
+            }
+
             void confirm_candidate_batch(){
                 GraphDatum &graph_datum = *m_graph_datum;
                 auto &app_inst = *m_app_inst;
@@ -1130,22 +1189,140 @@ namespace sepgraph {
                 graph_datum.ensure_candidate_vertex();
                 extrac.stop();
                 LOG("candidate v time: %f ms (excluded)\n", extrac.ms());
-                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
+                const index_t admitted = CacheCandidateCount();
+                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, admitted);
                 const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 // const auto &hvcsr = m_vcsr_dev_graph_allocator->HostObject();
                 dim3 grid_dims, block_dims;
-                KernelSizing(grid_dims, block_dims, work_source.get_size());
-                     Stopwatch search_rebuild(true);
-                kernel::search_batch<< < grid_dims, block_dims, 0, stream_s.cuda_stream >> > (app_inst,
-                vcsr_graph,
-                work_source,
-                graph_datum.num_of_cache_d,
-                graph_datum.d_sum,
-                graph_datum.d_id.Current());
-                stream_s.Sync();
+                Stopwatch search_rebuild(true);
+                type[0] = 0;
+                EnsureTypeDevicePointer();
+                if (admitted != 0 && m_cache_refresh_gate.published()) {
+                    KernelSizing(grid_dims, block_dims, work_source.get_size());
+                    kernel::search_batch<<<grid_dims, block_dims, 0, stream_s.cuda_stream>>>(
+                        app_inst, vcsr_graph, work_source,
+                        graph_datum.d_id.Current(), type_device);
+                    stream_s.Sync();
+                }
                 search_rebuild.stop();
-                LOG("search_rebuild v time: %f ms (excluded)\n", search_rebuild.ms());
                 cudaDeviceSynchronize();
+                const bool missing_desired = !m_cache_refresh_gate.published() || type[0] != 0;
+                const bool refresh = m_cache_refresh_gate.Observe(admitted, missing_desired);
+                if (refresh && admitted != 0) {
+                    KernelSizing(grid_dims, block_dims, work_source.get_size());
+                    kernel::mark_cache_candidates<<<grid_dims, block_dims, 0,
+                        stream_s.cuda_stream>>>(vcsr_graph, work_source,
+                                                graph_datum.d_id.Current());
+                    stream_s.Sync();
+                }
+                LOG("[F1-CACHE-GATE] desired_vertices=%u published_vertices=%llu missing_desired=%u refresh_required=%u candidate_ms=%.3f\n",
+                    admitted,
+                    static_cast<unsigned long long>(m_cache_refresh_gate.published_vertices()),
+                    missing_desired ? 1U : 0U, refresh ? 1U : 0U,
+                    search_rebuild.ms());
+            }
+
+            bool CacheRefreshRequired() const {
+                return m_cache_refresh_gate.refresh_required();
+            }
+
+            void MarkCachePublished() {
+                m_cache_refresh_gate.Publish();
+            }
+
+            void TraceCacheCandidates(uint32_t batch) {
+                if (FLAGS_f1_cache_trace_file.empty()) return;
+                GraphDatum &graph_datum = *m_graph_datum;
+                const index_t nnodes = graph_datum.nnodes;
+                index_t admitted = 0;
+                if (nnodes > 1 && graph_datum.num_of_cache != 0) {
+                    index_t final_prefix = 0;
+                    index_t final_degree = 0;
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        &final_prefix, graph_datum.d_sum + nnodes - 1,
+                        sizeof(final_prefix), cudaMemcpyDeviceToHost));
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        &final_degree, graph_datum.d_v + nnodes - 1,
+                        sizeof(final_degree), cudaMemcpyDeviceToHost));
+                    if (static_cast<uint64_t>(final_prefix) + final_degree <
+                        graph_datum.num_of_cache) {
+                        admitted = nnodes;
+                    } else {
+                        index_t low = 0;
+                        index_t high = nnodes - 1;
+                        while (low < high) {
+                            const index_t middle = low + (high - low) / 2;
+                            index_t prefix = 0;
+                            GROUTE_CUDA_CHECK(cudaMemcpy(
+                                &prefix, graph_datum.d_sum + middle + 1,
+                                sizeof(prefix), cudaMemcpyDeviceToHost));
+                            if (static_cast<uint64_t>(prefix) < graph_datum.num_of_cache) {
+                                low = middle + 1;
+                            } else {
+                                high = middle;
+                            }
+                        }
+                        admitted = low;
+                    }
+                }
+                std::vector<index_t> ids(admitted);
+                if (admitted != 0) {
+                    GROUTE_CUDA_CHECK(cudaMemcpy(
+                        ids.data(), graph_datum.d_id.Current(),
+                        sizeof(index_t) * admitted, cudaMemcpyDeviceToHost));
+                }
+                if (!m_f1_cache_trace.is_open()) {
+                    m_f1_cache_trace.open(FLAGS_f1_cache_trace_file,
+                                          std::ios::out | std::ios::binary | std::ios::trunc);
+                    if (!m_f1_cache_trace) {
+                        LOG("[F1-CACHE-TRACE] protocol_error=open_failed file=%s\n",
+                            FLAGS_f1_cache_trace_file.c_str());
+                        std::abort();
+                    }
+                    const uint64_t magic = cache_patch::kTraceMagic;
+                    m_f1_cache_trace.write(reinterpret_cast<const char *>(&magic), sizeof(magic));
+                }
+                const auto adjacency =
+                    m_vcsr_dev_graph_allocator->HostObject().adjacency_view();
+                std::vector<cache_patch::CandidateRecord> records;
+                records.reserve(ids.size());
+                for (const index_t id : ids) {
+                    records.push_back({id, adjacency.Degree(id)});
+                }
+                const uint64_t capacity_edges = graph_datum.num_of_cache;
+                const bool unchanged =
+                    m_f1_cache_trace_initialized &&
+                    records == m_f1_previous_cache_candidates;
+                const uint64_t count = unchanged ? 0 : records.size();
+                m_f1_cache_trace.write(reinterpret_cast<const char *>(&batch), sizeof(batch));
+                m_f1_cache_trace.write(reinterpret_cast<const char *>(&capacity_edges),
+                                       sizeof(capacity_edges));
+                m_f1_cache_trace.write(reinterpret_cast<const char *>(&count), sizeof(count));
+                uint64_t admitted_edges = unchanged ? m_f1_previous_cache_edges : 0;
+                if (!unchanged) {
+                    for (const auto &record : records) {
+                        admitted_edges += record.degree;
+                        m_f1_cache_trace.write(
+                            reinterpret_cast<const char *>(&record.vertex),
+                            sizeof(record.vertex));
+                        m_f1_cache_trace.write(
+                            reinterpret_cast<const char *>(&record.degree),
+                            sizeof(record.degree));
+                    }
+                }
+                m_f1_previous_cache_candidates = std::move(records);
+                m_f1_previous_cache_edges = admitted_edges;
+                m_f1_cache_trace_initialized = true;
+                m_f1_cache_trace.flush();
+                LOG("[F1-CACHE-TRACE] batch=%u admitted_vertices=%llu admitted_edges=%llu changed_records=%llu capacity_edges=%llu bytes=%llu\n",
+                    batch,
+                    static_cast<unsigned long long>(ids.size()),
+                    static_cast<unsigned long long>(admitted_edges),
+                    static_cast<unsigned long long>(count),
+                    static_cast<unsigned long long>(capacity_edges),
+                    static_cast<unsigned long long>(sizeof(batch) + sizeof(capacity_edges) +
+                                                    sizeof(count) + count *
+                                                        (sizeof(index_t) + sizeof(uint32_t))));
             }
 
             void LoadCache(){
@@ -1596,11 +1773,6 @@ namespace sepgraph {
                   if(convergence_check == FLAGS_SEGMENT){
                         convergence = true;
                   }
-                  if (round == 1000 ) {//FLAGS_max_iteration
-                        convergence = true;
-                        LOG("Max iterations reached\n");
-                  }
-
                 }
                sw_total.stop();
                m_running_info.time_total = sw_total.ms();
@@ -2010,7 +2182,7 @@ namespace sepgraph {
                 GROUTE_CUDA_CHECK(cudaHostRegister((void *)(this->del_edges_h), sizeof(WEdge) * (load_update.m_del_size), cudaHostRegisterMapped));
 
                 GROUTE_CUDA_CHECK(cudaMalloc(&(this->work_size_d), 2 * sizeof(uint32_t)));
-                GROUTE_CUDA_CHECK(cudaHostRegister((void *)this->type, sizeof(int) * 2, cudaHostRegisterMapped));
+                EnsureTypeDevicePointer();
                 size_t max_patch_records = 0;
                 for (const auto &batch_size : load_update.m_batch_size) {
                     max_patch_records = std::max<size_t>(
@@ -2196,7 +2368,7 @@ namespace sepgraph {
                 auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 type[0] = -1;
 
-                GROUTE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&this->type_device, (void *)this->type, 0));
+                EnsureTypeDevicePointer();
                 index_t seg_snode,seg_enode;
                 index_t stream_id;
                 // LOG("cancel: -----------1-------\n");
@@ -2338,7 +2510,8 @@ namespace sepgraph {
                 m_topology_patch_sources.erase(std::unique(m_topology_patch_sources.begin(),
                     m_topology_patch_sources.end()), m_topology_patch_sources.end());
                 m_vcsr_dev_graph_allocator->PublishSparse(
-                    m_topology_patch_sources, stream_s.cuda_stream, FLAGS_check);
+                    m_topology_patch_sources, stream_s.cuda_stream, FLAGS_check,
+                    graph_datum.cache_edges_l1, graph_datum.num_of_cache);
                 uint64_t zc_cold_edges = m_chunk_store->EdgeCount();
                 if (FLAGS_cache != 0) {
                     zc_cold_edges = 0;
@@ -2352,7 +2525,7 @@ namespace sepgraph {
                 }
                 type[0] = 1;
                 float time_total = 0;
-                GROUTE_CUDA_CHECK(cudaHostGetDevicePointer((void **)&this->type_device, (void *)this->type, 0));
+                EnsureTypeDevicePointer();
 
                 //incremental computation
                 Stopwatch sw_execution(true);
@@ -2381,7 +2554,7 @@ namespace sepgraph {
                         publication.hash_mismatches);
                     std::abort();
                 }
-                LOG("[C3-PUBLISH][batch %u] epoch=%llu patch_records=%zu patch_bytes=%llu h2d_count=%u publication_ms=%.3f stale_version_rejects=%llu cache_invalidations=%llu zc_cold_edges=%llu gpu_cpu_hash_mismatches=%llu audit=%u\n",
+                LOG("[C3-PUBLISH][batch %u] epoch=%llu patch_records=%zu patch_bytes=%llu h2d_count=%u publication_ms=%.3f stale_version_rejects=%llu cache_invalidations=%llu cache_tail=%llu cache_capacity=%llu zc_cold_edges=%llu gpu_cpu_hash_mismatches=%llu audit=%u\n",
                     NumOfSnapShots,
                     static_cast<unsigned long long>(m_chunk_store->PublishedEpoch()),
                     m_topology_patch_sources.size(),
@@ -2389,6 +2562,8 @@ namespace sepgraph {
                     m_topology_patch_sources.empty() ? 0U : 1U,
                     publication.publication_ms, publication.stale_rejects,
                     publication.cache_invalidations,
+                    publication.cache_tail,
+                    static_cast<unsigned long long>(graph_datum.num_of_cache),
                     static_cast<unsigned long long>(zc_cold_edges),
                     publication.hash_mismatches, FLAGS_check ? 1U : 0U);
                 LOG("------------PR mf compensate-----------\n");
@@ -2997,7 +3172,8 @@ namespace sepgraph {
                 m_topology_patch_sources.erase(std::unique(m_topology_patch_sources.begin(),
                     m_topology_patch_sources.end()), m_topology_patch_sources.end());
                 m_vcsr_dev_graph_allocator->PublishSparse(
-                    m_topology_patch_sources, stream_s.cuda_stream, FLAGS_check);
+                    m_topology_patch_sources, stream_s.cuda_stream, FLAGS_check,
+                    graph_datum.cache_edges_l1, graph_datum.num_of_cache);
                 for (index_t stream_idx = 0; stream_idx < FLAGS_n_stream;
                      ++stream_idx) {
                     m_vcsr_dev_graph_allocator->WaitForSparsePublication(
@@ -3086,7 +3262,7 @@ namespace sepgraph {
                         publication.hash_mismatches);
                     std::abort();
                 }
-                LOG("[C3-PUBLISH][batch %u] epoch=%llu patch_records=%zu patch_bytes=%llu h2d_count=%u publication_ms=%.3f stale_version_rejects=%llu cache_invalidations=%llu zc_cold_edges=%llu gpu_cpu_hash_mismatches=%llu audit=%u\n",
+                LOG("[C3-PUBLISH][batch %u] epoch=%llu patch_records=%zu patch_bytes=%llu h2d_count=%u publication_ms=%.3f stale_version_rejects=%llu cache_invalidations=%llu cache_tail=%llu cache_capacity=%llu zc_cold_edges=%llu gpu_cpu_hash_mismatches=%llu audit=%u\n",
                     NumOfSnapShots,
                     static_cast<unsigned long long>(m_chunk_store->PublishedEpoch()),
                     m_topology_patch_sources.size(),
@@ -3094,6 +3270,8 @@ namespace sepgraph {
                     m_topology_patch_sources.empty() ? 0U : 1U,
                     publication.publication_ms, publication.stale_rejects,
                     publication.cache_invalidations,
+                    publication.cache_tail,
+                    static_cast<unsigned long long>(graph_datum.num_of_cache),
                     static_cast<unsigned long long>(zc_cold_edges),
                     publication.hash_mismatches, FLAGS_check ? 1U : 0U);
                 const bool exact_all_gpu = m_insertion_epoch_active &&
@@ -3439,26 +3617,78 @@ namespace sepgraph {
                                 static_cast<uint64_t>(src_value) +
                                 static_cast<uint64_t>(
                                     AppImplDeviceObject::DeletionEdgeWeight(src, dst));
-                            if (candidate_wide < static_cast<uint64_t>(best)) {
+                            if (candidate_wide < static_cast<uint64_t>(best) ||
+                                (candidate_wide == static_cast<uint64_t>(best) &&
+                                 (best_parent == UINT32_MAX || src < best_parent))) {
                                 best = static_cast<TValue>(candidate_wide);
                                 best_parent = src;
                             }
                         }
-                        if (best < m_cpu_node_values[dst]) {
+                        const bool value_improved = best < m_cpu_node_values[dst];
+                        const bool parent_repaired =
+                            best_parent != std::numeric_limits<index_t>::max() &&
+                            best == m_cpu_node_values[dst] &&
+                            best_parent != m_cpu_node_parents[dst];
+                        if (value_improved || parent_repaired) {
                             m_cpu_node_values[dst] = best;
                             m_cpu_node_buffers[dst] = best;
                             m_cpu_node_parents[dst] = best_parent;
                             m_cpu_dirty_vertices.push_back(dst);
-                            ++stats.relaxations;
-                            changed = true;
+                            if (value_improved) {
+                                ++stats.relaxations;
+                                changed = true;
+                            }
                         }
                     }
                 } while (changed);
                 return stats;
             }
 
+            void TraceAffectedComponents(
+                    index_t batch,
+                    const std::vector<index_t> &changed_source_events,
+                    bool changed_source_events_available) {
+                if (FLAGS_f1_component_trace_file.empty()) return;
+                if (!m_f1_component_trace.is_open()) {
+                    m_f1_component_trace.open(FLAGS_f1_component_trace_file,
+                        std::ios::out | std::ios::binary | std::ios::trunc);
+                    if (!m_f1_component_trace) {
+                        LOG("[F1-COMPONENT-TRACE] protocol_error=open_failed file=%s\n",
+                            FLAGS_f1_component_trace_file.c_str());
+                        std::abort();
+                    }
+                    affected_component::WriteHeader(m_f1_component_trace);
+                }
+                std::vector<uint32_t> degrees;
+                degrees.reserve(m_affected_vertices.size());
+                const auto adjacency =
+                    m_vcsr_dev_graph_allocator->HostObject().adjacency_view();
+                for (const index_t vertex : m_affected_vertices) {
+                    degrees.push_back(adjacency.Degree(vertex));
+                }
+                affected_component::WriteBatch(
+                    m_f1_component_trace, batch, m_affected_vertices, degrees,
+                    m_gpu_repair_incoming_offsets, m_gpu_repair_incoming_sources,
+                    changed_source_events, changed_source_events_available);
+                m_f1_component_trace.flush();
+                LOG("[F1-COMPONENT-TRACE] batch=%u affected=%llu incoming=%llu bytes=%llu\n",
+                    batch,
+                    static_cast<unsigned long long>(m_affected_vertices.size()),
+                    static_cast<unsigned long long>(m_gpu_repair_incoming_sources.size()),
+                    static_cast<unsigned long long>(
+                        sizeof(uint32_t) + 3 * sizeof(uint64_t) + sizeof(uint8_t) +
+                        sizeof(index_t) * (m_affected_vertices.size() +
+                                           m_gpu_repair_incoming_sources.size() +
+                                           changed_source_events.size()) +
+                        sizeof(uint32_t) * m_affected_vertices.size() +
+                        sizeof(uint64_t) * m_gpu_repair_incoming_offsets.size()));
+            }
+
             void RunGpuAffectedRepair(index_t batch) {
                 if (m_affected_vertices.empty()) {
+                    m_gpu_repair_incoming_offsets.assign(1, 0);
+                    m_gpu_repair_incoming_sources.clear();
+                    TraceAffectedComponents(batch, {}, true);
                     LOG("[B2-GPU-REPAIR][batch %u] affected=0\n", batch);
                     return;
                 }
@@ -3494,6 +3724,7 @@ namespace sepgraph {
                 KernelSizing(grid_dims, block_dims, m_affected_vertices.size());
                 Stopwatch sw_closure(true);
                 const bool owner_local_repair = m_cpu_domain_map_enabled;
+                std::vector<index_t> trace_changed_source_events;
                 if (owner_local_repair) {
                     if (!m_cpu_domain_state_initialized) {
                         LOG("[E2C-DELETE] protocol_error=repair_before_state_initialize batch=%u\n",
@@ -3563,12 +3794,22 @@ namespace sepgraph {
                                 std::numeric_limits<TValue>::max(),
                                 nullptr,
                                 m_device_gpu_repair_changed,
-                                nullptr);
+                                FLAGS_f1_component_trace_file.empty() ? nullptr :
+                                    m_device_gpu_repair_changed_vertices);
                         GROUTE_CUDA_CHECK(cudaMemcpy(
                             &changed,
                             m_device_gpu_repair_changed,
                             sizeof(unsigned int),
                             cudaMemcpyDeviceToHost));
+                        if (!FLAGS_f1_component_trace_file.empty() && changed != 0) {
+                            const size_t begin = trace_changed_source_events.size();
+                            trace_changed_source_events.resize(begin + changed);
+                            GROUTE_CUDA_CHECK(cudaMemcpy(
+                                trace_changed_source_events.data() + begin,
+                                m_device_gpu_repair_changed_vertices,
+                                sizeof(index_t) * changed,
+                                cudaMemcpyDeviceToHost));
+                        }
                         ++iterations;
                         if (iterations > m_affected_vertices.size() + 1) {
                             LOG("[B2-GPU-REPAIR] protocol_error=no_convergence batch=%u iterations=%u affected=%llu\n",
@@ -3890,6 +4131,8 @@ namespace sepgraph {
                     graph_datum.GetBufferDeviceObject(),
                     graph_datum.m_node_reset_datum);
                 GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+                TraceAffectedComponents(batch, trace_changed_source_events,
+                                        !owner_local_repair);
                 sw_closure.stop();
                 if (owner_local_repair) {
                     ++m_cpu_domain_state_epoch;
@@ -3958,6 +4201,9 @@ namespace sepgraph {
                 if (size == 0) {
                     del_edge_pr(local_begin, NumOfSnapShots);
                     stream_s.Sync();
+                    m_gpu_repair_incoming_offsets.assign(1, 0);
+                    m_gpu_repair_incoming_sources.clear();
+                    TraceAffectedComponents(NumOfSnapShots, {}, true);
                     LOG("[B2-GPU-REPAIR][batch %u] affected=0 reason=no_deleted_edges\n",
                         NumOfSnapShots);
                     return;
@@ -4011,6 +4257,16 @@ namespace sepgraph {
                     ++invalidation_rounds;
                 }
                 sw_invalidation.stop();
+                if (frontier_end != 0) {
+                    KernelSizing(grid_dims, block_dims, frontier_end);
+                    kernel::reset_affected_values<<<grid_dims, block_dims, 0,
+                        stream_s.cuda_stream>>>(
+                            app_inst,
+                            m_device_affected_vertices.GetDeviceDataPtr(),
+                            frontier_end,
+                            graph_datum.GetValueDeviceObject(),
+                            graph_datum.GetBufferDeviceObject());
+                }
                 CollectDeletionAffectedVertices(NumOfSnapShots);
                 Stopwatch sw_physical_delete(true);
                 del_edge_pr(local_begin, NumOfSnapShots);

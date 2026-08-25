@@ -138,24 +138,29 @@ namespace sepgraph {
         void search_batch(TAppInst app_inst,
                             PMAGraph vcsr_graph,
                               WorkSource work_source,
-                              uint64_t *cache_size,
-                              index_t* d_sum,
-                                uint32_t* d_id) {
+                              uint32_t* d_id,
+                              int *refresh_required) {
             uint32_t tid = TID_1D;
             uint32_t nthreads = TOTAL_THREADS_1D;
             uint32_t work_size = work_source.get_size();
-            uint64_t space = (*cache_size);
             for (index_t i = 0 + tid; i < work_size; i += nthreads) {
-                index_t j = work_source.get_work(i);
-                // bool cache = vcsr_graph.vertices_[d_id[j]].cache;
-                //不在缓存里 && 让他delta=true
-                if(d_sum[j+1]<(space)){
-                //     // printf("v_id %d d_sum[%d] = %d\n",d_id[j],j,d_sum[j]);
-                    vcsr_graph.vertices_[d_id[j]].delta = true;
-                    // vcsr_graph.vertices_[d_id[j]].virtual_start = d_sum[j];
-                //     vcsr_graph.vertices_[d_id[j]].cache = false;
+                const index_t rank = work_source.get_work(i);
+                const index_t vertex = d_id[rank];
+                if (!vcsr_graph.vertices_[vertex].cache &&
+                    *refresh_required == 0) {
+                    atomicCAS(refresh_required, 0, 1);
                 }
-                    // printf("d_id[%d] = %d\n",j,d_id[j]);
+            }
+        }
+
+        template<typename PMAGraph, typename WorkSource>
+        __global__ void mark_cache_candidates(PMAGraph vcsr_graph,
+                                               WorkSource work_source,
+                                               uint32_t *d_id) {
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            for (index_t i = tid; i < work_source.get_size(); i += nthreads) {
+                vcsr_graph.vertices_[d_id[work_source.get_work(i)]].delta = true;
             }
         }
          template<LoadBalancing LB,
@@ -410,16 +415,49 @@ namespace sepgraph {
             {
                 index_t src = del_edges_d[i+loca_begin].u;
                 index_t dst = del_edges_d[i+loca_begin].v;
-                if (AtomicInvalidateParent(&node_parent_datum[dst], src)) {
-                    TBuffer init_buffer = app_inst.GetInitBuffer(dst);
-                    node_buffer_datum[dst] = init_buffer;
-                    node_value_datum[dst] = app_inst.GetInitValue(dst);
+                const TValue src_value = node_value_datum[src];
+                const uint64_t candidate = static_cast<uint64_t>(src_value) +
+                    static_cast<uint64_t>(app_inst.DeletionEdgeWeight(src, dst));
+                const index_t parent = node_parent_datum[dst];
+                const bool parent_tight = parent != UINT32_MAX &&
+                    node_value_datum[parent] != static_cast<TValue>(UINT32_MAX) &&
+                    static_cast<uint64_t>(node_value_datum[parent]) +
+                        static_cast<uint64_t>(app_inst.DeletionEdgeWeight(parent, dst)) ==
+                        static_cast<uint64_t>(node_value_datum[dst]);
+                const bool deleted_dependency = parent == src ||
+                    (src_value != static_cast<TValue>(UINT32_MAX) &&
+                     candidate == static_cast<uint64_t>(node_value_datum[dst]) &&
+                     !parent_tight);
+                if (deleted_dependency &&
+                    atomicExch(reinterpret_cast<unsigned int *>(
+                                   &node_parent_datum[dst]),
+                               UINT32_MAX) != UINT32_MAX) {
                     reset_nodes[dst] = true;
                     affected_vertices.append(dst);
                 }
 
             }
 
+        }
+
+        template<template<typename, typename, typename, typename ...> class TAppImpl,
+                typename TValue,
+                typename TBuffer,
+                typename TWeight,
+                typename... UnusedData>
+        __global__ void reset_affected_values(
+                TAppImpl<TValue, TBuffer, TWeight, UnusedData...> app_inst,
+                const index_t *affected_vertices,
+                uint32_t affected_count,
+                TValue *node_value_datum,
+                TBuffer *node_buffer_datum) {
+            const uint32_t tid = TID_1D;
+            const uint32_t nthreads = TOTAL_THREADS_1D;
+            for (uint32_t i = tid; i < affected_count; i += nthreads) {
+                const index_t node = affected_vertices[i];
+                node_value_datum[node] = app_inst.GetInitValue(node);
+                node_buffer_datum[node] = app_inst.GetInitBuffer(node);
+            }
         }
 
         template<typename TAppInst,

@@ -102,6 +102,42 @@ set_source_files_properties(tests/topology_contract_test.cpp PROPERTIES LANGUAGE
 target_link_libraries(topology_contract_test ${CUDA_TOOLKIT_TARGET_DIR}/lib64/stubs/libcuda.so)
 add_test(NAME topology_contract_test COMMAND topology_contract_test)
 
+add_executable(cache_patch_trace_test tests/cache_patch_trace_test.cpp)
+add_test(NAME cache_patch_trace_test COMMAND cache_patch_trace_test)
+
+add_executable(cache_refresh_gate_test tests/cache_refresh_gate_test.cpp)
+add_test(NAME cache_refresh_gate_test COMMAND cache_refresh_gate_test)
+
+add_executable(cache_tail_fallback_test tests/cache_tail_fallback_test.cu)
+set_source_files_properties(tests/cache_tail_fallback_test.cu PROPERTIES LANGUAGE CUDA)
+target_link_libraries(cache_tail_fallback_test ${CUDA_TOOLKIT_TARGET_DIR}/lib64/stubs/libcuda.so)
+add_test(NAME cache_tail_fallback_test COMMAND cache_tail_fallback_test)
+
+add_executable(cache_patch_replay src/cache_patch_replay.cpp)
+
+add_executable(affected_component_trace_test tests/affected_component_trace_test.cpp)
+add_test(NAME affected_component_trace_test COMMAND affected_component_trace_test)
+
+add_executable(f1_replay_state_test tests/f1_replay_state_test.cpp)
+add_test(NAME f1_replay_state_test COMMAND f1_replay_state_test)
+
+add_executable(affected_component_analyzer src/affected_component_analyzer.cpp)
+add_test(NAME affected_component_analyzer_fixture
+         COMMAND affected_component_analyzer --self-test)
+set_tests_properties(
+    affected_component_analyzer_fixture
+    PROPERTIES PASS_REGULAR_EXPRESSION
+        "d0_vertices=3 d0_scc=3 d0_sinks=1 d0_incoming=6 d0_internal=2 d0_snapshot_boundary_edges=4 d0_snapshot_boundary_sources=2 d0_changed_boundary_sources=1 d0_changed_boundary_events=1 d0_outgoing=3")
+add_test(NAME affected_component_successor_audit_fixture
+         COMMAND affected_component_analyzer --self-test)
+set_tests_properties(
+    affected_component_successor_audit_fixture
+    PROPERTIES PASS_REGULAR_EXPRESSION
+        "d1_successor_cut_edges=1 d1_successor_cut_sources=1 d1_successor_cut_destinations=1.*d1_dependent_gpu_vertices=1.*d1_cpu_critical_path_depth=2.*d1_independent_gpu_critical_path_depth=1.*d1_dependent_gpu_critical_path_depth=1")
+
+cuda_add_executable(f1_crossover_replay src/f1_crossover_replay.cu)
+target_link_libraries(f1_crossover_replay ${CUDA_LIBRARIES} pthread)
+
 add_executable(chunk_store_replay src/chunk_store_replay.cpp)
 target_link_libraries(chunk_store_replay ${CUDA_LIBRARIES})
 add_test(
