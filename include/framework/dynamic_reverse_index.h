@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <groute/graphs/common.h>
+#include <framework/effective_update_batch.h>
 
 namespace sepgraph {
 namespace runtime {
@@ -24,14 +25,16 @@ public:
     };
 
     DynamicReverseIndex() : nnodes_(0) {}
+    DynamicReverseIndex(const DynamicReverseIndex &) = delete;
+    DynamicReverseIndex &operator=(const DynamicReverseIndex &) = delete;
 
     template <typename PMAGraph>
     void Build(const PMAGraph &graph, uint32_t requested_workers) {
         nnodes_ = graph.nnodes;
         offsets_.assign(static_cast<size_t>(nnodes_) + 1, 0);
         sources_.clear();
-        edge_count_deltas_.clear();
-        delta_sources_by_dst_.clear();
+        deltas_.clear();
+        pending_.clear();
 
         if (nnodes_ == 0) {
             return;
@@ -75,12 +78,57 @@ public:
         }
     }
 
-    void ApplyInsert(index_t src, index_t dst) {
-        ApplyCountDelta(src, dst, 1);
+    // Only forward-authorized deltas enter here. Prepare leaves the visible
+    // reverse topology unchanged; Commit performs allocation-free vector swaps.
+    void Prepare(const std::vector<topology::EffectiveEdgeDelta> &effective) {
+        for (const auto &update : pending_) {
+            const auto found = deltas_.find(update.destination);
+            if (found != deltas_.end() && found->second.empty()) deltas_.erase(found);
+        }
+        pending_.clear();
+        auto records = effective;
+        records.erase(std::remove_if(records.begin(), records.end(),
+            [&](const topology::EffectiveEdgeDelta &edge) {
+                return edge.source >= nnodes_ || edge.destination >= nnodes_ || edge.count == 0;
+            }), records.end());
+        std::sort(records.begin(), records.end(),
+            [](const topology::EffectiveEdgeDelta &a, const topology::EffectiveEdgeDelta &b) {
+                return a.destination < b.destination ||
+                    (a.destination == b.destination && a.source < b.source);
+            });
+        for (size_t begin = 0; begin < records.size();) {
+            const auto dst = records[begin].destination;
+            size_t end = begin + 1;
+            while (end < records.size() && records[end].destination == dst) ++end;
+            const auto found = deltas_.find(dst);
+            const std::vector<Delta> empty;
+            const auto &old = found == deltas_.end() ? empty : found->second;
+            std::vector<Delta> merged;
+            merged.reserve(old.size() + end - begin);
+            size_t i = 0, j = begin;
+            while (i < old.size() || j < end) {
+                const auto src = std::min(i < old.size() ? old[i].source :
+                    std::numeric_limits<index_t>::max(), j < end ? records[j].source :
+                    std::numeric_limits<index_t>::max());
+                int64_t count = 0;
+                if (i < old.size() && old[i].source == src) count += old[i++].count;
+                while (j < end && records[j].source == src) count += records[j++].count;
+                if (count) merged.push_back({src, count});
+            }
+            pending_.push_back({dst, nullptr, std::move(merged)});
+            begin = end;
+        }
+        // Inserting empty destination slots does not change incoming edges.
+        // References remain valid across unordered_map rehashes.
+        for (auto &update : pending_) update.target = &deltas_[update.destination];
     }
 
-    void ApplyDelete(index_t src, index_t dst) {
-        ApplyCountDelta(src, dst, -1);
+    void Commit() noexcept {
+        for (auto &update : pending_) update.target->swap(update.records);
+        for (const auto &update : pending_) {
+            if (update.target->empty()) deltas_.erase(update.destination);
+        }
+        pending_.clear();
     }
 
     template <typename Visitor>
@@ -134,21 +182,6 @@ private:
         }
     }
 
-    static uint64_t EdgeKey(index_t src, index_t dst) {
-        return (static_cast<uint64_t>(src) << 32) | static_cast<uint64_t>(dst);
-    }
-
-    void ApplyCountDelta(index_t src, index_t dst, int64_t delta) {
-        if (src >= nnodes_ || dst >= nnodes_) {
-            return;
-        }
-        const uint64_t key = EdgeKey(src, dst);
-        if (edge_count_deltas_.find(key) == edge_count_deltas_.end()) {
-            delta_sources_by_dst_[dst].push_back(src);
-        }
-        edge_count_deltas_[key] += delta;
-    }
-
     template <typename Visitor>
     void MergeIncoming(index_t dst, Visitor visitor,
                        MaterializeMetrics *metrics) const {
@@ -157,10 +190,9 @@ private:
         const uint64_t end = offsets_[static_cast<size_t>(dst) + 1];
         if (metrics != nullptr) metrics->base_edges_scanned += end - begin;
 
-        const auto delta_it = delta_sources_by_dst_.find(dst);
-        std::vector<index_t> sorted_delta;
-        if (delta_it != delta_sources_by_dst_.end()) sorted_delta = delta_it->second;
-        std::sort(sorted_delta.begin(), sorted_delta.end());
+        const auto delta_it = deltas_.find(dst);
+        const std::vector<Delta> empty;
+        const auto &sorted_delta = delta_it == deltas_.end() ? empty : delta_it->second;
         if (metrics != nullptr) {
             metrics->delta_records_scanned += sorted_delta.size();
         }
@@ -171,17 +203,15 @@ private:
             const index_t base_src = base_pos < end
                 ? sources_[base_pos] : std::numeric_limits<index_t>::max();
             const index_t delta_src = delta_pos < sorted_delta.size()
-                ? sorted_delta[delta_pos] : std::numeric_limits<index_t>::max();
+                ? sorted_delta[delta_pos].source : std::numeric_limits<index_t>::max();
             const index_t src = std::min(base_src, delta_src);
             int64_t count = 0;
             while (base_pos < end && sources_[base_pos] == src) {
                 ++count;
                 ++base_pos;
             }
-            if (delta_pos < sorted_delta.size() && sorted_delta[delta_pos] == src) {
-                const auto count_it = edge_count_deltas_.find(EdgeKey(src, dst));
-                if (count_it != edge_count_deltas_.end()) count += count_it->second;
-                ++delta_pos;
+            if (delta_pos < sorted_delta.size() && sorted_delta[delta_pos].source == src) {
+                count += sorted_delta[delta_pos++].count;
             }
             if (count > 0) visitor(src);
         }
@@ -190,8 +220,14 @@ private:
     index_t nnodes_;
     std::vector<uint64_t> offsets_;
     std::vector<index_t> sources_;
-    std::unordered_map<uint64_t, int64_t> edge_count_deltas_;
-    std::unordered_map<index_t, std::vector<index_t>> delta_sources_by_dst_;
+    struct Delta { index_t source; int64_t count; };
+    struct PendingDestination {
+        index_t destination;
+        std::vector<Delta> *target;
+        std::vector<Delta> records;
+    };
+    std::unordered_map<index_t, std::vector<Delta>> deltas_;
+    std::vector<PendingDestination> pending_;
 };
 
 } // namespace runtime

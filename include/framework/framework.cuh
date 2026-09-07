@@ -604,6 +604,7 @@ namespace sepgraph {
             std::unique_ptr<groute::graphs::single::PMAGraphAllocator> m_vcsr_dev_graph_allocator;
             std::unique_ptr<topology::SourceLocalChunkStore> m_chunk_store;
             std::vector<index_t> m_topology_patch_sources;
+            topology::GroupedUpdateBatch m_grouped_updates;
             // std::unique_ptr<groute::graphs::single::PMAGraphAllocator> m_vcsr_dev_graph_allocator_update;
             std::unique_ptr<groute::graphs::single::CSCGraphAllocator> m_csc_dev_graph_allocator;
             runtime::DynamicReverseIndex m_reverse_index;
@@ -1099,7 +1100,7 @@ namespace sepgraph {
                 cudaDeviceSynchronize();
             }
 
-            void compute_hot_vertices_sssp(){
+            void compute_hot_vertices_sssp(bool audit_hotness = false, int batch = -1){
                 GraphDatum &graph_datum = *m_graph_datum;
                 auto &app_inst = *m_app_inst;
                 groute::Stream &stream_s = *m_stream;
@@ -1113,10 +1114,28 @@ namespace sepgraph {
                     vcsr_graph,
                     work_source,
                     graph_datum.m_node_buffer_datum,
-                    graph_datum.d_hotness);
+                    graph_datum.d_hotness,
+                    graph_datum.d_id.Current());
                 stream_s.Sync();
                 sw_ch.stop();
                 LOG("comp_hotness time: %f ms (excluded)\n", sw_ch.ms());
+                if (audit_hotness) {
+                    Stopwatch sw_audit(true);
+                    unsigned long long counts[8] = {};
+                    unsigned long long *device_counts = nullptr;
+                    GROUTE_CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&device_counts), sizeof(counts)));
+                    GROUTE_CUDA_CHECK(cudaMemsetAsync(device_counts, 0, sizeof(counts), stream_s.cuda_stream));
+                    kernel::audit_hotness_inputs<<<128, 256, 0, stream_s.cuda_stream>>>(
+                        vcsr_graph, graph_datum.m_node_buffer_datum,
+                        graph_datum.d_id.Current(), graph_datum.d_hotness.Current(), device_counts);
+                    stream_s.Sync();
+                    GROUTE_CUDA_CHECK(cudaMemcpy(counts, device_counts, sizeof(counts), cudaMemcpyDeviceToHost));
+                    GROUTE_CUDA_CHECK(cudaFree(device_counts));
+                    sw_audit.stop();
+                    LOG("[I15-HOTNESS-AUDIT][batch %d] vertices=%u current_nonzero=%llu window_nonzero=%llu expiring_nonzero=%llu masked_nonzero=%llu zero_scores=%llu permuted_ids=%llu score_id_mismatches=%llu invalid_ids=%llu audit_ms=%.3f\n",
+                        batch, graph_datum.nnodes, counts[0], counts[1], counts[2], counts[3],
+                        counts[4], counts[5], counts[6], counts[7], sw_audit.ms());
+                }
                 graph_datum.sort_vtx_by_hotness();
                 LOG("sort vtx ms (excluded)\n");
                 cudaDeviceSynchronize();
@@ -1484,6 +1503,13 @@ namespace sepgraph {
         chunk_options.slab_capacity_edges = 1ULL << 24;
         chunk_options.minimum_chunk_edges = 4;
         chunk_options.pinned = true;
+        const char *mutation_workers_env = std::getenv("CG_MUTATION_WORKERS");
+        if (mutation_workers_env != nullptr && mutation_workers_env[0] != '\0') {
+            const unsigned long parsed = std::strtoul(mutation_workers_env, nullptr, 10);
+            if (parsed > 0 && parsed <= 256) {
+                chunk_options.mutation_workers = static_cast<uint32_t>(parsed);
+            }
+        }
         m_chunk_store.reset(new topology::SourceLocalChunkStore(
             vcsr_graph.nnodes, chunk_options));
         for (index_t source = 0; source < vcsr_graph.nnodes; ++source) {
@@ -1495,11 +1521,16 @@ namespace sepgraph {
         m_chunk_store->FinalizeLoad(vcsr_graph.nedges);
         m_vcsr_dev_graph_allocator = std::unique_ptr<groute::graphs::single::PMAGraphAllocator>(new groute::graphs::single::PMAGraphAllocator(vcsr_graph,seg_nedges_csr_max));
         m_vcsr_dev_graph_allocator->BindChunkStore(*m_chunk_store);
-        LOG("[C3-CHUNK-LOAD] edges=%llu capacity_edges=%llu slabs=%zu metadata_bytes=%llu\n",
+        LOG("[C3-CHUNK-LOAD] edges=%llu capacity_edges=%llu slabs=%zu metadata_bytes=%llu pinned_edge_bytes=%llu pinned_total_bytes=%llu\n",
             static_cast<unsigned long long>(m_chunk_store->EdgeCount()),
             static_cast<unsigned long long>(chunk_options.capacity_edges),
             m_chunk_store->SlabCount(),
-            static_cast<unsigned long long>(m_chunk_store->MetadataBytes()));
+            static_cast<unsigned long long>(m_chunk_store->MetadataBytes()),
+            static_cast<unsigned long long>(
+                chunk_options.capacity_edges * sizeof(index_t)),
+            static_cast<unsigned long long>(
+                chunk_options.capacity_edges * sizeof(index_t) +
+                m_chunk_store->MetadataBytes()));
 
         if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
             const uint32_t hardware_workers = std::thread::hardware_concurrency();
@@ -2223,68 +2254,110 @@ namespace sepgraph {
                 cudaDeviceSynchronize();
             }
 
-            void add_edge_pr(std::pair<index_t,index_t>& local_begin,index_t &NumOfSnapShots){
+            void PrepareGroupedUpdates(const std::pair<index_t,index_t>& local_begin,
+                                       index_t NumOfSnapShots) {
+                Stopwatch sw_group(true);
                 Loader &load_update = *m_load_update;
-                topology::TopologyMutationBatch additions;
-                additions.additions.reserve(
-                    load_update.m_batch_size[NumOfSnapShots].first);
-                for(index_t i = local_begin.first; i < local_begin.first+load_update.m_batch_size[NumOfSnapShots].first; i++){
-                    index_t src_add = load_update.added_edges_w[i].u;
-                    index_t dst_add = load_update.added_edges_w[i].v;
-                    this->added_edges_h[i].u = src_add;
-                    this->added_edges_h[i].v = dst_add;
-                    this->added_edges_h[i].w = (dst_add+src_add)%128 + 1;
-                    if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
-                        m_reverse_index.ApplyInsert(src_add, dst_add);
-                    }
-                    additions.additions.push_back({src_add, dst_add});
-                    m_topology_patch_sources.push_back(src_add);
+                topology::TopologyMutationBatch batch;
+                const auto sizes = load_update.m_batch_size[NumOfSnapShots];
+                batch.deletions.reserve(sizes.second);
+                batch.additions.reserve(sizes.first);
+                for (index_t i = local_begin.second; i < local_begin.second + sizes.second; ++i) {
+                    const auto &edge = load_update.deleted_edges_w[i];
+                    batch.deletions.push_back({edge.u, edge.v});
                 }
-                const auto metrics = m_chunk_store->ApplyPendingAdditions(additions);
-                LOG("[C3-CPU-MUTATION][batch %u phase=add] epoch=%llu touched=%llu changed=%llu written_bytes=%llu relocation_bytes=%llu mutation_ms=%.3f allocation_ms=%.3f\n",
+                for (index_t i = local_begin.first; i < local_begin.first + sizes.first; ++i) {
+                    const auto &edge = load_update.added_edges_w[i];
+                    batch.additions.push_back({edge.u, edge.v});
+                }
+                m_grouped_updates = topology::GroupedUpdateBatch(batch);
+                m_topology_patch_sources.clear();
+                m_topology_patch_sources.reserve(m_grouped_updates.sources.size() * 2);
+                sw_group.stop();
+                LOG("[I14-BATCH][batch %u] sources=%llu updates=%llu group_ms=%.3f\n",
+                    NumOfSnapShots, static_cast<unsigned long long>(m_grouped_updates.sources.size()),
+                    static_cast<unsigned long long>(batch.deletions.size() + batch.additions.size()),
+                    sw_group.ms());
+            }
+
+            topology::ChunkStoreBatchMetrics ApplyEffectivePhase(topology::UpdatePhase phase,
+                                                                 index_t batch) {
+                topology::ChunkStoreBatchMetrics metrics;
+                if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
+                    metrics = m_chunk_store->ApplyGroupedPhase(m_grouped_updates, phase, m_reverse_index);
+                } else {
+                    topology::IgnoreEffectiveUpdates observer;
+                    metrics = m_chunk_store->ApplyGroupedPhase(m_grouped_updates, phase, observer);
+                }
+                const auto &changed = m_chunk_store->ChangedSources();
+                m_topology_patch_sources.insert(m_topology_patch_sources.end(), changed.begin(), changed.end());
+                LOG("[C3-EFFECTIVE][batch %u phase=%s] records=%llu changed_sources=%llu reverse_prepare_ms=%.3f\n",
+                    batch, phase == topology::UpdatePhase::Delete ? "delete" : "add",
+                    static_cast<unsigned long long>(metrics.effective_records),
+                    static_cast<unsigned long long>(changed.size()), metrics.reverse_prepare_ms);
+                return metrics;
+            }
+
+            void add_edge_pr(std::pair<index_t,index_t>& local_begin,index_t &NumOfSnapShots){
+                const auto metrics = ApplyEffectivePhase(topology::UpdatePhase::Add, NumOfSnapShots);
+                LOG("[C3-CPU-MUTATION][batch %u phase=add] epoch=%llu workers=%llu touched=%llu changed=%llu updates=%llu max_source_updates=%llu source_work=%llu max_source_work=%llu written_bytes=%llu relocation_bytes=%llu allocations=%llu reused_blocks=%llu retired_blocks=%llu logical_edges=%llu group_ms=%.3f prepare_ms=%.3f preflight_ms=%.3f allocation_ms=%.3f commit_ms=%.3f apply_ms=%.3f retire_ms=%.3f mutation_ms=%.3f\n",
                     NumOfSnapShots,
                     static_cast<unsigned long long>(metrics.epoch),
+                    static_cast<unsigned long long>(metrics.worker_count),
                     static_cast<unsigned long long>(metrics.touched_sources),
                     static_cast<unsigned long long>(metrics.changed_sources),
+                    static_cast<unsigned long long>(metrics.update_count),
+                    static_cast<unsigned long long>(metrics.max_source_updates),
+                    static_cast<unsigned long long>(metrics.source_work),
+                    static_cast<unsigned long long>(metrics.max_source_work),
                     static_cast<unsigned long long>(metrics.mutation_written_bytes),
                     static_cast<unsigned long long>(metrics.relocation_copied_bytes),
-                    metrics.mutation_ms, metrics.allocation_ms);
+                    static_cast<unsigned long long>(metrics.allocations),
+                    static_cast<unsigned long long>(metrics.reused_blocks),
+                    static_cast<unsigned long long>(metrics.retired_blocks),
+                    static_cast<unsigned long long>(m_chunk_store->EdgeCount()),
+                    metrics.group_ms, metrics.prepare_ms, metrics.preflight_ms,
+                    metrics.allocation_ms, metrics.commit_ms, metrics.apply_ms,
+                    metrics.retire_ms, metrics.mutation_ms);
             }
 
             void del_edge_pr(std::pair<index_t,index_t>& local_begin,index_t &NumOfSnapShots){
-                Loader &load_update = *m_load_update;
-                topology::TopologyMutationBatch deletions;
-                index_t size = load_update.m_batch_size[NumOfSnapShots].second;
-                deletions.deletions.reserve(size);
-                for(index_t i = local_begin.second; i < local_begin.second+ size; i++){
-                    index_t src_del = load_update.deleted_edges_w[i].u;
-                    index_t dst_del = load_update.deleted_edges_w[i].v;
-                    deletions.deletions.push_back({src_del, dst_del});
-                    m_topology_patch_sources.push_back(src_del);
-                }
-                const auto metrics = m_chunk_store->ApplyBatch(deletions);
-                LOG("[C3-CPU-MUTATION][batch %u phase=delete] epoch=%llu touched=%llu changed=%llu missing_deletes=%llu written_bytes=%llu mutation_ms=%.3f\n",
+                const auto metrics = ApplyEffectivePhase(topology::UpdatePhase::Delete, NumOfSnapShots);
+                LOG("[C3-CPU-MUTATION][batch %u phase=delete] epoch=%llu workers=%llu touched=%llu changed=%llu updates=%llu max_source_updates=%llu source_work=%llu max_source_work=%llu missing_deletes=%llu written_bytes=%llu allocations=%llu reused_blocks=%llu retired_blocks=%llu logical_edges=%llu group_ms=%.3f prepare_ms=%.3f preflight_ms=%.3f allocation_ms=%.3f commit_ms=%.3f apply_ms=%.3f retire_ms=%.3f mutation_ms=%.3f\n",
                     NumOfSnapShots,
                     static_cast<unsigned long long>(metrics.epoch),
+                    static_cast<unsigned long long>(metrics.worker_count),
                     static_cast<unsigned long long>(metrics.touched_sources),
                     static_cast<unsigned long long>(metrics.changed_sources),
+                    static_cast<unsigned long long>(metrics.update_count),
+                    static_cast<unsigned long long>(metrics.max_source_updates),
+                    static_cast<unsigned long long>(metrics.source_work),
+                    static_cast<unsigned long long>(metrics.max_source_work),
                     static_cast<unsigned long long>(metrics.missing_deletes),
                     static_cast<unsigned long long>(metrics.mutation_written_bytes),
-                    metrics.mutation_ms);
+                    static_cast<unsigned long long>(metrics.allocations),
+                    static_cast<unsigned long long>(metrics.reused_blocks),
+                    static_cast<unsigned long long>(metrics.retired_blocks),
+                    static_cast<unsigned long long>(m_chunk_store->EdgeCount()),
+                    metrics.group_ms, metrics.prepare_ms, metrics.preflight_ms,
+                    metrics.allocation_ms, metrics.commit_ms, metrics.apply_ms,
+                    metrics.retire_ms, metrics.mutation_ms);
             }
 
             void del_edge(std::pair<index_t,index_t>& local_begin,index_t& NumOfSnapShots){
                 LOG("----------Batch: %d---------\n",NumOfSnapShots);
                 Loader &load_update = *m_load_update;
                 GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+                Stopwatch sw_reclaim(true);
                 const uint64_t reclaimed = m_chunk_store->ReclaimThrough(
                     m_chunk_store->PublishedEpoch());
-                LOG("[C3-RECLAIM][batch %u] completed_epoch=%llu reclaimed_blocks=%llu\n",
+                sw_reclaim.stop();
+                LOG("[C3-RECLAIM][batch %u] completed_epoch=%llu reclaimed_blocks=%llu reclaim_ms=%.3f\n",
                     NumOfSnapShots,
                     static_cast<unsigned long long>(m_chunk_store->PublishedEpoch()),
-                    static_cast<unsigned long long>(reclaimed));
+                    static_cast<unsigned long long>(reclaimed), sw_reclaim.ms());
                 PrepareTopologyReplayAudit(local_begin, NumOfSnapShots);
-                m_topology_patch_sources.clear();
+                PrepareGroupedUpdates(local_begin, NumOfSnapShots);
                 index_t size = load_update.m_batch_size[NumOfSnapShots].second;
                 for(index_t i = local_begin.second; i < local_begin.second+size; i++){
                     index_t src_del = load_update.deleted_edges_w[i].u;
@@ -2292,9 +2365,6 @@ namespace sepgraph {
                     this->del_edges_h[i].u = src_del;
                     this->del_edges_h[i].v = dst_del;
                     this->del_edges_h[i].w = (src_del+dst_del)%128+1;
-                    if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
-                        m_reverse_index.ApplyDelete(src_del, dst_del);
-                    }
                 }
                 update_tree_del(local_begin,NumOfSnapShots);
             }
@@ -2485,12 +2555,14 @@ namespace sepgraph {
                 }
 
                 GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+                Stopwatch sw_reclaim(true);
                 const uint64_t reclaimed = m_chunk_store->ReclaimThrough(
                     m_chunk_store->PublishedEpoch());
-                LOG("[C3-RECLAIM][batch %u] completed_epoch=%llu reclaimed_blocks=%llu\n",
+                sw_reclaim.stop();
+                LOG("[C3-RECLAIM][batch %u] completed_epoch=%llu reclaimed_blocks=%llu reclaim_ms=%.3f\n",
                     NumOfSnapShots,
                     static_cast<unsigned long long>(m_chunk_store->PublishedEpoch()),
-                    static_cast<unsigned long long>(reclaimed));
+                    static_cast<unsigned long long>(reclaimed), sw_reclaim.ms());
 
                 auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
 
@@ -2500,7 +2572,7 @@ namespace sepgraph {
                 read_add(local_begin,NumOfSnapShots);
                 cudaDeviceSynchronize();
 
-                m_topology_patch_sources.clear();
+                PrepareGroupedUpdates(local_begin, NumOfSnapShots);
                 del_edge_pr(local_begin,NumOfSnapShots);
                 add_edge_pr(local_begin,NumOfSnapShots);
                 local_begin.second += load_update.m_batch_size[NumOfSnapShots].second;

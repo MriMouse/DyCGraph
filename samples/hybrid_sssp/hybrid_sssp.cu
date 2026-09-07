@@ -27,6 +27,8 @@ DEFINE_string(sssp_cpu_domain_map,
               "", "Binary uint16 vertex domain map (0=CPU, 1=GPU) for E2 insertion ownership");
 DEFINE_bool(sssp_print_checksum,
             false, "Print final SSSP distance and parent checksums");
+DEFINE_bool(sssp_hotness_audit,
+            false, "Read-only hotness input audit; diagnostic overhead remains in batch timing");
 DEFINE_string(e0b_trace_file,
               "", "Write E0-B insertion propagation trace to this file (capacity 0 only)");
 DEFINE_string(f1_cache_trace_file,
@@ -395,7 +397,7 @@ bool HybridSSSP()
     engine.Start(init_prio);
     //PrintCacheNode() are used to detect the cache is right or not.
     bool success = true;
-    engine.compute_hot_vertices_sssp();
+    engine.compute_hot_vertices_sssp(FLAGS_sssp_hotness_audit, -1);
     engine.confirm_candidate_batch();
     engine.TraceCacheCandidates(std::numeric_limits<uint32_t>::max());
     engine.LoadCache();
@@ -464,7 +466,7 @@ bool HybridSSSP()
         engine.add_edge(local_begin,NumOfSnapShots);
         sw_add_stage.stop();
         Stopwatch sw_hotness(true);
-        engine.compute_hot_vertices_sssp();
+        engine.compute_hot_vertices_sssp(FLAGS_sssp_hotness_audit, NumOfSnapShots);
         sw_hotness.stop();
         Stopwatch sw_candidate(true);
         engine.confirm_candidate_batch();

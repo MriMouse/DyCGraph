@@ -1,3 +1,6 @@
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdint>
 #include <iostream>
@@ -13,6 +16,13 @@ using sepgraph::topology::HashSequence;
 using sepgraph::topology::SourceLocalChunkStore;
 using sepgraph::topology::TopologyReplayModel;
 using sepgraph::topology::TopologyMutationBatch;
+
+void AssertArenaAccounting(const SourceLocalChunkStore &store) {
+    const auto &stats = store.ArenaStats();
+    assert(stats.live_capacity_edges + stats.retired_capacity_edges +
+           stats.free_capacity_edges == stats.high_water_edges);
+    assert(stats.high_water_edges <= stats.capacity_edges);
+}
 
 void AssertMatchesOracle(SourceLocalChunkStore &store,
                          const TopologyReplayModel &oracle,
@@ -87,6 +97,7 @@ void TestEpochDelayedReuse() {
     const uint64_t first_epoch = store.Publish();
     assert(first_epoch == 1);
     assert(store.ArenaStats().retired_capacity_edges == 4);
+    AssertArenaAccounting(store);
 
     TopologyMutationBatch before_reclaim;
     before_reclaim.additions = {{1, 9}};
@@ -97,6 +108,7 @@ void TestEpochDelayedReuse() {
 
     assert(store.ReclaimThrough(0) == 0);
     assert(store.ReclaimThrough(1) == 1);
+    AssertArenaAccounting(store);
     TopologyMutationBatch after_reclaim;
     after_reclaim.additions = {{2, 10}};
     const auto metrics = store.ApplyBatch(after_reclaim);
@@ -104,6 +116,7 @@ void TestEpochDelayedReuse() {
     assert(store.Descriptor(2).index == retired_offset);
     const uint64_t third_epoch = store.Publish();
     assert(third_epoch == 3);
+    AssertArenaAccounting(store);
 }
 
 void TestHighDegreeExpansionAndMultipleEpochs() {
@@ -151,6 +164,7 @@ void TestPinnedArena() {
     store.LoadSource(0, {1, 2});
     store.FinalizeLoad();
     assert(store.ArenaStats().pinned);
+    AssertArenaAccounting(store);
 }
 
 void TestTwoPhaseBatchVisibility() {
@@ -275,6 +289,87 @@ void TestBatchPreflightFailureIsAtomic() {
     assert(store.Descriptor(1).version == descriptor1.version);
 }
 
+void TestParallelMatchesSingleWorker() {
+    ChunkArenaOptions serial_options{4096, 4096, 4, false};
+    serial_options.mutation_workers = 1;
+    ChunkArenaOptions parallel_options = serial_options;
+    parallel_options.mutation_workers = 4;
+    SourceLocalChunkStore serial(64, serial_options);
+    SourceLocalChunkStore parallel(64, parallel_options);
+    for (index_t source = 0; source < 64; ++source) {
+        std::vector<index_t> neighbors;
+        for (index_t edge = 0; edge < source % 11; ++edge) {
+            neighbors.push_back((source * 7 + edge) % 64);
+        }
+        serial.LoadSource(source, neighbors);
+        parallel.LoadSource(source, neighbors);
+    }
+    serial.FinalizeLoad();
+    parallel.FinalizeLoad();
+
+    TopologyMutationBatch deletions;
+    TopologyMutationBatch additions;
+    for (index_t source = 0; source < 64; ++source) {
+        if (source % 11 != 0) {
+            deletions.deletions.push_back({source, (source * 7) % 64});
+        }
+        additions.additions.push_back({source, (source + 31) % 64});
+        additions.additions.push_back({source, (source + 47) % 64});
+    }
+    const auto serial_delete = serial.ApplyBatch(deletions);
+    const auto parallel_delete = parallel.ApplyBatch(deletions);
+    const auto serial_add = serial.ApplyPendingAdditions(additions);
+    const auto parallel_add = parallel.ApplyPendingAdditions(additions);
+    assert(serial_delete.changed_sources == parallel_delete.changed_sources);
+    assert(serial_delete.missing_deletes == parallel_delete.missing_deletes);
+    assert(serial_add.changed_sources == parallel_add.changed_sources);
+    assert(serial_delete.worker_count == 1);
+    assert(parallel_delete.worker_count == 4);
+    for (index_t source = 0; source < 64; ++source) {
+        assert(serial.Neighbors(source) == parallel.Neighbors(source));
+        assert(serial.OrderedHash(source) == parallel.OrderedHash(source));
+        assert(serial.Descriptor(source).degree == parallel.Descriptor(source).degree);
+        assert(serial.Descriptor(source).slab_id == parallel.Descriptor(source).slab_id);
+        assert(serial.Descriptor(source).index == parallel.Descriptor(source).index);
+        assert(serial.Descriptor(source).version == parallel.Descriptor(source).version);
+    }
+    assert(serial.Publish() == parallel.Publish());
+    assert(serial.EdgeCount() == parallel.EdgeCount());
+    AssertArenaAccounting(serial);
+    AssertArenaAccounting(parallel);
+}
+
+void TestEpochPublicationRejectsInvalidTransitions() {
+    SourceLocalChunkStore store(1, ChunkArenaOptions{32, 32, 4, false});
+    store.LoadSource(0, {1});
+    store.FinalizeLoad();
+    bool publish_without_batch_failed = false;
+    try {
+        store.Publish();
+    } catch (const std::logic_error &) {
+        publish_without_batch_failed = true;
+    }
+    assert(publish_without_batch_failed);
+
+    TopologyMutationBatch deletions;
+    deletions.deletions = {{0, 1}};
+    const auto delete_metrics = store.ApplyBatch(deletions);
+    assert(delete_metrics.epoch == 1);
+    assert(store.PendingEpoch() == 1);
+    assert(store.PublishedEpoch() == 0);
+    assert(!store.IsPublished());
+
+    TopologyMutationBatch additions;
+    additions.additions = {{0, 2}};
+    const auto add_metrics = store.ApplyPendingAdditions(additions);
+    assert(add_metrics.epoch == delete_metrics.epoch);
+    assert(store.Publish() == 1);
+    assert(store.PublishedEpoch() == store.PendingEpoch());
+    assert(store.IsPublished());
+    AssertArenaAccounting(store);
+}
+
+
 } // namespace
 
 int main() {
@@ -289,6 +384,8 @@ int main() {
     TestDirectCowRewriteAfterDeletes();
     TestHighDegreeCompactWritesOnce();
     TestBatchPreflightFailureIsAtomic();
+    TestParallelMatchesSingleWorker();
+    TestEpochPublicationRejectsInvalidTransitions();
     std::cout << "source_local_chunk_store_test: passed\n";
     return 0;
 }

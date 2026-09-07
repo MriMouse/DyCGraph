@@ -153,7 +153,7 @@ set_tests_properties(
         "batch=1.*topology_mismatches=0 isolation_violations=0 graph_edges=6 oracle_edges=6")
 
 add_executable(source_local_chunk_store_test tests/source_local_chunk_store_test.cpp)
-target_link_libraries(source_local_chunk_store_test ${CUDA_LIBRARIES})
+target_link_libraries(source_local_chunk_store_test ${CUDA_LIBRARIES} pthread)
 add_test(NAME source_local_chunk_store_test COMMAND source_local_chunk_store_test)
 
 add_executable(dual_domain_event_runtime_test tests/dual_domain_event_runtime_test.cpp)
@@ -170,8 +170,17 @@ add_test(NAME destination_local_dependency_store_test
     COMMAND destination_local_dependency_store_test)
 
 add_executable(dynamic_reverse_index_test tests/dynamic_reverse_index_test.cpp)
-target_link_libraries(dynamic_reverse_index_test pthread)
+target_link_libraries(dynamic_reverse_index_test ${CUDA_LIBRARIES} pthread)
 add_test(NAME dynamic_reverse_index_test COMMAND dynamic_reverse_index_test)
+
+cuda_add_executable(hotness_pairing_test tests/hotness_pairing_test.cu)
+target_link_libraries(hotness_pairing_test ${CUDA_LIBRARIES} stdgpu gflags)
+add_test(NAME hotness_pairing_test COMMAND hotness_pairing_test)
+
+add_executable(final_state_repair_model_test
+    tests/final_state_repair_model_test.cpp)
+add_test(NAME final_state_repair_model_test
+    COMMAND final_state_repair_model_test)
 
 add_executable(owner_cost_planner_test tests/owner_cost_planner_test.cpp)
 add_test(NAME owner_cost_planner_test COMMAND owner_cost_planner_test)

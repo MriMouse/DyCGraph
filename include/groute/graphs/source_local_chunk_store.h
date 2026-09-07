@@ -6,8 +6,10 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <string>
 #include <stdexcept>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -15,7 +17,9 @@
 #include <cuda_runtime_api.h>
 
 #include <framework/topology_replay.h>
+#include <framework/effective_update_batch.h>
 #include <groute/graphs/topology_contract.cuh>
+#include <utils/fixed_worker_pool.h>
 
 namespace sepgraph {
 namespace topology {
@@ -25,6 +29,7 @@ struct ChunkArenaOptions {
     uint64_t slab_capacity_edges = 1ULL << 20;
     index_t minimum_chunk_edges = 4;
     bool pinned = true;
+    uint32_t mutation_workers = 0;
 };
 
 struct ChunkStoreBatchMetrics {
@@ -38,9 +43,21 @@ struct ChunkStoreBatchMetrics {
     uint64_t allocations = 0;
     uint64_t reused_blocks = 0;
     uint64_t retired_blocks = 0;
+    uint64_t update_count = 0;
+    uint64_t source_work = 0;
+    uint64_t max_source_updates = 0;
+    uint64_t max_source_work = 0;
+    uint64_t worker_count = 0;
     double group_ms = 0.0;
+    double prepare_ms = 0.0;
+    double preflight_ms = 0.0;
+    double commit_ms = 0.0;
+    double apply_ms = 0.0;
+    double retire_ms = 0.0;
     double mutation_ms = 0.0;
     double allocation_ms = 0.0;
+    double reverse_prepare_ms = 0.0;
+    uint64_t effective_records = 0;
 };
 
 struct ChunkArenaStats {
@@ -83,6 +100,13 @@ public:
         }
         stats_.capacity_edges = options_.capacity_edges;
         stats_.pinned = options_.pinned;
+        uint32_t worker_count = options_.mutation_workers;
+        if (worker_count == 0) {
+            const uint32_t hardware_workers = std::thread::hardware_concurrency();
+            worker_count = std::max<uint32_t>(
+                1, std::min<uint32_t>(20, hardware_workers == 0 ? 1 : hardware_workers));
+        }
+        mutation_workers_.reset(new concurrency::FixedWorkerPool(worker_count));
     }
 
     SourceLocalChunkStore(const SourceLocalChunkStore &) = delete;
@@ -134,7 +158,13 @@ public:
 
     ChunkStoreBatchMetrics ApplyBatch(const TopologyMutationBatch &batch) {
         EnsureNoPendingBatch();
-        return ApplyMutationPhase(batch, true);
+        const auto begin = Clock::now();
+        GroupedUpdateBatch grouped(batch);
+        const double group_ms = Milliseconds(begin, Clock::now());
+        IgnoreEffectiveUpdates observer;
+        auto metrics = ApplyMutationPhase(grouped, UpdatePhase::Mixed, true, observer);
+        metrics.group_ms += group_ms;
+        return metrics;
     }
 
     // Deletion repair needs the host graph after deletions but before additions.
@@ -148,88 +178,183 @@ public:
             throw std::invalid_argument(
                 "pending chunk-store phase accepts additions only");
         }
-        return ApplyMutationPhase(additions, false);
+        const auto begin = Clock::now();
+        GroupedUpdateBatch grouped(additions);
+        const double group_ms = Milliseconds(begin, Clock::now());
+        IgnoreEffectiveUpdates observer;
+        auto metrics = ApplyMutationPhase(grouped, UpdatePhase::Add, false, observer);
+        metrics.group_ms += group_ms;
+        return metrics;
     }
 
+    template <typename Observer>
+    ChunkStoreBatchMetrics ApplyGroupedPhase(const GroupedUpdateBatch &batch,
+                                             UpdatePhase phase, Observer &observer) {
+        if (phase == UpdatePhase::Mixed)
+            throw std::invalid_argument("grouped streaming update requires a single phase");
+        if (phase == UpdatePhase::Delete) EnsureNoPendingBatch();
+        else if (!batch_pending_) throw std::logic_error("no pending chunk-store batch");
+        return ApplyMutationPhase(batch, phase, phase == UpdatePhase::Delete, observer);
+    }
+
+    const std::vector<index_t> &ChangedSources() const { return changed_sources_; }
+
 private:
-    ChunkStoreBatchMetrics ApplyMutationPhase(const TopologyMutationBatch &batch,
-                                              bool begin_epoch) {
+    template <typename Observer>
+    ChunkStoreBatchMetrics ApplyMutationPhase(const GroupedUpdateBatch &batch,
+                                              UpdatePhase phase, bool begin_epoch,
+                                              Observer &observer) {
+        static_assert(noexcept(observer.Commit()), "effective update commit must not throw");
         const auto group_begin = Clock::now();
-        std::unordered_map<index_t, SourceMutations> grouped;
-        grouped.reserve(batch.deletions.size() + batch.additions.size());
-        for (const auto &mutation : batch.deletions) {
-            grouped[mutation.source].deletions.push_back(mutation.destination);
-        }
-        for (const auto &mutation : batch.additions) {
-            grouped[mutation.source].additions.push_back(mutation.destination);
-        }
-        std::vector<index_t> sources;
-        sources.reserve(grouped.size());
-        for (const auto &entry : grouped) sources.push_back(entry.first);
-        std::sort(sources.begin(), sources.end());
+        const auto &sources = batch.sources;
 
         ChunkStoreBatchMetrics metrics;
         metrics.epoch = begin_epoch ? published_epoch_ + 1 : pending_epoch_;
         if (metrics.epoch > std::numeric_limits<uint32_t>::max()) {
             throw std::overflow_error("topology source version exhausted");
         }
-        metrics.touched_sources = sources.size();
+        metrics.worker_count = mutation_workers_->WorkerCount();
+        for (size_t source_index = 0; source_index < sources.size(); ++source_index) {
+            const index_t source = sources[source_index];
+            const auto mutations = batch.View(source_index, phase);
+            const uint64_t source_updates =
+                mutations.deletions.size() + mutations.additions.size();
+            if (source_updates == 0) continue;
+            ++metrics.touched_sources;
+            metrics.update_count += source_updates;
+            metrics.max_source_updates = std::max(
+                metrics.max_source_updates, source_updates);
+            const uint64_t source_work = source_updates +
+                (source < sources_.size() && sources_[source].materialized
+                    ? sources_[source].descriptor.degree
+                    : 0);
+            metrics.source_work += source_work;
+            metrics.max_source_work = std::max(
+                metrics.max_source_work, source_work);
+        }
         metrics.group_ms = Milliseconds(group_begin, Clock::now());
 
         const auto mutation_begin = Clock::now();
+        std::vector<PreparedResult> results(sources.size());
+        mutation_workers_->Run(sources.size(), [&](size_t source_index) {
+            const index_t source = sources[source_index];
+            const auto mutations = batch.View(source_index, phase);
+            PreparedResult &result = results[source_index];
+            if (source >= sources_.size() || !sources_[source].materialized) {
+                result.missing_deletes = mutations.deletions.size();
+                result.invalid_additions = mutations.additions.size();
+                return;
+            }
+
+            result.update.source = source;
+            result.update.group_index = source_index;
+            BuildDeletionPlan(source, mutations.deletions, result.update);
+            const uint64_t successful_deletes = result.update.successful_deletes;
+            result.missing_deletes =
+                mutations.deletions.size() - successful_deletes;
+            result.edge_delta = static_cast<int64_t>(mutations.additions.size()) -
+                                static_cast<int64_t>(successful_deletes);
+            const uint64_t final_degree = sources_[source].descriptor.degree -
+                successful_deletes + mutations.additions.size();
+            if (final_degree > std::numeric_limits<index_t>::max()) {
+                throw std::overflow_error("source degree exceeds index_t");
+            }
+            if (successful_deletes == 0 && mutations.additions.empty()) return;
+            result.changed = true;
+            result.update.final_degree = final_degree;
+            result.update.expansion = final_degree > sources_[source].block.capacity;
+        });
+
         std::vector<PreparedSource> prepared;
         prepared.reserve(sources.size());
         std::vector<uint64_t> required_allocations;
         int64_t edge_delta = 0;
-        for (const index_t source : sources) {
-            auto group_it = grouped.find(source);
-            if (source >= sources_.size() || !sources_[source].materialized) {
-                metrics.missing_deletes += group_it->second.deletions.size();
-                metrics.invalid_additions += group_it->second.additions.size();
-                continue;
-            }
-
-            PreparedSource update;
-            update.source = source;
-            BuildDeletionPlan(source, group_it->second.deletions, update);
-            const uint64_t successful_deletes = update.successful_deletes;
-            metrics.missing_deletes +=
-                group_it->second.deletions.size() - successful_deletes;
-            edge_delta -= static_cast<int64_t>(successful_deletes);
-            edge_delta += group_it->second.additions.size();
-            const uint64_t final_degree = sources_[source].descriptor.degree -
-                successful_deletes + group_it->second.additions.size();
-            if (final_degree > std::numeric_limits<index_t>::max()) {
-                throw std::overflow_error("source degree exceeds index_t");
-            }
-            if (successful_deletes == 0 && group_it->second.additions.empty()) continue;
-
+        for (auto &result : results) {
+            metrics.missing_deletes += result.missing_deletes;
+            metrics.invalid_additions += result.invalid_additions;
+            edge_delta += result.edge_delta;
+            if (!result.changed) continue;
             ++metrics.changed_sources;
-            update.final_degree = final_degree;
-            if (final_degree > sources_[source].block.capacity) {
-                update.expansion = true;
+            if (result.update.expansion) {
                 required_allocations.push_back(RequiredChunkCapacity(
-                    final_degree, options_.minimum_chunk_edges));
+                    result.update.final_degree, options_.minimum_chunk_edges));
             }
-            prepared.push_back(std::move(update));
+            prepared.push_back(std::move(result.update));
         }
+        const auto prepare_end = Clock::now();
+        metrics.prepare_ms = Milliseconds(mutation_begin, prepare_end);
+        const auto preflight_begin = Clock::now();
         EnsureAllocationsFit(required_allocations);
+        std::vector<EffectiveEdgeDelta> effective;
+        effective.reserve(metrics.update_count);
+        std::vector<index_t> changed;
+        changed.reserve(prepared.size());
+        for (const auto &update : prepared) {
+            changed.push_back(update.source);
+            if (update.has_deletions) {
+                const auto emit = [&](const DeletionRun &run) {
+                    if (run.matched) effective.push_back({update.source,
+                        run.destination, -static_cast<int64_t>(run.matched)});
+                };
+                emit(update.first_deletion);
+                for (const auto &run : update.remaining_deletions) emit(run);
+            }
+            for (const auto destination : batch.View(update.group_index, phase).additions)
+                effective.push_back({update.source, destination, 1});
+        }
+        // Reverse allocations/merges must succeed before forward mutation starts.
+        metrics.effective_records = effective.size();
+        const auto reverse_begin = Clock::now();
+        observer.Prepare(effective);
+        metrics.reverse_prepare_ms = Milliseconds(reverse_begin, Clock::now());
+        std::vector<ChunkStoreBatchMetrics> apply_metrics(prepared.size());
+        retired_.reserve(retired_.size() + required_allocations.size());
+        metrics.preflight_ms = Milliseconds(preflight_begin, Clock::now());
+        for (auto &update : prepared) {
+            if (!update.expansion) continue;
+            const auto allocation_begin = Clock::now();
+            update.allocation = Allocate(RequiredChunkCapacity(
+                update.final_degree, options_.minimum_chunk_edges));
+            metrics.allocation_ms += Milliseconds(allocation_begin, Clock::now());
+            ++metrics.allocations;
+            if (update.allocation.reused) ++metrics.reused_blocks;
+        }
+        const auto commit_begin = Clock::now();
         if (begin_epoch) {
             pending_epoch_ = metrics.epoch;
             batch_pending_ = true;
         }
         logical_edge_count_ = static_cast<uint64_t>(
             static_cast<int64_t>(logical_edge_count_) + edge_delta);
-        for (auto &update : prepared) {
+        metrics.commit_ms = Milliseconds(commit_begin, Clock::now());
+        const auto apply_begin = Clock::now();
+        mutation_workers_->Run(prepared.size(), [&](size_t update_index) {
+            auto &update = prepared[update_index];
             if (update.expansion) {
                 RewriteSourceToNewBlock(
-                    update, grouped.at(update.source), metrics);
+                    update, batch.View(update.group_index, phase), apply_metrics[update_index]);
             } else {
                 CompactSourceInPlace(
-                    update, grouped.at(update.source), metrics);
+                    update, batch.View(update.group_index, phase), apply_metrics[update_index]);
+            }
+        });
+        observer.Commit();
+        changed_sources_.swap(changed);
+        const auto apply_end = Clock::now();
+        metrics.apply_ms = Milliseconds(apply_begin, apply_end);
+        const auto retire_begin = Clock::now();
+        for (size_t index = 0; index < prepared.size(); ++index) {
+            const auto &local = apply_metrics[index];
+            metrics.mutation_written_bytes += local.mutation_written_bytes;
+            metrics.relocation_copied_bytes += local.relocation_copied_bytes;
+            if (prepared[index].retired_block.capacity != 0) {
+                Retire(prepared[index].retired_block, pending_epoch_);
+                ++metrics.retired_blocks;
             }
         }
-        metrics.mutation_ms = Milliseconds(mutation_begin, Clock::now());
+        const auto mutation_end = Clock::now();
+        metrics.retire_ms = Milliseconds(retire_begin, mutation_end);
+        metrics.mutation_ms = Milliseconds(mutation_begin, mutation_end);
         return metrics;
     }
 
@@ -338,11 +463,6 @@ private:
         bool materialized = false;
     };
 
-    struct SourceMutations {
-        std::vector<index_t> deletions;
-        std::vector<index_t> additions;
-    };
-
     struct DeletionRun {
         index_t destination = 0;
         uint64_t requested = 0;
@@ -353,12 +473,23 @@ private:
 
     struct PreparedSource {
         index_t source = 0;
+        size_t group_index = 0;
         bool expansion = false;
         bool has_deletions = false;
         uint64_t successful_deletes = 0;
         uint64_t final_degree = 0;
         DeletionRun first_deletion;
         std::vector<DeletionRun> remaining_deletions;
+        Allocation allocation;
+        Block retired_block;
+    };
+
+    struct PreparedResult {
+        PreparedSource update;
+        uint64_t missing_deletes = 0;
+        uint64_t invalid_additions = 0;
+        int64_t edge_delta = 0;
+        bool changed = false;
     };
 
     static double Milliseconds(Clock::time_point begin, Clock::time_point end) {
@@ -504,7 +635,7 @@ private:
     }
 
     void BuildDeletionPlan(index_t source,
-                           const std::vector<index_t> &deletions,
+                           DestinationRange deletions,
                            PreparedSource &update) const {
         if (deletions.empty()) return;
         update.has_deletions = true;
@@ -526,7 +657,7 @@ private:
             }
             return;
         } else {
-            std::vector<index_t> sorted(deletions);
+            std::vector<index_t> sorted(deletions.begin(), deletions.end());
             std::sort(sorted.begin(), sorted.end());
             update.first_deletion = {sorted.front(), 1, 0, 0};
             update.remaining_deletions.reserve(sorted.size() - 1);
@@ -565,7 +696,7 @@ private:
     }
 
     void CompactSourceInPlace(PreparedSource &update,
-                              const SourceMutations &mutations,
+                              const SourceMutationView &mutations,
                               ChunkStoreBatchMetrics &metrics) {
         SourceState &state = Source(update.source);
         index_t *edges = state.block.capacity == 0 ? nullptr : BlockData(state.block);
@@ -612,16 +743,10 @@ private:
     }
 
     void RewriteSourceToNewBlock(PreparedSource &update,
-                                 const SourceMutations &mutations,
+                                 const SourceMutationView &mutations,
                                  ChunkStoreBatchMetrics &metrics) {
         SourceState &state = Source(update.source);
-        const uint64_t capacity = RequiredChunkCapacity(
-            update.final_degree, options_.minimum_chunk_edges);
-        const auto allocation_begin = Clock::now();
-        const Allocation allocation = Allocate(capacity);
-        metrics.allocation_ms += Milliseconds(allocation_begin, Clock::now());
-        ++metrics.allocations;
-        if (allocation.reused) ++metrics.reused_blocks;
+        const Allocation &allocation = update.allocation;
 
         const index_t *old_edges = state.descriptor.degree == 0
             ? nullptr
@@ -673,8 +798,7 @@ private:
             throw std::logic_error("source rewrite degree mismatch");
         }
         if (state.block.capacity != 0) {
-            Retire(state.block, pending_epoch_);
-            ++metrics.retired_blocks;
+            update.retired_block = state.block;
         }
         state.block = allocation.block;
         state.descriptor.index = allocation.block.offset;
@@ -684,6 +808,7 @@ private:
     }
 
     std::vector<SourceState> sources_;
+    std::vector<index_t> changed_sources_;
     ChunkArenaOptions options_;
     std::vector<Slab> slabs_;
     size_t allocation_slab_cursor_;
@@ -695,6 +820,7 @@ private:
     uint64_t published_epoch_;
     uint64_t pending_epoch_;
     bool batch_pending_;
+    std::unique_ptr<concurrency::FixedWorkerPool> mutation_workers_;
 };
 
 } // namespace topology

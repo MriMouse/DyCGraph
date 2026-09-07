@@ -491,13 +491,16 @@ namespace sepgraph {
                             PMAGraph vcsr_graph,
                               WorkSource work_source,
                               TBuffer buffer_datum,
-                              TDB_8 d_hotness) {
+                              TDB_8 d_hotness,
+                              uint32_t *ids) {
             uint32_t tid = TID_1D;
             uint32_t nthreads = TOTAL_THREADS_1D;
             uint32_t work_size = work_source.get_size();
             for (index_t i = 0 + tid; i < work_size; i += nthreads) {
                 index_t node = work_source.get_work(i);
-
+                // Scores are regenerated in vertex order, not previous rank
+                // order. CUB's stable sort then breaks ties by ascending ID.
+                ids[node] = node;
                 if(buffer_datum[node]==UINT32_MAX){
                     d_hotness.d_buffers[d_hotness.selector][node] = 0;
                 }else{
@@ -508,6 +511,33 @@ namespace sepgraph {
 
             }
         }
+        // Read-only development audit before sorting. Counters are reduced per
+        // thread to avoid an atomic operation for each visited vertex.
+        template<typename PMAGraph, typename TBuffer>
+        __global__ void audit_hotness_inputs(PMAGraph graph, TBuffer buffers,
+                                             const uint32_t *ids,
+                                             const uint32_t *scores,
+                                             unsigned long long *counts) {
+            unsigned long long local[8] = {};
+            for (uint64_t node = TID_1D; node < graph.nnodes; node += TOTAL_THREADS_1D) {
+                const auto &v = graph.vertices_[node];
+                const unsigned sum = v.hotness[0] + v.hotness[1] + v.hotness[2] + v.hotness[3];
+                local[0] += v.hotness[0] != 0;
+                local[1] += sum != 0;
+                local[2] += v.hotness[3] != 0;
+                local[3] += buffers[node] == UINT32_MAX && sum != 0;
+                local[4] += scores[node] == 0;
+                const uint32_t id = ids[node];
+                local[5] += id != node;
+                if (id >= graph.nnodes) { ++local[7]; continue; }
+                const auto &paired = graph.vertices_[id];
+                const unsigned expected = buffers[id] == UINT32_MAX ? 0 :
+                    paired.hotness[0] + paired.hotness[1] + paired.hotness[2] + paired.hotness[3];
+                local[6] += scores[node] != expected;
+            }
+            for (unsigned i = 0; i < 8; ++i) atomicAdd(counts + i, local[i]);
+        }
+
         template<typename TAppInst,
                 typename PMAGraph,
                 typename WorkSource,
