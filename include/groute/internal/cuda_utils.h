@@ -35,6 +35,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <vector_types.h>
+#include <utils/communication_meter.h>
 
 namespace groute
 {

@@ -3,6 +3,9 @@ add_definitions(-w)
 # project(SEP-Graph)
 project(SEP-Graph LANGUAGES CUDA CXX)
 enable_testing()
+add_executable(road_source_scan src/road_source_scan.cpp)
+add_test(NAME road_source_scan_test
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/road_source_scan_test.py $<TARGET_FILE:road_source_scan>)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 ############## DEPENDENCIES ##############
@@ -20,6 +23,14 @@ link_directories(${PROJECT_BINARY_DIR}/deps/gflags/lib)
 
 # JSON
 include_directories(${PROJECT_SOURCE_DIR}/deps/json)
+add_executable(connected_road_generator src/connected_road_generator.cpp)
+add_executable(i16_repair_oracle src/i16_repair_oracle.cpp)
+target_include_directories(i16_repair_oracle PRIVATE ${PROJECT_SOURCE_DIR}/include)
+add_test(NAME i16_repair_oracle_test COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/i16_repair_oracle_test.py $<TARGET_FILE:i16_repair_oracle>)
+add_executable(verify_connected_road_dataset src/verify_connected_road_dataset.cpp)
+add_test(NAME connected_road_generator_test
+    COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/connected_road_generator_test.py
+        $<TARGET_FILE:connected_road_generator> $<TARGET_FILE:verify_connected_road_dataset>)
 
 include_directories(${PROJECT_SOURCE_DIR}/deps/SlabHash/src)
 include_directories(${PROJECT_SOURCE_DIR}/deps//SlabHash/SlabAlloc/src)
@@ -75,6 +86,16 @@ cuda_add_executable(hybrid_sssp src/utils/parser.cpp src/utils/utils.cpp src/uti
        samples/hybrid_sssp/hybrid_sssp_host.cu
         samples/hybrid_sssp/main.cu)
 target_link_libraries(hybrid_sssp ${EXTRA_LIBS} pthread)
+target_sources(hybrid_sssp PRIVATE src/utils/communication_meter.cpp)
+target_include_directories(hybrid_sssp PRIVATE ${CUDA_INCLUDE_DIRS})
+set_property(TARGET hybrid_sssp APPEND_STRING PROPERTY LINK_FLAGS
+    " -Wl,--wrap=cudaMemcpy -Wl,--wrap=cudaMemcpyAsync")
+add_executable(communication_meter_test tests/communication_meter_test.cpp src/utils/communication_meter.cpp)
+target_include_directories(communication_meter_test PRIVATE ${CUDA_INCLUDE_DIRS})
+add_test(NAME communication_meter_test COMMAND communication_meter_test)
+add_test(NAME communication_meter_disabled_test COMMAND communication_meter_test disabled)
+add_executable(grouped_update_batch_test tests/grouped_update_batch_test.cpp)
+add_test(NAME grouped_update_batch_test COMMAND grouped_update_batch_test)
 
 cuda_add_executable(hybrid_cc src/utils/parser.cpp src/utils/utils.cpp src/utils/to_json.cpp #src/groute/graphs/csr_graph.cpp
         samples/hybrid_cc/hybrid_cc.cu
@@ -136,6 +157,8 @@ set_tests_properties(
         "d1_successor_cut_edges=1 d1_successor_cut_sources=1 d1_successor_cut_destinations=1.*d1_dependent_gpu_vertices=1.*d1_cpu_critical_path_depth=2.*d1_independent_gpu_critical_path_depth=1.*d1_dependent_gpu_critical_path_depth=1")
 
 cuda_add_executable(f1_crossover_replay src/f1_crossover_replay.cu)
+cuda_add_executable(i16_frontier_replay src/i16_frontier_replay.cu)
+target_link_libraries(i16_frontier_replay ${CUDA_LIBRARIES})
 target_link_libraries(f1_crossover_replay ${CUDA_LIBRARIES} pthread)
 
 add_executable(chunk_store_replay src/chunk_store_replay.cpp)
@@ -177,6 +200,20 @@ cuda_add_executable(hotness_pairing_test tests/hotness_pairing_test.cu)
 target_link_libraries(hotness_pairing_test ${CUDA_LIBRARIES} stdgpu gflags)
 add_test(NAME hotness_pairing_test COMMAND hotness_pairing_test)
 
+add_executable(hotness_event_model_test tests/hotness_event_model_test.cpp)
+add_test(NAME hotness_event_model_test COMMAND hotness_event_model_test)
+
+add_executable(weighted_score_index_test tests/weighted_score_index_test.cpp)
+add_test(NAME weighted_score_index_test COMMAND weighted_score_index_test)
+add_executable(hotness_candidate_replay src/hotness_candidate_replay.cpp)
+add_executable(hotness_trace_test tests/hotness_trace_test.cpp)
+add_test(NAME hotness_trace_test COMMAND hotness_trace_test ${PROJECT_BINARY_DIR}/i15_trace_fixture.bin)
+set_tests_properties(hotness_trace_test PROPERTIES FIXTURES_SETUP i15_trace)
+add_test(NAME hotness_candidate_replay_fixture
+    COMMAND hotness_candidate_replay ${PROJECT_BINARY_DIR}/i15_trace_fixture.bin)
+set_tests_properties(hotness_candidate_replay_fixture PROPERTIES
+    FIXTURES_REQUIRED i15_trace PASS_REGULAR_EXPRESSION "I15-INDEX-TOTAL.*batches=4.*mismatches=0")
+
 add_executable(final_state_repair_model_test
     tests/final_state_repair_model_test.cpp)
 add_test(NAME final_state_repair_model_test
@@ -211,3 +248,25 @@ set_tests_properties(owner_planner_shadow_fixture PROPERTIES
 add_test(NAME owner_planner_shadow_decision
     COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/check_owner_planner_decision.py
         ${PROJECT_BINARY_DIR}/owner_planner_shadow_fixture.tsv.decision full)
+
+cuda_add_executable(i17a_delta_replay src/i17a_delta_replay.cu)
+target_link_libraries(i17a_delta_replay ${CUDA_LIBRARIES})
+
+# I19: CPU-only ratio generation and production topology preparation replay.
+add_executable(i19_ratio_pool src/i19_ratio_pool.cpp)
+add_executable(i19_topology_replay src/i19_topology_replay.cpp)
+target_link_libraries(i19_topology_replay ${CUDA_LIBRARIES} pthread)
+add_test(NAME i19_ratios_test COMMAND python3 ${PROJECT_SOURCE_DIR}/tests/i19_ratios_test.py
+    $<TARGET_FILE:i19_ratio_pool> $<TARGET_FILE:i19_topology_replay>)
+add_executable(i19_loader_test tests/i19_loader_test.cpp)
+target_link_libraries(i19_loader_test ${CUDA_LIBRARIES})
+add_test(NAME i19_loader_test COMMAND i19_loader_test ${PROJECT_BINARY_DIR}/i19_loader_sizes.txt)
+add_executable(i19_work_metrics_test tests/i19_work_metrics_test.cpp)
+target_link_libraries(i19_work_metrics_test ${CUDA_LIBRARIES} pthread)
+add_test(NAME i19_work_metrics_test COMMAND i19_work_metrics_test)
+
+add_executable(publication_sources_test tests/publication_sources_test.cpp)
+add_test(NAME publication_sources_test COMMAND publication_sources_test)
+
+add_executable(i23_group_replay src/i23_group_replay.cpp)
+target_link_libraries(i23_group_replay pthread)

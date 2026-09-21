@@ -31,6 +31,7 @@
 #define __GROUTE_GRAPHS_CSR_GRAPH_H
 
 #include <vector>
+#include <utils/communication_meter.h>
 #include <gflags/gflags.h>
 #include <algorithm>
 #include <random>
@@ -2015,6 +2016,7 @@ namespace groute
                                    index_t *cache_edges,
                                    uint64_t cache_capacity)
                 {
+                    cgcomm::Scope comm_scope(cgcomm::Category::Topology);
                     if (m_publication_pending) {
                         std::fprintf(stderr,
                             "[D2-PUBLISH] protocol_error=publication_already_pending\n");

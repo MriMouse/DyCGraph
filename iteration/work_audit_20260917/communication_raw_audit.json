@@ -1,0 +1,68 @@
+[
+  {
+    "dataset": "wk",
+    "sides": {
+      "original": {
+        "log": "/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/communication_100k_1005_once/wk_r1_original/run.log",
+        "sha256": "733bf25c5710245acd04a0473c6a60b72e33db9001d2aac2effbafd8007a0e06",
+        "common_checksum": [
+          "7522257004217935089"
+        ]
+      },
+      "current": {
+        "log": "/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/communication_100k_1005_once/wk_r1_current/run.log",
+        "sha256": "2b4eb5dbbacda601f4d4396cb3633cd2f80e3ad31495b58b9572d741da12e889",
+        "common_checksum": [
+          "12884871059933969976"
+        ]
+      }
+    },
+    "checksums_equal": false,
+    "current_comparator_exit": 1,
+    "current_comparator_error": "ValueError: Batch scope, final checksum or GPU differs"
+  },
+  {
+    "dataset": "fs",
+    "sides": {
+      "original": {
+        "log": "/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/communication_100k_1005_once/fs_r1_original/run.log",
+        "sha256": "30f7de8cc9c2752f55c70cfca9bb18396b33b17b9f12550f86853d2c9c2272c2",
+        "common_checksum": [
+          "5889016780896896867"
+        ]
+      },
+      "current": {
+        "log": "/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/communication_100k_1005_once/fs_r1_current/run.log",
+        "sha256": "6bfd26aaa4837d0cca9bd773b032491c97cf6b4d43974d210f75ab4de09d9e54",
+        "common_checksum": [
+          "12734023534853680802"
+        ]
+      }
+    },
+    "checksums_equal": false,
+    "current_comparator_exit": 1,
+    "current_comparator_error": "ValueError: Batch scope, final checksum or GPU differs"
+  },
+  {
+    "dataset": "eu",
+    "sides": {
+      "original": {
+        "log": "/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/communication_100k_1005_once/eu_r1_original/run.log",
+        "sha256": "157cabab0ecaca394d34831aa16dc23166010a15ff087f0fa8390736140af12e",
+        "common_checksum": [
+          "7126172886393403897"
+        ]
+      },
+      "current": {
+        "log": "/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/communication_100k_1005_once/eu_r1_current/run.log",
+        "sha256": "55f4cc2535e40f9456f66841cc8a1aa90296ef75e11261b4fb41fcaae5b0ac9e",
+        "common_checksum": [
+          "3279855318394954488"
+        ]
+      }
+    },
+    "checksums_equal": false,
+    "current_comparator_exit": 1,
+    "current_comparator_error": "ValueError: Batch scope, final checksum or GPU differs"
+  }
+]

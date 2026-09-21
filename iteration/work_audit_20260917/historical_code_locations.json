@@ -1,0 +1,224 @@
+[
+  {
+    "revision": "f527ba4",
+    "path": "include/framework/framework.cuh",
+    "symbol": "MergeCpuRelaxProposals",
+    "lines": [
+      109,
+      1793
+    ]
+  },
+  {
+    "revision": "f527ba4",
+    "path": "include/framework/framework.cuh",
+    "symbol": "MergeCpuSourceCommits",
+    "lines": [
+      141,
+      1784
+    ]
+  },
+  {
+    "revision": "f527ba4",
+    "path": "include/framework/framework.cuh",
+    "symbol": "CompressCpu",
+    "lines": [
+      1414,
+      1738
+    ]
+  },
+  {
+    "revision": "f527ba4",
+    "path": "include/framework/framework.cuh",
+    "symbol": "ExecutePolicy_Converge_Coop",
+    "lines": [
+      3413,
+      3733
+    ]
+  },
+  {
+    "revision": "f527ba4",
+    "path": "include/framework/framework.cuh",
+    "symbol": "CoopExecMode",
+    "lines": [
+      216,
+      457,
+      459,
+      462,
+      465,
+      1173,
+      2632,
+      2637,
+      2642,
+      2652,
+      3074,
+      3361,
+      3410
+    ]
+  },
+  {
+    "revision": "f527ba4",
+    "path": "include/framework/framework.cuh",
+    "symbol": "CoopHome",
+    "lines": [
+      184,
+      226,
+      645,
+      687,
+      695,
+      722,
+      858,
+      864,
+      869,
+      878,
+      907,
+      914,
+      979,
+      1003,
+      1105,
+      1122,
+      1153
+    ]
+  },
+  {
+    "revision": "e6bc406",
+    "path": "include/framework/framework.cuh",
+    "symbol": "RunCpuOverlapProbeDryRun",
+    "lines": [
+      3802,
+      3921
+    ]
+  },
+  {
+    "revision": "e6bc406",
+    "path": "include/framework/framework.cuh",
+    "symbol": "ExecutePolicy_Converge_PacketDryRun",
+    "lines": [
+      4124,
+      4681
+    ]
+  },
+  {
+    "revision": "e6bc406",
+    "path": "include/framework/framework.cuh",
+    "symbol": "ExecutePolicy_Converge_PacketProductionMerge",
+    "lines": [
+      4336,
+      4670
+    ]
+  },
+  {
+    "revision": "e6bc406",
+    "path": "include/framework/framework.cuh",
+    "symbol": "ExecutePolicy_Converge_PacketOverlapMerge",
+    "lines": [
+      4440,
+      4659
+    ]
+  },
+  {
+    "revision": "9b590a2",
+    "path": "include/framework/framework.cuh",
+    "symbol": "ExecutePolicy_Converge_PacketSkipAudit",
+    "lines": [
+      4787,
+      5078
+    ]
+  },
+  {
+    "revision": "9b590a2",
+    "path": "include/framework/framework.cuh",
+    "symbol": "PostComputationBWDirtySegments",
+    "lines": [
+      5035,
+      5743
+    ]
+  },
+  {
+    "revision": "9b590a2",
+    "path": "include/framework/framework.cuh",
+    "symbol": "RefreshSegmentActiveCountsFromQueues",
+    "lines": [
+      600,
+      3550,
+      5707
+    ]
+  },
+  {
+    "revision": "0e036c8",
+    "path": "include/framework/framework.cuh",
+    "symbol": "EmitCoopOwnedSummary",
+    "lines": [
+      701,
+      2091
+    ]
+  },
+  {
+    "revision": "caf1fc2",
+    "path": "include/framework/framework.cuh",
+    "symbol": "SelectCpuPacketSources",
+    "lines": [
+      4510,
+      4732,
+      4943,
+      5047,
+      5230
+    ]
+  },
+  {
+    "revision": "caf1fc2",
+    "path": "include/framework/framework.cuh",
+    "symbol": "prefilter",
+    "lines": [
+      89,
+      353,
+      354,
+      355,
+      356,
+      371,
+      399,
+      400,
+      401,
+      402,
+      422,
+      729,
+      730,
+      731,
+      732,
+      733,
+      734,
+      735,
+      736,
+      756,
+      800,
+      829,
+      830,
+      831,
+      832,
+      833,
+      834,
+      2195,
+      2211,
+      2221,
+      2222,
+      2226,
+      5408,
+      5450,
+      5483,
+      5484,
+      5485,
+      5486,
+      5487,
+      5488
+    ]
+  },
+  {
+    "revision": "caf1fc2",
+    "path": "include/framework/framework.cuh",
+    "symbol": "MarkDirtySegmentsFromVertices",
+    "lines": [
+      216,
+      6316,
+      6325
+    ]
+  }
+]

@@ -2,19 +2,129 @@
 
 本文档记录当前 `C-GpuStreamGraph-CG` 中 CGgraph 风格 CPU-GPU 协同机制的可维护规格、关键实验结论和后续优化方向。它同时保留完整的研发时间线：代码细节以当前实现为准，历史迭代用于解释设计选择、实验因果和论文叙事。
 
+迭代计划中说明的方法是我们的预想方法，如果在迭代执行中的实验结果或者某些结论让你发现了更好的方法，可以使用更好的方法进行优化，在完成后报告给我并如实写入迭代计划即可！
+
+如果需要跑>3的实验或者该实验运行时间较长，请让实验在后台运行，确保健康运行后不用一直轮询查看实验状态
+
+> **文档阅读顺序（2026-09-14 整理）：** 本节“当前权威状态”和“迭代论文索引”是接手与写作入口；后文动态工作区、执行计划和时间线保留各阶段的详细问题、方法、实验与负结果，但其中的旧“下一步”不再构成当前任务。逐次试跑和完整 profiler 数据仍以子报告、脚本和 `logs/` 为准。
+
+## 当前权威状态（2026-09-17）
+
+**I25完成，最后尝试未达到明显领先目标：** TW10M reverse并行排序off/on两批完整均值10762.8765→10847.8605ms，回退0.7896%；两对-1.7593%/+0.1723%，checksum和已核对工作计数一致。排序虽减少360.048ms，但后续group/slots/merge成本上升，完整收益被抵消；两次候选均慢于历史原版，未达到10.180058s（历史线快5%）目标。否决该候选作为推荐优化，保持默认关闭；当前没有足够净收益证据启动reverse结构重写或CPU owner。保留I24 publication显式合并，承认目前只有接近历史原版的证据，未证明明显胜出。本轮收口，后台已结束，无新实验。详见[I25完整结果](subiteration_file/i25_reverse_radix_20260917.md)。本条覆盖下方“已启动/性能待结果”状态。
+
+**I25最后瓶颈驱动尝试已启动（用户新授权）：** 用户要求明显领先原版而非仅追平，允许CPU计算/数据组织调整。复核I24：TW10M两批reverse串行destination排序约787ms、Commit约489ms；新增默认关闭的reverse稳定并行radix，复用现有worker池，区别于此前mixed source radix负结果。4项CTest（含66K有效记录reverse集成及500K排序比对）与小图GPU smoke通过；TW10M固定publication merge=1，仅reverse radix off/on/on/off四次后台启动，PID3962971，目录`logs/i25_reverse_radix_20260917/`。采用历史原版快5%即两批10.180058s作为明确开发筛查目标；性能待结果，尚不宣称达标。CPU SSSP owner因没有新净收益预算暂不恢复；后续仅按实测剩余成本决定数据组织候选或承认未胜出。详见[I25实现与计划](subiteration_file/i25_reverse_radix_20260917.md)。本条为当前执行入口，覆盖旧的全面收口和I24唯一下一项状态。
+
+**I24四次已完成并复核：** TW10M publication合并两批完整P0均值11258.968→10685.928ms（下降5.0896%），两对5.2830%/4.8942%，满足本I24两对均改善且均值约>=5%的开发收益条件。排序两批均值575.795→55.381ms；checksum及已核对forward/reverse工作计数一致。候选10719.232/10652.624ms相对历史10715.850ms一高一低，仅均值低29.922ms，记为跨线边界，不宣称正式原版胜出。后台已结束，默认未改，未启动原版新配对或FS/100M。详见[I24结果复核](subiteration_file/i24_tw10m_publication_20260917.md)。本条覆盖下方运行中/尚未运行历史状态。
+
+**I24已执行并进入后台测量（2026-09-17）：** 当前源码构建、4项CTest及同冻结binary三批小图Bellman/首批CPU PQ通过，TW10M固定large/20 workers/NUMA0/reverse64/cache2、关闭bulk/radix/positions/ordered，publication off/on/on/off四次后台配对已启动。PID `3769144`，目录 `logs/i24_tw10m_publication_20260917/`，实时以 `status.json` 为准。runner已显式固定block插入，保留输入/binary指纹、GPU锁、失败停止与checksum Gate；生产默认未改。遵守后台健康确认后不持续轮询约定，完整结果待审阅，不宣称性能达标或正式原版胜出，未扩展FS/100M。详见[I24执行记录](subiteration_file/i24_tw10m_publication_20260917.md)。本条覆盖下方“尚未运行”历史状态。
+
+**当前唯一下一迭代：I24 TW10M publication合并定向确认（2026-09-17，计划已修订、尚未运行）。** 最新尝试、I23百分比纠错、瓶颈证据与机会预算已收拢至[I24计划](subiteration_file/i24_tw10m_publication_20260917.md)。固定20 workers/NUMA0/large/reverse64/cache2，关闭bulk、并行radix、位置复用和ordered，TW10M两批off/on/on/off，仅切换publication合并。直接确认单独合并的10M收益，不再受已失败组合候选的1M Gate阻挡；16GB沿用既有TW同配置成功预算，异常停止而不降cache。区分当前系统收益、低于10.715850s历史目标和正式同语义原版胜出；后三者不能混用。历史全面收口、1M组合Gate强制阻止10M、无条件换更大GPU的条目均不再是当前待办。此次只更新文档，未启动I24实验。
+
+**2026-09-17结果复核与纠错：** 最后四次1M worker筛查全部完成，两批和参考checksum逐项匹配。TW20→32 workers完整P0 1622.023→1558.158ms（-3.94%），FS1749.395→1748.111ms（-0.073%），仅单对。纠正此前I23误报：仅publication合并为-7.63%，合并+bulk为-4.07%，bulk相对仅合并回退3.86%。从1M未过组合Gate推断10M无机会或必需架构重写，证据不足；TW10M历史缺口约0.573s，合并仍有定向验证价值，FS10M约2.183s缺口暂无足够收益证据。当前10M尚未新跑、不宣称胜出，原版共同指纹差异仍须处理。详见[复核修正](subiteration_file/expansion_bottleneck_assessment_20260916.md)。本条覆盖历史过强收口判断；本次未启动新实验。
+
+**最后一轮系统并行度筛查（2026-09-16）：** 用户授权最后尝试，现固定large/publication merge/reverse64/NUMA0/cache2、关闭bulk/radix，在TW/FS1M各比较mutation workers=20/32，共四次两批后台运行。日志`logs/final_system_sweep_20260916/`，PID2793485；结果待收齐，不宣称新算法或正式胜出。见[最后筛查](subiteration_file/final_system_sweep_20260916.md)。
+
+**扩展性瓶颈最终评估（2026-09-16）：** 根据I21/I23完整1M消融、既有TW10M阶段日志和当前代码复核，本轮建议收口，不再声称存在已证实的局部优化可稳定追平原版。当前劣势主要来自source-local CPU mutation的邻接扫描/重写、chunk分配与retire同步，以及effective/reverse preflight和overlay历史增长；publication排序只是可见的次级成本，merge虽有效但不稳定，bulk group完整P0回退。TW1M原路径约1.759s，仅merge约1.625s，merge+bulk约1.687s；10M当前每phase mutation约1.5–1.8s、preflight约0.8–0.95s，不能通过局部计时推断胜出。理论上的reverse分代、分块publication、GPU/NUMA协同拓扑维护属于新架构，需新的容量与语义设计，现有16GB和合法大图证据不足，不继续盲目实现。完整归因见[扩展性瓶颈评估](subiteration_file/expansion_bottleneck_assessment_20260916.md)。
+
+**I23瓶颈驱动的bulk source构建已启动（2026-09-16）：** I21 A+B TW1M四次完成，完整均值下降4.35%、两对1.84%/6.79%，未过Gate，10M未启动。阶段复核发现group仍约67ms/批，publication收益大部分被其他阶段波动抵消，不能宣称B有效。新机制采用count-prefix-scatter并行构建source/groups/phase索引，避免串行逐条追加和扩容；真实TW1M首批CPU物化37.98→11.32ms、逐元素相等，仅为机制探针。4项CTest与实际bulk=1的三批8192更新、六stage独立Dijkstra检查通过。后台TW1M原路径/仅合并/合并+bulk的A/B/C/C/B/A六次两批消融已启动（`logs/i23_bulk_tw_20260916/`，PID2455334）；radix固定串行以隔离新收益。C对A两对均>=5%且C对B两对均改善才进入TW10M同六次配对，最多12次，不自动恢复FS/100M。默认关闭、性能待结果。方法、异常/空间边界与后续裁决见[I23开发记录](subiteration_file/i23_bulk_groups_20260916.md)。本条为当前执行入口，旧队列历史状态保留。
+
+**I21新授权与A+B继续推进（2026-09-16）：** 用户要求继续FS或TW的1M/10M、任一优于原系统即可，并允许实测驱动方法调整。A八次已完成：TW/FS完整两批均值下降5.0865%/4.9995%，各图第二对仅3.5%～3.8%，不写成严格Gate通过；source排序确有约54→4.5ms/批收益，因此保留为显式组合候选继续B。已实现复用mutation worker池的并行稳定source radix，group物化暂不改，默认关闭；4项CTest和小batch GPU smoke通过，后者走串行回退，验证边界如实保留。新后台队列优先TW1M A+B off/on/on/off，两对完整P0均>=5%才继续TW10M同样4次；目录`logs/i21_radix_tw_20260916/`。已提醒10M显存：TW同输入/cache2在16GB既有成功记录且新候选无GPU增量，按本次10M授权沿用该预算，不启动FS10M/100M。性能待结果，不自动宣称优于原版。详见[A+B开发记录](subiteration_file/i21_radix_tw_20260916.md)。此条覆盖文末“A严格过Gate才做B”与无条件迁移更大GPU的旧执行顺序，其余语义与公平比较边界保留。
+
+**I21 FS/TW 1M候选A已实施并启动后台验证（2026-09-16）：** 按文末新规模顺序，新增显式`CG_MERGE_PUBLICATION_SOURCES=1`，将两phase有序changed-source列表线性合并，默认仍为原sort+unique；保留有效变更过滤、epoch及两阶段传播。4项CTest与候选large模式三批GPU Bellman/CPU PQ smoke通过。TW/FS 1M各off/on/on/off、每次两批，共8次后台运行已启动，目录`logs/i21_publication_1m_20260916/`，PID2142409，以`status.json`为准。完整P0收益待结果，不宣称达标，不提前进入B/C或10M/100M。实现、成本及测试边界见[I21候选A记录](subiteration_file/i21_publication_1m_20260916.md)。本条及文末I21/I22新定义优先于历史EU与位置复用队列。
+
+**10M/100M扩展性可行性复核（本轮分析，非新生产迭代）：** 已复核近期阶段日志与当前/原版维护代码，并完成NUMA0真实10M输入的CPU机制实验：稳定并行source radix约408→91ms/批；publication两个有序changed-source列表用线性合并替代重排，TW约335→39ms、FS约554→41ms，输出完全一致。按首批机制结果折算两批预算约1.227/1.660秒，支持TW10M继续追平，FS仍需额外准备成本收益；不是整系统加速。100M仅完成重复记录排序压力实验，尚无合法100M双系统结果；发现24B×B的publication显存预留、固定chunk arena及reverse历史增长的容量边界。生产代码未改，后台微实验均已结束，未启动大图队列。详见[10M/100M深度复核与实测预算](subiteration_file/scaling_feasibility_10m_100m_20260916.md)。
+
+**I22模式优先级最终修订：** 按用户要求消除手动unset负担，`CG_ORDERED_REPAIR=1`现在直接选择ordered插入，不受遗留`CG_INSERTION_SCHEDULE=block/thread`影响；大直径模式始终包括有序删除和有序插入。普通模式才读取显式插入策略，未设置则block。此条覆盖下方历史“显式插入设置优先”的接线说明。运行流程文档同步修订。
+
+**I22大直径模式默认绑定（用户授权实施）：** `CG_ORDERED_REPAIR=1`且未显式设置`CG_INSERTION_SCHEDULE`时，现在默认启用ordered插入，因此大直径模式默认工作包括**有序删除修复＋距离区间有序插入闭包**。普通模式默认block，显式插入策略优先用于消融/回退，batch拓扑维护独立。依据为EU/USA小batch明确收益及FS/TW插入全回退，不按图名或batch规模强制选择。构建及普通默认/大直径默认/显式回退三项两批接线检查通过（小图SEGMENT=32）；小图512分段有序删除的既有配置错误在旧冻结二进制复现并另记，未冒充通过。此条覆盖下方历史“未修改默认入口”状态；实现与验证见 [I22模式绑定](subiteration_file/i22_ordered_insertion_20260916.md)。
+
+**I22适用范围最新裁决：** 24次运行、12对全部正常完成。EU/USA10K/100K完整P0下降24.17%～45.68%，插入下降55.99%～81.83%；FS/TW八组插入全部回退，边工作基本不变，其少数完整P0小幅下降不能归因于ordered。否决全局默认启用，建议并入显式大直径/长传播组合策略，与batch维护模式独立，保留显式覆盖；未实际改动默认入口。按用户要求本轮无正确性检验/交错重复，不据此宣称正式验收。后台已结束，无新任务。详见 [范围结果与整合裁决](subiteration_file/i22_ordered_insertion_20260916.md)。
+
+**I22适用范围筛查已启动（用户最新授权）：** FS/TW/EU/USA各10K/100K，FS/TW各1M/10M，共12组block/ordered各一次、各两批，24次串行GPU运行。明确不做交错重复或正确性检验；小/大batch使用auto维护，组内仅切换插入策略。入口`scripts/run_i22_scope.py`，目录`logs/i22_scope_20260916/`，PID1609502；`status.json`看进度、`report.md`看已完成配对。结果用于判断通用入口还是大直径传播入口，尚未改变默认策略。详情见 [I22适用范围筛查](subiteration_file/i22_ordered_insertion_20260916.md)。
+
+**I22距离区间短配对最新裁决：** EU1M两批block/ordered均正常完成；完整P0 `195.076→42.246 s`（下降78.34%，4.62×），insertion `172.926→20.326 s`（下降88.25%），processed edges `253.66亿→1.081亿`（下降99.57%）。最终距离checksum一致；waves增至22293/22455，pending扫描仍大，收益来自减少重复边松弛。保留显式ordered候选，默认block不改；仅单轮两批，反向重复和EU十批未完成，不宣称历史目标已追平。本次结果审阅未启动新实验，原后台任务已结束。详见 [I22结果与裁决](subiteration_file/i22_ordered_insertion_20260916.md)。
+
+**2026-09-16 I22继续推进（本轮聚焦EU1M）：** I19完成、I20共享规划保留、I21位置复用与I22 thread调度默认关闭；不要求四个缺口同时追平。新候选`CG_INSERTION_SCHEDULE=ordered`在GPU pending frontier上选择固定128距离窗口，延后任务与改善事件统一去重，消除远距离过早反复松弛；不按图名选策略，默认block。首版kernel引用/按值ABI错误已修复，修复后三批六stage独立Dijkstra及final checksum、非对称三批Bellman/删除CPU PQ、默认block回归均通过。EU同cohort两批block/ordered共2次后台配对已启动（`logs/i22_ordered_20260916/`，PID 1447857），收益待结果；未完成EU十批验收，不宣称任何新目标达标。实现、首版失败、验证和实验边界见 [I22距离区间闭包](subiteration_file/i22_ordered_insertion_20260916.md)。
+
+**I22首次短测最新裁决：** EU1M两批block/thread均完成且最终距离checksum一致；thread完整P0 `196.540→359.155 s`（回退82.74%），insertion `173.949→336.081 s`（回退93.21%），边处理仅减2.38%、waves不变。否决此调度候选，保留默认block，不补反向配对；下一候选转GPU距离有序/分桶以削减重复松弛，不做线程粒度扫参。IWB与完整CTA并未被此实验否定。无新增后台任务，I22未完成。详见 [I22结果与机制裁决](subiteration_file/i22_cggraph_scheduling_20260915.md)。
+
+**I22已开始与CGgraph机制复核：** 已核对论文§5.1–5.4和本地V1.5源码，区分论文CTA/IWB与V1.5等边量block/块内scan路径。EU插入每source固定128线程block而历史处理度约2.1，首个候选改为显式thread/source调度；已构建并通过三批小图Bellman，EU1000K同cohort两批block/thread共2次后台短配对已启动。四个目标映射、算法级有序闭包、CPU边级窃取/工作量分块、GPU IWB条件准入和跨域平衡边界见 [I22与CGgraph实施记录](subiteration_file/i22_cggraph_scheduling_20260915.md)。不恢复CPU propagation，不扩大正式矩阵，收益待结果。
+
+**I21短筛查最新裁决：** 4次运行完成，TW/FS10M相对I20 large完整时间仅下降0.76%/0.51%，减少3881万/9691万次mutation读取但forward写入不变；单次微小收益不足以确认保留价值。位置复用保持默认关闭并归档，不追加反向实验；I20共享规划继续保留。下一执行方向转I22 EU insertion，TW/FS缺口仍开放。per-source统计精简已有B5负结果，不重复立项；本次未启动新后台实验。详见 [I21结果与裁决](subiteration_file/i21_delete_positions_20260915.md)。
+
+**2026-09-15 后续用户指令与 I21 开发：** 用户要求直接继续瓶颈优化，不再单独执行大图正确性检查；此要求覆盖旧“先定向正确性验收再继续”待办，不将未运行检查写成通过。I20共享规划候选保留为本轮large基线。I21首个候选改为复用多删除匹配位置、按连续存活区间搬移，避免再次逐边匹配，不引入新GPU邻接布局或整理债务；四项候选及三项关闭对照CTest通过，TW/FS10M各off/on一对、共4次后台性能短测已启动，收益待裁决。依据、成本与状态见 [I21开发记录](subiteration_file/i21_delete_positions_20260915.md)。I22未启动。
+
+**2026-09-15 I20 已开始开发：** 首个候选复用单份 source 规划，并将 forward 有效变更缓冲区交给 reverse 消费，删除重型规划副本和 reverse 输入复制；显式 regular/large 与按 B>=1M 分类的 auto 已实现，开发默认 regular。四项相关 CTest及两项强制 large 验证通过；large 三批 GPU Bellman 和首批 repair CPU PQ oracle 通过，原192批CPU replay→18次GPU队列按用户要求停止，仅TW100K两批CPU oracle完成；首轮4次短筛查完成，TW/FS10M完整两批分别下降5.76%/9.80%，checksum一致；反向4次也已完成，TW/FS两轮均值下降7.36%/9.59%，每轮各自均超过5%开发预算，已审阅并保留候选待定向正确性验收；仍未追平历史目标（按候选均值尚需下降5.07%/15.99%），默认regular不改，无新增后台任务，尚未正式封板；I21/I22 未启动。实施、固定实验顺序与状态见 [I20开发记录](subiteration_file/i20_shared_plan_20260915.md)。
+
+**通信口径修订（2026-09-15）：** 已实现双方共用显式 CUDA payload 包装及原版隔离构建适配，补充进程外整组 PCIe 采样以覆盖 zero-copy，避免 kernel 细粒度插桩。同机 probe 确认可见 ZC，但整体流量仅为粗粒度估计，采样不足时双方统一降级；尚无正式大图通信胜负结论。实现、验证与准入见 §13.2。
+
+**2026-09-15 I19 完成：** FS/WK 固定100K、10%～90%插入的18组十批全部合法，192批CPU双向oracle、18组完整GPU正确性和性能checksum一致性通过；6组GPU规模画像完成，合计42次GPU运行。WK p10→p90 完整十批 `1081.723→796.665 ms`，FS `2591.080→2479.966 ms`；FS hotness/cache等占55%～65%，不能将CPU搬移减少等同完整加速。TW/FS10M两批 `12.078/14.846 s`，grouping+mutation占70.69%/69.46%，仍未达到历史目标。I20选择共享有效变更/紧凑source规划，I21条件性选择限制存活邻接搬移的块级局部重建；暂不立项reverse历史整理。单次筛查、WK60%准备阶段异常及通信未测边界均保留。详见[完整结果与机制裁决](subiteration_file/i19_complete_results_20260915.md)、[全部画像表](subiteration_file/i19_profile_tables_20260915.md)。传输量原系统对比尚未实施。
+
+当前架构为 **CPU source-local topology mutation + GPU SSSP state/propagation/cache**。CPU propagation owner 已退休，但早期 CPU-own 路线形成的 source/state/topology co-ownership、region-local closure、changed-source/version、双向 channel 和 credit quiescence 等研究成果继续保留，详见 E/F 时间线；最终否决的是它在当前真实大图完整 batch 成本下的生产路线，而不是其算法正确性或研究价值。
+
+历史四个整组落后项及最初缺口如下（最新状态见下方 B5 结果，新执行范围见文末）：
+
+| 项目 | 当前/原版 | 追平需下降 | 当前归属 |
+|---|---:|---:|---|
+| TW scaling 1000K | 5.080/2.242 s（2.27x） | 55.9% | I17-B5 |
+| TW scaling 10000K | 23.991/10.716 s（2.24x） | 55.3% | I17-B5 |
+| FS scaling 10000K | 18.920/11.468 s（1.65x） | 39.4% | I17-B5 |
+| EU 1000K | 1189.302/783.060 s（1.52x） | 34.2% | I17-B6 |
+
+**历史队列（2026-09-14）：I19 → I20 → I21 → I22，当前已由I24接管。** I17 已完成结果保留；其未执行的 B5/B6 后续清单、B7 扩展、I17-C pilot 和 I18 独立收口不再作为未来计划。用户本次明确允许按 batch 规模分类的大 batch 模式，以及 FS/WK 100K 插入比例 10%～90% 的数据生成和适应性验证，覆盖旧的模式/比例实验限制。其他旧正式矩阵不自动恢复。
+
+详细范围与逐批例外见 [最新优化计划](subiteration_file/formal_experiment_optimization_plan_20260913.md)，190 项矩阵结果见[性能大表](subiteration_file/performance_matrix_20260912_analysis/tables.md)。
+
+**2026-09-14 实施进展：** 根据用户本次指令开始开发。B7 已接入可关闭的显式 CUDA payload 计量和阶段/category 归属，计量开关与三批 GPU/CPU oracle 通过；zero-copy 逻辑访问、CPU memcpy 和物理流量仍未测，不将 B7 整体写为完成。B5 的 per-source 统计精简候选在 TW10000K A-B-B-A 中回退，已撤回；保留稳定 radix mixed-source grouping，TW10000K 两批开发配对从 19.030 s 降到 17.603 s（单次下降 7.50%），五项测试及同 cohort 两批完整距离/Bellman 检查通过。四个追平目标均尚未改写为达标，B6 新增插入优化尚未实施。实现、验证和剩余边界见[本轮开发记录](subiteration_file/i17b7_b5_progress_20260914.md)。
+
+**2026-09-14 后续 B5（本次子迭代完成，整体仍进行中）：** 保留 source 已有顺序复用、persistent-worker incoming 物化和 warp 协作 pull 归约。发现未绑定 A-B-B-A 存在明显放置/调度混杂，故双方固定 NUMA 0 作开发配对：TW1000K `3.891 -> 1.809 s`（-53.52%），TW10000K `16.977 -> 11.918 s`（-29.80%），FS10000K `16.948 -> 14.335 s`（-15.42%），均为两批单次配对且 checksum 一致。TW1000K 候选三次 `1.809/1.749/1.812 s`、中位数 `1.809 s`，已低于历史原版 `2.242 s` 目标线，停止该档专项优化；原版未重新绑定/采集，不将此改写成双方同条件三次中位数对照。TW/FS10000K 仍未追平，下一步继续 B5 CPU 公共准备成本，再进入 B6 EU insertion。长行三批 Bellman/CPU oracle、六项相关 CTest、TW/FS10000K 两批全阶段及 final correctness 均通过；stored-parent 仍为既有诊断，未封板。全部实验已结束，无后台 GPU 任务。具体实现、NUMA/affected 口径、混杂结果和剩余差距见[后续 B5 报告](subiteration_file/i17b5_incoming_source_order_20260914.md)。
+
+## 迭代论文索引
+
+本索引保证每个 I 迭代至少保留“解决问题、使用方法、代码位置、关键数据/结论”四类信息。具体实现细节和实验因果仍保留在后文对应小节，不用本表替代正文。
+
+| 迭代 | 解决问题 | 使用方法 | 主要代码/证据位置 | 关键数据与结论 |
+|---|---|---|---|---|
+| I0 | 旧 deletion repair 错误是否仍存在 | 冻结二进制、最小失败前缀、逐阶段 Bellman/tight witness | `samples/hybrid_sssp/hybrid_sssp.cu`；`logs/large_six_dataset_*` | 旧错误未按原条件复现；建立后续 correctness 基座。 |
+| I1 | deletion repair 契约修复 | 仅在 I0 产生稳定新失败时恢复，区分 distance 与 stored-parent race | deletion repair kernels、checker | 条件未成立而跳过；stored parent 只作诊断，distance/tight witness 为硬 gate。 |
+| I2 | 六图连续 mixed-batch correctness | deletion-stage、batch、final Bellman 与 checksum 封板 | `hybrid_sssp` checker；I0/I2 日志 | correctness 封板通过，为性能迭代提供可信状态。 |
+| I3 | 旧画像受错误和计时口径污染 | 统一 timer、参数与当前/原版基线，重采 TW/FS | `[P0-TIMER]`、性能脚本 | 形成可信生产基线，后续 cache/transaction 候选均以此裁决。 |
+| I4 | hotness/candidate 全量刷新成本 | touched-only 事件原型；I4-R 进一步尝试 resident-set delta cache | cache candidate/eviction/compact/load；`logs/i4r_*` | delta 路径 correctness 通过，但 TW/FS `1021.654/6416.829 ms` 明显慢于 I3 `646.987/4210.008 ms`；生产原型删除。 |
+| I4-R1--R3 | resident delta 回退归因与清理 | 两段 extent、churn/crossover 审计，失败后恢复单一 cache 链 | cache allocator/publish artifact；`logs/i4r_sanity_20260826/` | FS host plan 达 `750--851 ms`，碎片 gate 失败；清除 allocator/delta runtime，保留负结果。 |
+| I5 | source-local topology mutation 串行瓶颈 | source grouping、多 worker touched-source mutation | source-local chunk store、mutation workers | 多核 mutation 工程完成，成为 CPU topology 基础；不扩展为 CPU propagation。 |
+| I6 | CPU/GPU topology overlap 是否合法 | 审计版本可见性、reader lifetime、preflight/commit 和 publication | topology epoch/descriptor/reverse index | full dual-version pipeline 没有足够收益证据，未立项生产实现。 |
+| I7 | CPU mutation 的资源与真实性 | 记录 touched source、写入字节、relocation、publication 和完整 batch | mutation instrumentation；I7/I8 日志 | 工程工作完成；重复性和因果 gate 转 I8。 |
+| I8 | I7 收益是否稳定且由机制导致 | 同 cohort 重复、阶段闭合和机制计数核对 | I8 实验脚本与日志 | 完成 I7 的重复性/因果闭合，批准继续 source-local 主线。 |
+| I9 | source-local mutation 剩余关键路径 | 审计 grouping、allocation、copy/compact、publication | chunk store、descriptor patch | 明确只优化能减少完整工作量的部分，停止局部 timer 猜因。 |
+| I10 | topology 可见性与资源契约 | 封板 epoch、旧版本 reader、cache invalidation、内存上界 | engine topology publication/cache path | 形成 I12 前的生产基线与唯一资源契约。 |
+| I11 | mixed batch 是否可只求最终态 fixed point | 建立 deletion affected、final topology recovery seed 和统一 closure 的可证伪模型 | 事务设计与独立 oracle | 语义模型通过，允许 I12 原型；不等于性能成立。 |
+| I12 | deletion/addition 两阶段是否能事务化重叠 | source-local COW next chunks、reverse compact、old-epoch invalidation/CPU prepare overlap、单次 commit/publication、unified closure | transaction/topology artifact；`logs/i12_dev/`、`logs/i13_cleanup_20260906/pre_cleanup.tar.gz` | Wiki/Orkut correctness、22/22 CTest 通过；TW 两批约快 11.6%，FS 仍回退约 5%，双图性能 gate 失败，路线暂停归档。 |
+| I13 | I12 失败后恢复干净生产基线 | 删除事务冗余，恢复两阶段 repair，保留 source-local mutation/epoch/reverse/exact-source | engine/SSSP cleanup；`logs/i13_cleanup_20260906/` | 净删 698 行；四应用构建、22/22 CTest、TW/FS 十批 correctness 通过。 |
+| I14 | deletion/addition 重复分组和无效更新准备 | `GroupedUpdateBatch` 统一 mixed-source grouping、forward/reverse effective records | grouped update、chunk store、dynamic reverse index；`logs/i14_effective_batch_20260906/` | TW/FS `53.335/414.674 ms/batch`，较相邻诊断基线下降 7.05%/11.15%；保留。 |
+| I15 | hotness score/ID 错配及候选全量维护 | 修正配对；以有限分数域 ID treap 离线维护事件索引 | hotness/candidate、`iteration/subiteration_file/i15_event_contract.md`、`logs/i15_candidate_index_20260907/` | 22 个顺序/前缀 hash 与 checksum 通过；十批 treap `11200.956/27544.501 ms`，为预算 62.1/58.9 倍，CPU 索引否决。 |
+| I16 | EU/USA 长传播 pull 重复扫描 | CPU PQ oracle、普通 GPU frontier replay、完整 CPU production screening | repair oracle/runtime artifact；`logs/i16_*`、`logs/i17_cpu_retirement/` | CPU PQ 将工作降至有效边量级，但生产状态交接不合算；CPU 路网执行器退休，问题转向 GPU ordered。 |
+| I17-A | 无序 pull 的重复 incoming 扫描 | Delta=128 ordered replay、affected local CSR、sparse active-list/bucket | ordered replay；`logs/i17a_sparse_20260909/` | EU/USA sparse closure `1.749/0.726 s`，internal scans 约 `4299/2777 万`，与 CPU oracle 同量级；机制成立。 |
+| I17-B | ordered replay 控制同步与空间成本 | device control 合并、selected/deferred 双缓冲复用、host cursor 消融 | ordered compact；`iteration/subiteration_file/i17b_gpu_cost_results.md`、`logs/i17b_final_compact_20260908/` | EU/USA 完整 service 降 11.6%/8.1%，显存减 79.1/47.5 MiB；55 回归、6 memcheck 通过，cursor reuse 否决。 |
+| I17-B5 | 大 batch topology/reverse 成本 | phase-active source、radix 候选、reverse destination slots/shards，条件性 PMA | `GroupedUpdateBatch`、`SourceLocalChunkStore`、`DynamicReverseIndex`；`iteration/subiteration_file/i17b543_reverse_shards.md` | FS1000K 64 shards 十批单次对照 paper/reverse 降 42.0%/86.1%，RSS +46.96 MiB；只完成子项，当前继续三个大档落后项。 |
+| I17-B6 | 长传播 deletion 后 insertion 成为瓶颈 | ordered deletion 生产实验入口；下一步控制 insertion wave/frontier/edge 重复 | `CG_ORDERED_REPAIR` 路径；`iteration/subiteration_file/i17b6_completed_analysis.md` | EU/USA1000K 两批相对 pull 加速 2.58x/2.44x；EU ordered 后 insertion 占约 82%，当前只继续 EU1000K insertion。 |
+| I17-B7 | 缺少完整通信量账本 | 分阶段统计实际 H2D/D2H payload，逻辑 ZC、D2D、CPU copy 和物理互连分列 | `communication_meter.h/.cpp`、batch/stage instrumentation；2026-09-14 开发记录 | 显式 CUDA 拷贝入口已接入并通过基础验证；ZC/CPU memcpy/物理流量未测。观测能力不预设通信落后，不阻塞已有时间瓶颈优化。 |
+| I17-C | ordered 是否可人工选择 | 用 repair 占比、`A/E_A/R/Q`、frontier 宽度和完整短配对作建议 | ordered diagnostics/pilot 报告 | EU/USA 为长传播正例，TW/FS 为低 repair 边界；无通用阈值，剩余 pilot 暂停。 |
+| I18 | ordered 候选生产交接和边界 | authoritative state、gather/scatter、parent、workspace 生命周期与显式模式 | ordered runtime integration | deletion 已实验性接入；独立收口暂停，未来 insertion 接入并入 B6。 |
+
+### 当前 I17 子任务的代码位置补充
+
+- batch 主循环、paper timer、cache refresh：`samples/hybrid_sssp/hybrid_sssp.cu::HybridSSSP()`；
+- insertion convergence：`include/framework/framework.cuh::Engine::update_tree_add()` 与 `ExecutePolicy_Converge()`；
+- source-local forward mutation：`SourceLocalChunkStore::ApplyMutationPhase()`；
+- reverse preparation/merge：`DynamicReverseIndex`；
+- ordered deletion 的 local CSR、bucket、compact queue 和 device control：I17 ordered repair/replay 实现及 `CG_ORDERED_REPAIR` 接入点；
+- 具体文件名发生移动时，以相应实验报告记录的冻结源码、二进制 hash 和日志目录为准，不根据本索引猜测实现。
+
 ## 动态工作区：当前状态、下一步与维护规则
 
-### AI 接手入口（2026-09-07）
+> **历史区说明：** 本节从 2026-09-07 起连续追加，保留当时的接手状态和实验因果。其旧队列、后台 PID、“下一步”和预计工期均已失效；当前任务只以上方“当前权威状态”为准。
 
-本动态工作区与下文 I14/I15 的最新日期补记优先于历史时间线、progress report、paper plan 和 fable5 结论中的旧执行状态。当前 I14 已验收保留；I15 仅完成分数/ID 配对修复和单元测试，事件驱动候选算法尚未实现。不要重新启动 I12，也不要将 I15 当成已完成。
-
-先读取 `logs/i15_pairing_fix_20260907/validation/status.json`、`runner.log` 及存在时的 `audit/status.json`。最后检查时 TW 两批正确性已通过，FS 正确性正在运行；后台 shell PID 421453、Python PID 421456（只作定位，以实际进程和状态为准）。脚本会继续跑四次十批无审计画像，最后跑要求零错配的 TW/FS 十批审计；不要重复启动或与现有任务争用 GPU 0。主 status=complete 只代表画像结束，必须再检查 audit/status.json，缺失不能当作通过。失败时先读对应日志；根目录的 failed 是第一次 GPU busy 启动记录，不是当前 validation 子目录的结果。
-
-验收完成后，读取 `validation/substages.json` 和 `validation/audit/audit.json`，更新本文件状态并建立纠错后基线。score_id_mismatches、permuted_ids、invalid_ids 应为零；距离/拓扑检查遵循脚本契约，历史 stored parent witness 问题仍未修复。若未通过先修复；若通过再进入完整事件集合与有限分数域候选维护原型，不能把本次纠错性能变化算作增量算法收益。参考 `iteration/i14_i15_checkpoint_20260907.md` 和 `scripts/run_i15_pairing_validation.sh`；日志和冻结二进制仅在本机 logs 中，不随 git 提交，新机器需重新生成证据。
-
-继续遵守用户约束：实验脚本后台串行执行；保留实际删除和 delete-repair-add 两阶段语义；允许手动模式，不做自动 selector；不做逐图过拟合、阈值微调、论文写作或论文级实验；被替换的生产路径不保留冗余开关。当前 `.gitignore` 忽略整个 scripts/，已跟踪脚本仍正常提交，新脚本需要显式确认并用 git add -f 纳入，不能误以为没有改动。
-
-**当前状态（2026-09-07，I15 配对修正验收）**：I0--I11、I13、I14 已完成，I12 COW transaction 已暂停并从默认路径移除。I14 两图正确性及四次十批开发性能验收通过；I15 审计确认 hotness 分数/ID 错配，已修复 SSSP 排序输入，正在建立纠错后的正确性及性能基线，尚未实施事件驱动候选算法。I16 高直径 work-efficient repair 为候选。保留删除负载和默认两阶段语义；不做自动 selector，不启动论文级实验。当前未实现 road 模式。详见后文“I13 后工作量归因与队列修订”。
+已删除过期接手和恢复后台任务指令；完成结果保留在历史记录和子报告。
 
 ### 迭代时间线与状态总表（截至 2026-09-05）
 
@@ -37,42 +147,13 @@
 | 2026-09-06 | I13 | 已完成 | 恢复默认两阶段路径并删除冗余事务代码；四应用构建、22/22 CTest、TW/FS 十批正确性通过，各批 distance checksum 与 I10 一致。 |
 | 当前及后续队列 | I14--I16 | I14 完成，I15 前置审计，严格串行 | 有效更新批次、事件驱动维护、高直径 repair；由当前子项证据决定准入。 |
 
-### 未完成迭代与依赖
+### 文档维护
 
-I13 已完成；I12 源码和二进制已归档到 `logs/i13_cleanup_20260906/pre_cleanup.tar.gz`。工作区恢复两阶段 repair 路径，TW/FS correctness 和开发期短性能检查通过；不保留运行时 I12 开关。后续只有改变 repair 算法复杂度或全量工作量的方案才重新立项，不在当前 COW 路线上继续试错。
+已完成和负结果保留；未执行旧任务不再列为待办，新队列只维护文末 I19—I22。
 
-| 顺序 | 状态 | 要做什么 | 开始条件 |
-|---|---|---|---|
-| I12 | **暂停/未通过 gate** | 已完成 source-local COW transaction、destination-local reverse compact、GPU old-epoch invalidation/CPU prepare overlap、单次 commit/publication 和 unified closure 的结构原型；不再继续在当前 COW 路线内尝试阈值、自适应 fallback 或重复微调。FS 已显示 COW/materialization 成本抵消 publication 收益，生产性能主线回到 I10 artifact。 | 22/22 CTest、Wiki/Orkut correctness 通过；Twitter 2-batch 下降约 11.6%，Friendster 2-batch 仍约回退 5.0%，未满足双图 gate。原事务后续 I13--I15 不启动；新的 I13 基线项按队列执行。 |
-| I13 | **已完成** | 默认两阶段路径恢复与冗余事务代码清理；保留 source-local mutation、epoch publication、reverse merge、exact-source closure。核心实现净减少 698 行；未新增运行时切换分支。 | 四应用构建、22/22 CTest、TW/FS 十批 correctness 通过；两批短测未见性能回退。 |
-| I14 | **已完成，保留** | 单次 mixed source 分组、forward 有效记录、destination reverse 批量合并；无第二套运行路径。 | TW/FS 两批正确性和四次十批画像完成，平均 53.335/414.674 ms；较诊断基线下降 7.05%/11.15%。 |
-| I15 | **进行中：配对修正验收** | 审计确认分数/ID 错配，先纠正并建立新基线，再实施完整事件驱动维护。 | I14 已完成；八轮真实 GPU 排序回归通过，真实图验收中。 |
-| I16 | **候选** | 高直径 work-efficient repair：GPU frontier/距离桶与手动 CPU Dijkstra 的最小算法验证。 | 前两项结束后按实际瓶颈细化；不是本轮 TW/FS 收益的推论。 |
+### I0—I15 已执行研发记录（历史）
 
-以下不是“尚未完成的进行中迭代”：I1 是明确跳过的条件分支；I4 与 I4-R2 是明确否决且生产原型已删除的负结果；I6 仅完成观测且明确未立项 full dual-version pipeline；I7 标题中的“研究 gate 待补”已由 I8 的交错重复和因果审计完成，不再悬置。历史文件中 P1/P2/P3--P5 的未完成措辞属于 2026-08-23 的旧路线，已被本文件的当前串行队列替代，不能与 I12--I16 并列为当前任务。
-
-### 当前并行性判定
-
-**2026-09-06 I13 后画像任务（已完成）**：后台脚本完成 TW/FS 各两次十批 check=false，checksum 验证通过；均值 TW 63.141、FS 480.452 ms/batch。子项脚本 `scripts/analyze_current_substages.py` 复算同目录日志，输出 `substages.json`；路径为 `logs/current_profile_20260906T094718Z/`。GPU deletion closure 仅占 5.08%/1.14%，因此不优先为这两图重写 GPU repair。
-
-两批 screening 已由十批画像替代。删除负载保持不变；下一步针对 host 更新数据流的重复解释做结构验证，不能把未细分计时差额全部当作可消除成本。FS 后七批 cache 仍约 110 ms/batch，但缺乏完整 resident delta，暂不重开 allocator。
-
-**I13/I14 已完成，当前仅执行 I15 前置审计；队列仍是单线。** I12 已暂停，I16 未启动。允许的并行仅指单个迭代内部的受控 CPU/GPU 工作或后台 correctness 任务，不表示多个迭代同时推进。
-
-**当前执行目标（2026-09-06）**：围绕“权威变更驱动的增量维护”继续研究：统一有效 topology updates 供 forward/reverse/publication 消费，再以完整运行事件驱动 hotness/candidate。高直径 repair 保留为独立算法候选；不把必要删除工作当冗余。
-
-**可用对照与数据（2026-08-17）**：原版外部 baseline 位于 `/home/wangshaoyan/proJect/CG/C-GpuStreamGraph`（仅作阶段性端到端对照；F 日常对照仍是本仓库同 runtime 的 all-GPU）。已可用合成大图 R-MAT：`data/input_rmat_fs_like_50p_100k.txt`（805M base edges，略小于 Friendster）、配套 `update_rmat_fs_like_50p_100k.txt` 与 `stream_size_rmat_fs_like_50p_100k.txt`（10×100k mixed batch）；参数/复现信息见 `data/rmat_fs_like_50p_100k.metadata.json`。
-
-**如何维护本文档**：
-
-1. **当前计划只更新本节和 I12--I17 串行队列**：每次开始/完成当前任务，更新状态、下一步、gate 和链接；E5/F2-F4 只保留历史口径，不把已被 gate 取消或尚未验证的候选设计写成当前任务。
-2. **完成后回填时间线**：在第 10 节对应阶段追加一段“实现—实验—结论—对下一步的影响”，保留关键数据、日志路径、失败原因和代码删除项。
-3. **压缩规则**：只合并同一阶段中已经被后续结论完全覆盖的重复计划、相同实验的重复解释和已失效的预测；不删除阶段本身、创新点、工作量、关键正确性/性能证据、路线转向原因或论文可用的负结果。
-4. **阅读顺序**：继续开发先读本节、E4-R 与 F；写论文/报告或理解代码演进时顺读第 10 节；查不变语义、实验口径和创新点时读第 0--9、11 节。
-
-### 近期迭代执行计划（2026-08-27 更新）
-
-本节是当前唯一执行队列。一次只推进一个迭代；前一项 gate 未通过时，不得提前实现后一项。每项结束后在本节写入状态、提交、日志目录和结论，并在第 10 节追加一条历史记录。
+以下保留已执行迭代的原问题、实现规格与结果；其中当时使用的步骤是历史实验设计，不构成新任务。未执行路线已从待办移除。
 
 #### I0：冻结证据并建立最小失败前缀（预计半天）
 
@@ -93,22 +174,9 @@ I13 已完成；I12 源码和二进制已归档到 `logs/i13_cleanup_20260906/pr
 
 **Gate**：相同命令连续两次得到相同首错 batch/vertex；CPU oracle 与 Bellman 诊断一致；正对照 Wiki 1 batch 不产生误报。若失败点漂移，先按竞态处理并使用 Compute Sanitizer/事件顺序审计，不进入 I1。
 
-#### I1：修复 deletion repair 契约（预计 1--3 天）
+#### I1：跳过（历史）
 
-**状态（2026-08-25）：跳过。** I0 未在当前代码复现旧错误；没有证据支持继续修改 deletion repair。若 I2 再次发现可重复错误，才恢复本迭代，并以 I2 的首错日志为输入。
-
-**目的**：修复 I0 证明的第一个共同根因，不通过全图重算、扩大 affected 到全图或放宽 checker 掩盖错误。
-
-**允许修改范围**：`update_tree_del()` 的 invalidation/affected 构造、dynamic reverse delta、affected-only sorted merge、GPU repair closure 及其发布顺序。cache、hotness、CPU owner 和 source 选择不在本迭代改动。
-
-**实现顺序**：
-
-1. 先写最小确定性回归，覆盖“删除最后一个 tight predecessor 后，该点及依赖后继必须失效或获得新的 tight predecessor”。再加入 I0 提取的真实失败 fixture 或等价压缩 fixture。
-2. 若根因是漏标，修正 dependency invalidation 的传递闭包；若是 merge 漏边，修正 base/count-delta 合并边界；若是提前静止，修正 active/credit 终止条件。一次只改已被证据指向的一层。
-3. 每次候选修复先过单测和 Orkut 4 batch，再过 Twitter 10 batch，最后支付 Europe 1 batch。禁止用 Europe 做高频调试。
-4. 删除为诊断临时加入的生产分支；保留通用 invariant checker 和最小回归测试。
-
-**Gate**：单测通过；Orkut 4 batch、Twitter 10 batch、Europe 1 batch 的 delete-stage 与 batch 均满足 `relaxable_edges=0 && missing_tight_witnesses=0`；最终 checksum 连续两次一致。任一修复使 Wiki/Friendster 1 batch 回退则不合入。
+I0 未复现旧错误，I1 未实施；原条件性实施步骤已删除。后续任何新增正确性失败随所属新迭代处理，不能放宽检查。
 
 #### I2：六图 correctness 封板（预计半天 GPU 调度 + 长任务时间）
 
@@ -457,32 +525,20 @@ reverse 的 Prepare 在 forward 邻接提交前完成排序、合并及目标槽
 3. 先让 hotness/candidate 语义等价，不同时重做 cache allocator。FS resident churn 与 topology invalidation 的分类用于判断 cache 后续空间，不能借旧 replay 数字直接假定线上 delta 很小。
 4. correctness、完整 batch 收益和状态空间/显存约束通过才替换旧链；若事件集接近全图或索引开销抵消扫描收益，停止该方案。保留必要回归和开发 screening，不要求论文实验。
 
-#### I16：高直径 work-efficient repair（候选，前两项结束后再细化）
+#### I16 历史状态
 
-默认 GPU frontier/worklist 与手动 road CPU Dijkstra 都围绕同一个问题：减少高直径上的 repeated affected scan。TW/FS 本次约 8.3/8.55 轮，GPU closure 占比小，不能据此立项默认 GPU 的大规模重写；EU 是否值得优先需要使用正确的独立 cohort 证据。
-
-先复现 EU 50p/source=0 与 source=1 的实际状态，避免把历史错误当成当前错误；99p/source=1 单独记录。统一 boundary seeds/affected membership/状态提交契约后，优先验证 work-efficient GPU frontier（必要时距离桶）和 CPU priority-queue 的工作量差别。changed-source push 需要从其出边找受影响目标，不能简单只让 changed destination 再扫自己的 incoming；outgoing 过滤、重复入队、队列空间和终止均须纳入算法。CPU 模式需计入边界快照和状态交接，不能用不同算法的 77x 吞吐标定推导必然 4x 加速。
-
-允许用户显式选模式，不做自动 selector；暂定 flag 名称不是已实现 API。优先做最小语义/工作量原型，只有减少无效边访问且完整 batch 获益才扩大接入。更大 affected ratio 本身不等于高直径，也不是开启 CPU 模式的依据。不得恢复低直径 CPU/GPU 同时传播或固定比例 owner。
-
-#### 当前明确不做
-
-- 不减少删除比例、跳过删除 repair、放宽 checker，或把 batch 工作移出 timer。
-- 不重启 I12 COW transaction、全图双版本和高 churn fallback；其 artifact 保留。
-- 不做自动 admission、逐图阈值、worker sweep 或失败的 cache extent allocator 微调。
-- 不把 GPU closure 子项收益当完整删除阶段收益，不把嵌套 timer 重复加和。
-- 1000k scalability、外部系统对照和论文收口后置，不作为以上实现前置条件。
+已执行结果见顶部索引与子报告。旧候选执行清单删除，CPU 传播执行器继续退休。
 
 ## 0. 最高优先级研发指令
 
-本节优先级高于本文档中的历史结论、阶段计划、兼容性考虑和局部性能目标。后续所有设计评审、代码实现和实验决策必须首先满足以下要求：
+本节保留科研与正确性原则；任务范围、允许的 batch 规模分类和比例实验以用户本次指令及文末 I19—I22 为准。历史 cohort 限制不能覆盖新计划。
 
 > **总原则：本项目的最终性能胜出必须主要来自可发表的算法与系统架构贡献，例如减少全局传播轮次、形成 device-local incremental closure、降低跨域通信复杂度、按拓扑构造低边界执行域，以及让 CPU/GPU 分别替代对方不擅长的计算。工程优化只能消除新架构的实现税，不能作为论文主线，也不能靠反复追逐 memcpy、kernel launch、线程数、阈值或某个数据集的局部热点拼出性能优势。若一个迭代不能说明它改变了工作复杂度、同步复杂度、通信复杂度或关键路径并行结构，就不得作为主要迭代立项。**
 
 1. **本任务是科研研发任务**。优先寻找能够形成明确研究问题、算法贡献、系统架构贡献和可证伪假设的优化；工作重心必须放在异构增量计算模型、任务划分、状态一致性、局部闭包、通信复杂度和调度算法上，而不是常数级工程调参。
-2. **禁止临时方案和短期止损思维**。不以 admission gate、特例 fast path、额外阈值、扩大/缩小 packet、数据集 hardcode 或保守 fallback 作为迭代主线。小型工程优化统一推迟到核心算法与架构稳定以后进行，不允许为了短期曲线引入未来需要推翻的中间方案。
-3. **每次实现都按最终系统标准完成**。采用业界先进且高效的数据结构、并发模型、内存管理和异步执行方式；不为历史实验长期保留多套执行路径、重复 kernel、重复状态或默认不运行的无用代码。新架构替代旧能力时必须同步删除旧实现，负结果保存在文档、实验日志、提交或独立 artifact 中，而不是留在生产代码中。
-4. **主要科研性能证据必须来自有代表性的高压力数据集**。当前主性能 cohort 使用 Twitter、Friendster 的 100k mixed-update、连续 10 batch，覆盖高阶数、高竞争和大规模 cache/topology 工作。Europe OSM 因正确自然收敛需要约 2200 秒/10 batch、CPU topology 上界不足 `0.06%`，且原版 GPU-only 受错误的 1000 轮 cap 截断，只保留 correctness 与长直径压力边界，不进入 speedup gate。Wiki/Orkut 只作回归与机制验证；小图或稀疏样本不得单独支撑架构收益或论文性能结论。
+2. **限制模式复杂度**。允许同一系统内按总 batch 更新数分类的常规/大 batch 两种维护策略；初版使用文末冻结的简单规模规则，禁止按图名或比例逐点调参，不以额外特例分支作为迭代主线。小型工程优化统一推迟到核心算法与架构稳定以后进行，不允许为了短期曲线引入未来需要推翻的中间方案。
+3. **每次实现都按最终系统标准完成**。常规/大 batch 策略共用语义、状态、发布与检查接口；允许必要的维护策略差异，不复制整个 SSSP runtime。不为历史实验长期保留废弃 kernel、重复状态或无用代码。新架构替代旧能力时必须同步删除旧实现，负结果保存在文档、实验日志、提交或独立 artifact 中，而不是留在生产代码中。
+4. **实验范围与主张匹配**。TW/FS 的既有规模 cohort 用于大 batch 维护验证，FS/WK100K 的18组新比例数据用于适应性验证，EU1000K 用于插入闭包。比例、规模和长直径证据分别解释；不把单一小图或历史不同条件结果外推为通用收益。
 5. **所有迭代只用流式 batch 时间判断性能收益**。主要且唯一的性能 gate 是 batch 级 `[P0-TIMER]` 求和，即 `paper_algorithm_ms`；图加载、初始计算、首次 cache 建立、最终检查和其他 timer 外工作不进入论文算法时间，不能用完整进程 wall time 否定已经成立的 paper-time 收益。
 6. **允许用一次性成本换流式性能**。可以增加初始化时间或适量 CPU 内存来降低 `paper_algorithm_ms`，但不得把原本属于 update batch 的工作移到 timer 外规避统计。初始化 wall、CPU RSS 和一次性物化量继续记录为部署诊断，不作为流式性能 gate。
 7. **cache 容量由用户指定，系统不得代替用户决策**。`--cache` 是外部配置，同一对照必须使用相同的用户指定值；runtime、planner 和实验脚本都不得按数据集自动扩大、缩小或改选 cache。除该用户配置本身占用的显存外，系统不得通过新增常驻 GPU 副本、队列或 staging 换取 paper-time 收益；同一 `--cache` 下系统额外 GPU 峰值不得高于基线，并必须考虑后续 UK-2007 的可运行性。
@@ -491,10 +547,10 @@ reverse 的 Prepare 在 forward 邻接提交前完成排序、合并及目标槽
 
 - 每个能力只能有一个 authoritative implementation；GPU-only、CPU-GPU 等模式通过同一执行框架的资源配置表达，不能复制执行流程。
 - 新抽象必须同时减少语义重复或支撑至少两个算法/执行设备，不能只包装现有 SSSP 特例。
-- 每个迭代的完成条件同时包含正确性、性能、代码删除和架构收敛；如果新增代码路径多于被替换路径，默认视为未完成。
+- 每个迭代验收正确性、完整性能、维护放大和复杂度；模式数量固定为常规/大 batch，不能用净代码行数代替架构收敛判断。
 - 研究消融通过统一组件的参数化接口、独立 commit/build artifact 或离线 replay 完成，不以永久保留废弃实现为代价。
 
-当前成立的 CPU 服务是 source-local topology mutation，GPU 承担 SSSP state/propagation/cache。I12 事务路线已归档，不能再描述为当前生产扩展。I14 研究共用有效更新记录的双向拓扑维护，I15 研究完整事件驱动的 cache 候选维护；I16 高直径 CPU/GPU executor 均是待验证候选。历史 CPU-owned packet 和双域 owner 仅解释研究演进，不定义当前默认架构。
+当前成立的 CPU 服务是 source-local topology mutation，GPU 承担 SSSP state/propagation/cache。I12、I15 CPU索引和CPU传播路线的否决记录保留；未来研发只按文末 I19—I22 执行。
 
 ## 1. 当前默认口径
 
@@ -1181,24 +1237,9 @@ E4 完成条件同步调整：R1/R2 必须通过；R3-A/B 提供 planner substra
 
 **旧 E4-B/C 的作用与替代关系（压缩归档）**：旧 B 提出了 source/version 驱动的统一事件执行：owner 在本地队列完成 source-local closure，跨域只发送归约后的事件，以 `logical active sources / logical outgoing edges / processed edges / coalescing / critical path` 取代 partition 数和 edge-span；旧 C 提出了只在初始化或 quiescence 边界选择稳定 owner map、并允许 all-GPU 自然胜出的结构化 planner。它们保留为 E4-R 的设计来源和论文脉络，但具体实施顺序已由 A2 负结果重排：R1 先消除 source-to-partition 放大，R2 再按完整 incoming prepare/repair 关键路径确定 reverse 结构，R3 最后以精确工作量、事件、dependency、placement、迁移与内存硬约束选择 owner。R1/R2/R3 的实现与证据在本节前文，且不允许用 packet 大小、阈值、线程数、CUDA Graph 或 timer 外移替代该结构变更。
 
-#### E5：端到端验收与架构收敛
+#### E5 历史裁决
 
-> **状态覆写（2026-08-17）**：本节原先要求“至少两张图由 CPU owner 取得完整 paper-time 收益并承担不低于 15% propagation edges”。在 R1 之后该门槛与实际 Amdahl 上限不再相称，改由下方新迭代 F 的 critical-path gate 替代。本节保留为 E4-R 历史验收口径，不得作为当前实现顺序或强制 CPU 参与的理由。
-
-正式性能只使用Wiki/Twitter/Friendster 100k，Orkut保留机制诊断；同一用户 `cache=2`、10 batch、current/all-GPU交错运行，先3次screening，候选再5次报告median/p95。all-GPU必须由同一owner/event runtime以空CPU domain表达，不能保留旧dispatcher。主指标仍是完整 `paper_algorithm_ms`，并单独报告dependency delta maintenance、deletion invalidation/replacement、insertion convergence、CPU/GPU logical active sources与outgoing edges、实际processed edges、changed-source boundary、quiescence、planner/migration、cache refresh、CPU RSS和GPU peak。正确性cohort启用 `--check=true`，与性能cohort分开但使用相同算法路径。
-
-迭代 E 的历史 gate（已由 F 覆写）曾要求：
-
-- 三张主图均通过连续 batch 正确性和 epoch/credit 守恒；
-- 若R3 planner为某张图选择CPU owner，则CPU必须承担不低于15%的实际propagation/repair edges或replaceable GPU service，且GPU不重复扫描其internal edges；planner选择all-GPU时该条件不适用，但必须由统一成本模型解释，不能人为保留空转CPU域；
-- 至少两张主图证明region-local closure折叠了跨域/全局推进步骤：changed-source accepted events显著少于旧snapshot records，batch中除最终quiescence外不存在domain-wide barrier；
-- 三张主图的GPU/CPU实际processed edges都能由logical active source邻接量与显式dependency expansion闭合解释，不再以partition edge-span upper bound作为工作量替代；
-- 至少两张主图相对 D3 all-GPU 在完整 `paper_algorithm_ms` 上取得统计显著收益，第三张不得显著回退；
-- 收益能由 `removed GPU service + removed global synchronization - CPU local service - event boundary - migration critical-path cost` 闭合解释；
-- 相同 `--cache` 下 GPU peak 不高于 D3，新增 CPU 内存与初始化 partition 成本如实报告；
-- 删除B3 fixed-capacity入口、E2同步snapshot/cycle closure和任何被E替代的dispatcher，只保留一个可由owner map表达all-GPU/CPU-GPU的event runtime。
-
-以下内容明确不属于 E 的主迭代：调整 packet/source 数、增加 degree threshold、单独扩大 CPU 线程数、CUDA Graph/persistent kernel launch 优化、proposal 格式微调、按数据集选择 capacity、把 batch 工作移出 paper timer。这些只能在 E 的架构和算法 gate 已成立后作为独立工程收尾，不能用于证明 E 的科研贡献。
+原验收被 F 的实际 crossover 取代，未执行矩阵和强制 CPU share 计划删除。
 
 #### 迭代 F：deletion sub-DAG 双执行域计算（已结束，2026-08-24）
 
@@ -1267,7 +1308,7 @@ F1-C 的工作收敛为：
 
 **F1-C 收尾决定（2026-08-20）**：上段的 `snapshot_ms` 是离线稀疏记录重建和索引成本，并非生产 authoritative GPU state 的 D2H snapshot，不能把它声称为生产 snapshot 已主导。为避免这一口径错误，按同一 deletion repair 可见边界重新比较已有日志：all-GPU 的中位 `topology + H2D + closure` 为 Twitter `3.688 ms`、Friendster `22.770 ms`、R-MAT `133.701 ms`；一次 crossover 的离线 candidate window 为 `4.514/44.536/78.908 ms`。后者仍未计入真实 D2H sparse gather、常驻 CPU state/mirror 维护、GPU 输入上传分配和生产 version/publication，因此只是对 CPU owner 有利的下界。即使在该下界，Twitter 慢 `22.4%`，Friendster 慢 `95.6%`；两张真实图均无 `net_cpu_takeover_gain > 0`。R-MAT 快 `41.0%` 只说明高 closure、无 cache 的合成边界可能存在 crossover，不满足真实图 gate。故 F1-C 否决 deletion CPU graph-computation owner，不进入 F2，也不为该路线追加采样、阈值、owner map、partition 或持久状态 runtime。临时 production capture 已回收；离线 trace/replay 与负结果保留。
 
-**下一方向**：CPU 仍应服务于它已证明更匹配的 producer-side touched-source topology mutation、reverse-delta construction、descriptor/cache publication，而非在 deletion SSSP closure 中成为 second graph executor。后续若开始新迭代，应按 F 失败后的 dual-version topology pipeline 重新立项：先验证 CPU 构造 next epoch 的 touched-source topology 能否与 GPU 读取 current epoch 重叠，并将 reader fence、epoch publication、内存峰值和完整 `paper_algorithm_ms` 一起计入；不得把本次 R-MAT crossover 外推为通用 CPU owner 收益。
+**历史结论**：CPU 服务收敛到 touched-source topology mutation、reverse-delta construction、descriptor/cache publication。F 后原拟议的 dual-version pipeline 未来计划删除；R-MAT crossover 不能外推为通用 CPU owner 收益。
 
 Twitter、Friendster、R-MAT 各完成连续 10 batch。Twitter top 诊断候选的 internal incoming / snapshot source / non-sink outgoing work 分别为 `34--4,030 / 461--37,857 / 1,146--43,029`；Friendster 为 `1,154--40,796 / 15,221--532,964 / 24,463--560,067`；R-MAT 为 `3,066--364,234 / 76,365--2,836,582 / 88,169--8,922,964`。R-MAT 因 67M vertex 在 V100 `cache=2` OOM，按机制口径使用 `cache=0`，不进入真实图性能 gate。Europe 当前 source/update cohort 10 batch affected 均为零，是无效样本。
 
@@ -1288,35 +1329,9 @@ net_cpu_takeover_gain = baseline_window_ms - candidate_window_ms
 
 F1-C gate：CPU 必须承担非零完整 sub-DAG graph service，且 GPU 删除相同 repair service。只有至少两张真实大图 `net_cpu_takeover_gain > 0`、重复方向稳定，并保守预测完整 10-batch `paper_algorithm_ms` 至少下降 5%，才允许进入 F2。R-MAT 单独胜出只证明 workload boundary。若独立 component/bundle 工作不足、prefix 串行 fence 抵消收益、snapshot/mirror 占优、sink 排除后有效 work不足或 removable GPU repair本身受 Amdahl 限制，则 F 直接否决计算 owner runtime；不再新增 vertex map、METIS、source packet、固定比例、partition round或 owner阈值变体。
 
-##### F2：胜出 sub-DAG runtime 的生产接入（已取消：F1-C 未通过）
+##### F2—F4 取消记录
 
-F2 只实现 F1-C replay 胜出的同一种执行关系，不把 replay 扩张成通用双向 runtime。若独立 component/bundle 胜出，CPU/GPU 各自保有 owner-local state 与队列并发 closure，最终一次共同 quiescence；若上游 prefix 的串行替代仍胜出，则 CPU 完整 closure 后只做一次 min-reduced successor state/witness publication，再启动 dependent GPU successor service。当前语义下不建设逐轮 changed-source channel，不做每轮全量 state gather/merge，也不提前执行下一 batch。
-
-版本协议的硬约束：
-
-1. topology mutation、reverse delta、descriptor patch 和 cache invalidation 共享同一 batch epoch，GPU 不得观察半提交邻接。
-2. 旧版本至少保留到所有 GPU reader quiescent；按 touched source/group 延迟回收，禁止逐边 MVCC、`O(V)` mirror 或第二份常驻 GPU topology。
-3. publication 和 cache patch 按 `touched sources + delta records + changed cached records` 缩放；未变化的 cached adjacency 不 compact、不 reload。
-4. authoritative state、witness、snapshot epoch、CPU→GPU successor publication 和最终可见性必须闭合，GPU 不得重复执行 CPU 已接管的服务；独立候选不得凭空产生跨 owner event，prefix 候选不得隐藏 successor fence。
-5. 比较必须包含同一代码基座的串行单版本、版本化 CPU 接管和 all-GPU exact-source 对照，所有异步工作在 batch timer 内结清。
-
-F2 gate：TW/FS/EU 连续 10 batch 的 Bellman、distance checksum、tight witness、topology hash 和 epoch audit 全部通过；至少两张大图的完整 `paper_algorithm_ms` 稳定下降，且收益能由 deleted GPU kernels/scans/H2D、overlap wall、patch bytes、changed records 和峰值内存闭合。若只降低子项而 total batch 不降，候选否决，不继续调 allocator、slab、prefetch 或线程数。
-
-##### F3：sub-DAG decomposition 与调度泛化（未启动；F1-C 未通过）
-
-F3 在已证明收益的 runtime 上扩展 SCC condensation component/bundle 选择与跨 batch 稳定性；weak component 既是独立并发候选，也是 sub-DAG 搜索上界，不再单列“是否让 CPU 计算”：CPU 在 F2 已是完整算法 executor。禁止复用 E2/E3 的 segment-round dispatcher、每轮 join、全量 state snapshot、固定 degree split 或 `PostComputationBW()`。
-
-correctness gate 覆盖 CPU-only chain、GPU-only chain、双向跨域 chain、重复/乱序 version、删除 replacement、sink terminal commit 和连续 mixed batch；性能 gate 使用 F1-C 已冻结的 sub-DAG 结构类别，并把 F2 版本、boundary 和回收成本计入完整 timer。若真实 planner 选择 all-GPU，则不保留生产 CPU executor，机制测试和负结果留在独立 artifact。
-
-##### F4：收敛与论文决策（历史决策框架；当前结论已由 F1-C 给出）
-
-F4 只允许三种结论：
-
-1. **deletion sub-DAG 双域计算胜出**：F2 证明 CPU 完整接管可解释 component/bundle 或 prefix、GPU 不重复同一 destination/internal work，且至少两张真实大图的完整 batch 时间下降；论文主线必须如实对应胜出的执行关系，即 independent closure overlap 或含 successor fence 的串行异构替代，不能笼统写成稀疏 boundary event。
-2. **仅特定结构胜出**：R-MAT 或单张真实图存在足够大的低边界 sub-DAG，但默认 gate 未通过；保留为 workload crossover/结构边界，不包装成通用生产收益。
-3. **all-GPU 算法路径胜出**：F1-C/F2 不能改善完整 timer；不实现生产 CPU sub-DAG runtime，保留 R1/R2、结构 trace/replay 与大图负结果。cache touched-only 修复仍可作为独立工程优化，但不能宣称 CPU 图计算贡献。
-
-共同验收只以 TW/FS/EU 100k mixed-update、相同用户 `cache`、交错重复、完整 `paper_algorithm_ms`、正确性和内存峰值为主；Wiki/Orkut 和小图只作回归，不要求每张图强行存在 CPU owner，也不以 CPU edge share 作为完成条件。
+F1-C 未通过真实图 gate，F2 生产接入、F3 调度泛化与 F4 预设收官方案未执行，具体计划删除；负结果与原因保留。
 
 ##### F 失败后的转向（已执行）
 
@@ -1424,3 +1439,126 @@ Friendster 当前建议主配置：
 ```
 
 cache3 在 V100 16GB 上 Friendster 目前会 OOM，不作为主配置。
+
+## 13. 迭代执行记录与当前I24（I19—I23为历史）
+
+状态：I19 已完成，I20共享规划候选通过两轮短性能门槛并作为large开发基线；按用户要求不再等独立大图正确性检查，I21删除位置复用短测结束、默认关闭归档；I22 EU insertion低度线程调度短测已否决；距离区间候选已通过EU1M两批短筛查（完整P0下降78.34%），待反向重复和十批验收。18组比例数据、192批CPU验证、42次GPU运行全部收齐；结果与观测限制见 [I19完整报告](subiteration_file/i19_complete_results_20260915.md)。I18 已有历史编号不复用，新工作从 I19 连续编号。旧计划中未执行的候选清单删除，不再并列维护 B5/B6、R 系列或额外收口队列。
+
+研究主线：**batch 规模改变 CPU 拓扑维护与 GPU 增量传播的相对成本；用规模分类的统一变更维护降低数据结构工作放大，用低重复传播处理长直径插入。** 论文贡献由被删除的工作、摊还维护代价、可见性协议和完整性能共同支撑，radix、warp、NUMA 等作为支撑实现，不按优化项数量累计创新点。
+
+### 13.1 共用契约和模式边界
+
+- 总 batch 规模定义为 B = insertion requests + deletion requests，K=1000；100K 是每批共 100,000 条，不是删/加各 100K。比例 p 定义为 insertion/B，deletion 占 1-p。
+- 允许显式常规模式、大 batch 模式，以及只按 B 分类的入口；I20 已实现 `CG_BATCH_MAINTENANCE=regular|large|auto`，开发默认 regular，候选尚未通过完整性能 gate。初版冻结 B >= 1,000,000 为大 batch，否则常规。1M 是现有 100K/1M/10M 开发档位的初始边界，不是已证明的通用 crossover。
+- 首先实现并验证显式模式，随后简单分类调用同一策略接口。选择器只看本批总请求数，不按图名、source、insert 比例或测得的耗时选模式。阈值只允许在 I19 证据明确否定初值时统一修订一次，并报告依据；不做逐图最优阈值搜索。
+- 分类发生在本批更新开始前；跨 batch 切换不得丢失 reverse overlay、未回收块或 cache/version 状态。若维护策略转换需要工作，转换、整理和回收全部计入当前 batch，空间峰值与切换正确性一并验收。
+- 常规/大 batch 共用 authoritative topology、GPU value/buffer/parent、有效更新语义、epoch 和 publication；可以有两种维护策略，不能复制整个执行框架。保留真实删除及 delete-repair-add 两阶段，不重启 I12 最终态事务。
+- 完整 P0 batch 总和为性能主指标，阶段按嵌套关系分解。prepare 含 reverse 时不重复相加；初始化、检查与性能运行分列。CPU copy、实际 mutation writes、逻辑边访问、CUDA payload、物理互连字节分列；未测量不写零。
+- 同代码配对固定 source、底图、更新、batch 数、cache、worker 数和 CPU/NUMA 放置；原版历史数值只作目标线。affected/SPT 平局波动与图净增减须报告，不能把最终 checksum 相同当作所有中间工作相同。
+- 所有 GPU 任务串行使用一张卡，启动前确认无进程且显存为零，不影响其他用户。先 CPU 数据验证与结构 replay，再支付大图 GPU 验证。
+- 已否决的 CPU propagation、I12、cache extent allocator、CPU hotness 索引不恢复。新候选必须说明消除哪类重复工作及其代价；单纯缩 vector、增加 shards/workers 或追逐局部 timer 不单独立项。
+
+### 13.2 通信量公平对照：显式账本 + 整组 PCIe 粗粒度观测（2026-09-15 修订）
+
+**用户授权的后台对照（2026-09-15 启动）：** `scripts/communication/run_100k_background.py`，运行目录 `logs/communication_100k_20260915_0815/`，PID与健康状态以目录内 `pid/status.json` 为准。WK/FS既有50p、EU connected-50p，均100K×10批；本版EU开启有序删除修复，原版不改算法。双方GPU0/NUMA0、SEGMENT=32、cache=2；先本版全阶段正确性，再每组三次AB/BA/AB通信采集。结果不一致/截断时保留诊断、拒绝胜负并继续下一组；采样不足统一降级。最多21次串行运行，不等待完成或反复轮询。新实验不属于旧512分段性能基线；工具可测不等于该输入正确性已通过。
+
+**最新裁决。** 用户进一步要求尽量覆盖 zero-copy 且避免复杂编码，因此只比较 memcpy 不再是首选完整方案。两边 mapped-host 邻接均承担重要图读取，原版 `GatherTransfer()` 的旧“传输总量”连 cache hit 都计入，不能作跨域字节。是否 ZC 占主要比例尚无真实图实测，不由架构猜百分比。
+
+**实现。** 保留同一 `communication_meter` 显式 H2D/D2H payload；增加约几十行共用 `communication_window.h` 与整组边界调用，其余工作在 `scripts/communication/` 进程外完成。原版通过 `prepare_baseline.py` 生成独立源码/构建目录并接入相同包装，无需修改原仓库。`sample_pcie.py` 用现成 NVML API 采样 GPU PCIe RX/TX、按整组窗口积分，覆盖该链路上的显式 DMA、ZC 和控制/协议流量，不修改 kernel 或加入逐边 atomic。`compare.py` 验证三份输入哈希、共同参数、GPU、batch 集合、最终 checksum；运行者仍需固定并核对 CPU/NUMA 放置、cache 预算和系统特有策略。
+
+**共同窗口与分列。** 从第一批删除前到最后一批 cache load 同步完成，保留全部更新、传播、hotness 和 cache 服务；初始化、最终 Gather、检查和 trace 排除。原版仍是十批，本版固定同样十批。显式表按 batch 汇总所有 category，H2D/D2H 分列并可相加，D2D/H2H 不入跨域和；未分类方向拒绝完整对照。物理观测只在整组尺度报告 GPU RX/TX 估算，**不能与显式 payload 相加，不能减去 payload 冒充精确 ZC**。性能使用关闭计量的独立运行，correctness 使用同输入独立验证，最终 checksum 一致不替代 oracle。
+
+**退化规则。** 同机实测 NVML 可看到 ZC；约2s probe 的观测/请求比分别 H2D=1.061、D2H=1.105、ZC read=1.062，原始日志见 `logs/communication_audit_20260915/`。这只验证覆盖和量级，不是误差校正系数或真实图通信占比。实际两方向采样间隔约50ms；窗口至少1s且至少50样本、最大间隔不超过100ms才标记粗粒度可用，阈值不是精度保证。任何一侧不足则双方整体通信比较降为诊断/N/A，保留公平显式账本，不继续开发复杂仪器。保存窗口平移敏感性和原始读数；正式粗粒度比较用同 cohort 交错重复，差异小于波动时不判胜负。换机器须核实 PCIe 是否覆盖 CPU–GPU 链路，不冒充 NVLink/其他互连总量。
+
+**本次验证状态。** 双方构建和包装链接通过；4项采样测试、2项计量测试通过。规则图十批四次开关验证中，本版开/关均通过独立 CPU Dijkstra，原版开/关保持相同但错误的最终 checksum（`8853361096970885991`，oracle=`1567344166481677243`）。因此只确认计量开关不改变各自结果，双系统 correctness gate 尚未通过，不发布该输入的通信胜负；原版修复不并入本次低复杂度计量改动。见 `logs/communication_audit_20260915/pair_final/result.json`。 真实 SSSP 双边采样接线也完成，短窗口双方均标记采样不足，比较器因 checksum 不一致拒绝输出对照；未启动正式大图通信矩阵。
+
+**验收与范围。** 计量开关、小图双边十批 CPU oracle、已知 copy/映射读 probe 为工具 gate；正式大图通信胜负仍须同 cohort 的原版/本版采集，不能由工具验证改写为已完成。此项并入 I20 开发准备与 I22 最终裁决，复用已有输入，不扩大原版比例矩阵。详细操作、边界和验证见 [通信测量说明](../scripts/communication/README.md)。
+
+### I19：规模与插删比例下的工作放大画像
+
+**执行状态（2026-09-15）：已完成。** 数据/结构/完整GPU画像及候选裁决见 [I19完整报告](subiteration_file/i19_complete_results_20260915.md)；显式copy之外的通信未测，原系统传输对比未实施。I19收尾时 I20/I21/I22 尚未启动；后续 I20 已进入开发验证，当前状态见下节。
+
+**问题与假设。** 大 batch 的主要矛盾是 touched-source 邻接维护、反复构造批次表示和累计 reverse overlay，而不是 GPU repair 本身；插删比例可能改变搬移、扩容、历史 delta 与未来遍历的代价。先验证这种解释，不能预设某个结构必胜。
+
+**数据生成（本次用户已授权，执行时无需再次请求）。** FS=Friendster，WK=Wiki，复用现有 50p/100K cohort 的底图与完整 ID 映射、固定 source 和权重规则。每图 9 个比例，插入占 10%、20%、…、90%，共 18 个逻辑数据集；每个数据集连续 10 batch，每批 100,000 条，删除数为 100000-insertion。stream-size 文件按 loader 实际字段次序输出，使用不对称 fixture 检查，不能沿用 50/50 猜字段顺序。
+
+生成要求：
+
+1. 先核对现有生成器、底图格式、ID universe 与边的重数语义，固定数据 seed；各比例共用同一底图，硬链接或 manifest 引用，避免复制 18 份大图。保留原数据，写入新目录。
+2. 使用相同种子产生确定性的初始存在边删除池和初始不存在边插入池，每 batch 为每类操作预留最多 90K 的互斥候选，比例取嵌套前缀；整个十批不能重用已消费 occurrence。插入池优先来自同源图的 held-out 合法边，避免随机跨社区新边改变图结构；池不足则明确失败并修订生成依据，不静默重复边或注入无效删除凑数。
+3. 若源数据是 multigraph，删除按 occurrence/multiplicity 校验；是否允许平行插入在 manifest 中明确，所有比例保持同一契约。不得把 source occurrence 不同误认为 endpoint pair 一定不同。
+4. 流式扫描底图验证选中 pair 的初始重数，并用只存涉及 pair 的状态表逐批 replay，验证每次删除确实存在、每次插入满足约定；无需为整个 FS 构建 Python edge set。校验总条数、逐批比例、ID 范围、操作顺序、有效记录数和最终边数。
+5. 每批理论净边数变化为 (2p-1)*100000，十批从 -800000 到 +800000；逐批记录实际边数、touched sources、degree 分布及活跃更新范围。净变化是这项比例实验的固有条件，不偷偷加补偿操作。共同底图/候选池不保证 touched 集或可达工作相同，必须报告实际值。
+6. 每个 manifest 保存输入路径/身份、seed、节点/边数、source、比例定义、批数、哈希、候选池及重数策略、逐批有效性校验、生成命令。仅所有验证通过才写 ready；失败或不完整不可进入实验。
+
+**实验范围。** 先用现有源码接口做 CPU topology-only replay，覆盖 18 组十批，观察 forward/reverse/publication preparation；这是机制结果，不冒充完整 SSSP。之后当前系统每组一次十批 GPU 完整运行作适应性筛查，正确性与性能计时分开；无需重跑原版比例矩阵。I20/I21 候选复用这些精确数据。FS/WK100K 比例实验不能证明 10M 模式适用性：规模轴使用已有 TW/FS 100K、1M、10M cohort，不新增规模数据；大模式实现后允许在相同 100K 比例输入上显式执行作结构边界验证，但默认分类仍是常规。
+
+**观测与交付。** 同时报告 B、有效更新 U、touched sources S、实际扫描/搬移/写入、effective 表示次数与字节、reverse 新增/累计记录、整理成本、publication/cache 代价、RSS/GPU peak、完整 batch。既有 source_work 是工作范围指标，不改称实际扫描。输出“规模 × 阶段”和“比例 × 维护放大/逐批增长”两张表及异常解释、18 组生成器/manifest/验证结果。
+
+**Gate。** 数据全部合法且可复现；画像可定位完整成本的主要来源。根据证据为 I20/I21 各选一个机制，写出成本预算与否决条件；若某个成本已经不足以影响目标，不启动该候选。不能从 100K 比例表现推断跨规模普遍扩展性，不能用无效更新比例解释成性能优势。
+
+### I20：大 batch 的统一权威变更维护
+
+**执行状态（2026-09-15）：短性能门槛通过，作为 I21 开发基线；按用户最新要求不再安排独立大图正确性检查作为前置。** 两轮正反配对完成，TW/FS10M均值下降7.36%/9.59%；保留显式候选，目标大图全阶段正确性/边界回归未封板；见 [I20开发记录](subiteration_file/i20_shared_plan_20260915.md)。
+
+**假设。** 大 batch 下 forward、reverse 和 publication 各自重建更新含义造成重复准备；一次 source 规划产生的权威有效变更可以供多个消费者共享，使准备按 B、S、U 和必要输出组织，而非反复构造同样的重型对象。
+
+**实现。** 在统一 mutation 接口内实现大 batch 策略：单次 source 分组，source-local 删除匹配/插入规划产生紧凑 phase 范围与有效变更，forward apply、reverse destination 视图和 descriptor/changed-source 发布共享它。不同排序视图采用索引或确有必要的物化，避免为了“单份”增加随机访问；选择依据是总访问/复制和完整时间。明确哪些 metadata 跨两个 phase 可共享、哪些 deletion-only 与 final topology 状态必须分别产生。reverse 所需分配在 forward commit 前成功，失败前可见图不变；不通过合并两次 fixed point 获益。
+
+**验证。** 空 phase、重复/缺失删除、删后重加、容量失败、epoch、模式跨批切换和独立拓扑 oracle。使用 TW/FS 10M 两批目标、1M 模式边界及 100K 常规回归；本项历史验证已完成短配对，后续1M候选验证按I21新计划执行。代表比例预先固定 10/50/90，不按最有利结果挑选。
+
+**Gate。** 删除至少一类系统性重复表示/遍历，报告每有效更新准备字节及时间；同 NUMA 配对完整 batch 获益，候选方向用交错重复确认，常规路径无明显退化且无新增 GPU 常驻拓扑。只减少某个 malloc/vector timer、不减少整体工作或完整时间则否决并撤回。论文定位是变更生产者与多消费者协同维护，不把 radix/线程池单独包装为创新。
+
+### I21：1M 批量准备与发布路径优化
+
+**2026-09-17归档修订：** A单独合并保留进入I24；B并行radix未证明增量收益，C尚未实现，不并列作为当前队列。以下为原计划，旧1M Gate不阻止I24单独合并的10M确认。
+
+**执行状态（2026-09-16）：重新定义为下一阶段主线，先在1M开发档验证。** 原位置复用候选已归档（TW/FS10M仅下降0.76%/0.51%），不再作为后续计划。当前目标是减少批量准备中的重复排序、重复扫描和发布前重排；不改source-local authoritative拓扑布局，不恢复PMA/tombstone或CPU propagation。
+
+**用户明确的规模策略。** 先在1M上实现、验证和裁决候选；当前16GB GPU显存约束不作为1M开发的否决条件。10M在候选稳定后再迁移验证，执行前提醒用户准备迁移/更大GPU；100M延后到更大GPU和容量方案具备后再启动。规模阈值只控制维护模式，不按图名、source或测得耗时选择。
+
+**候选A：source列表有序合并。** delete/add阶段产生的changed-source列表各自已按source有序；发布前采用线性merge+unique，替代拼接后的全量sort+unique。必须处理空phase、重复source、无效删除和跨phase重复，保持严格递增唯一的publication契约。
+
+**候选B：并行稳定source radix与group物化。** 保持稳定顺序、delete-before-add语义和相同分组结果，按固定worker池进行局部计数、全局前缀和及稳定scatter；不把OpenMP微实验收益直接写成生产收益。候选A先做，因为改动小、收益证据更直接；候选B随后在1M完整批次验证。
+
+**候选C：reverse/effective准备定向优化。** 只有A/B在1M完整P0中成立后才进入。优先拆分effective生成、destination排序、slots、merge和commit；不得把嵌套timer重复相加。保持reverse Prepare成功后forward才可见的异常契约。
+
+**1M验证与Gate。** 每个候选使用TW/FS 1M、两批、同输入、同worker/NUMA/cache和large维护模式；候选开关交错至少一轮正反配对，记录完整P0、group/prepare/preflight/reverse/publish、实际records、source-work、RSS/GPU峰值和最终距离checksum。1M候选若完整时间无约5%开发收益，或收益只来自局部timer，则撤回。通过后才迁移到10M；10M是同候选的规模确认，不重新发明一套策略。
+
+### I22：1M通过后的10M迁移与100M延期验证
+
+**2026-09-17修订：** TW10M执行范围由I24具体替代；100M延期不变。无条件迁移更大GPU不再适用于已有16GB同配置成功记录的TW10M。
+
+**状态：后置计划，当前不启动。** I22原EU ordered insertion主线不再作为FS/TW扩展性主线；其已有EU结果与代码保留为独立研究证据。FS/TW的下一目标是确认1M候选能否随规模保持收益。
+
+**10M迁移提醒。** 1M Gate通过后，必须提醒用户迁移到更大GPU/确认显存预算，再运行TW/FS 10M两批候选对照。10M不与1M结果直接合并为单一加速比；报告阶段比例、批历史、overlay增长和空间峰值。若10M收益消失，回到reverse/preflight成本定位，不继续盲目扩大线程或shard。
+
+**100M延期。** 只有10M候选稳定、publication容量按`min(B,V)`或等价分块方案完成、chunk arena/reverse容量画像通过后，才在更大GPU上生成合法100M数据并跑双方同口径两批。100M不是把10M输入重复十次；必须重新满足删除occurrence、插入合法性、批间不重复和内存峰值记录。当前不以100M显存风险否决算法研究，但不宣称100M可运行或可能胜出。
+
+**保留的裁决边界。** TW10M当前距历史目标约0.573秒，优先验证；FS10M仍需约2.183秒，必须组合A/B/C或新证据，不承诺必胜。正式战胜原系统仍需同语义、同输入、同资源且共同结果指纹一致；历史跨系统checksum mismatch只作目标线。
+
+**后续交付顺序（2026-09-16修订）。**
+
+1. 1M：完成候选A source列表有序合并；若通过，再完成候选B并行稳定source radix/group物化；必要时才进入候选C reverse/effective准备。
+2. 10M：1M Gate通过后，提醒用户迁移至更大GPU并确认显存预算，再对TW/FS各做两批同候选迁移验证。
+3. 100M：10M稳定且publication/chunk/reverse容量方案通过后，延后到更大GPU生成合法数据并做两批双系统筛查。
+
+TW10M和FS10M追平目标继续保留，EU ordered insertion结果作为独立研究证据保留；不再把EU I22作为FS/TW后续主线。I21位置复用、旧PMA/extent路线、旧正式矩阵和其他未执行分支不恢复。
+
+
+### I23：瓶颈驱动的批量分组构建（2026-09-16新增）
+
+**2026-09-17完成裁决：** 六次TW1M消融完成。仅合并下降7.63%，合并+bulk下降4.07%，bulk相对仅合并回退3.86%；否决bulk，原条件队列未进入10M。下方为历史执行说明，当前转I24。
+
+I21 A+B在1M完整Gate未通过后，按用户允许证据驱动改进方法的授权，先对group物化使用count-prefix-scatter构建，而非直接扩大线程或重做统计精简。原始排序、仅合并、合并+bulk三配置正反消融用于区分收益。TW1M通过组合与增量门槛后再TW10M；任一优于原系统为目标，无需同时追平FS/TW。当前实现与后台范围以上方I23权威状态及子报告为准；只有完整P0改善才保留，历史目标线不代替原版同口径正确性与资源核验。
+
+
+### I24：TW10M publication合并定向确认（2026-09-17）
+
+**状态：下一执行项，尚未运行。** 详细规格、实验顺序及止损以[I24计划](subiteration_file/i24_tw10m_publication_20260917.md)为准。
+
+**机会预算。** I20 large两批均值11.288533s，历史原版10.715850s，差0.572683s；首批10M合并机制净省0.295830s，简单两倍只略超缺口，第二批和完整成本尚未确认。I23纠错后的仅合并1M改善7.63%，支持单独规模确认，不能保证10M收益。TW机会强于FS，不复活bulk/radix/线程扫参。
+
+**运行。** 同冻结binary、同既有TW10M输入，两批×off/on/on/off四次；仅切换CG_MERGE_PUBLICATION_SOURCES。固定20 workers、NUMA0、large、reverse64、cache2、SEGMENT512、block传播，其余失败候选关闭。输入/结果指纹、GPU锁和外部占用检测、阶段及内存记录齐全；后台健康后不持续轮询。无需因旧1M组合失败而停止这一独立候选，也不自动启动FS/100M。
+
+**裁决。** 两对完整P0均改善、均值约>=5%为开发收益；两次on均低于历史目标只记为历史线通过，随后才条件性做最小同语义原版新配对。共同checksum历史差异必须核实，不以省略reverse、减少有效更新或改cache预算求胜。若不能低于历史线，报告真实剩余预算；没有足够可消除成本则止损。默认策略不自动切换。

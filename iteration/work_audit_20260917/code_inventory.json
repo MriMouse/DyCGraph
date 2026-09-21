@@ -1,0 +1,2172 @@
+[
+  {
+    "path": "CMakeLists.txt",
+    "lines": 272,
+    "sha256": "51b7642acf244143e6255e776e8adcd32a5f853992c77b371aa792c60ac6b54d",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 198,
+    "removed_lines_vs_original": 11
+  },
+  {
+    "path": "find_high_load.py",
+    "lines": 28,
+    "sha256": "6c3bcd939ae94dfa2ee6f1144574589273cb0552f64dd1e029938d392e359488",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 28,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/Loader.h",
+    "lines": 145,
+    "sha256": "f1c6af86bde64b24f716d5319fcfe2f6e3d49ae7ad0b6c2d4d4b967b21a200c9",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 13,
+    "removed_lines_vs_original": 12
+  },
+  {
+    "path": "include/framework/affected_component_trace.h",
+    "lines": 128,
+    "sha256": "f1cb9b417c6dad857bc5412e28807effee30005a293b9dd2964d3ac6b7f24fb8",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 128,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/algo_variants.cuh",
+    "lines": 2776,
+    "sha256": "8c431e764a4da056df8841d76643d9a9ec3a35f8f0ee8265b69ca7b051101016",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 86,
+    "removed_lines_vs_original": 100
+  },
+  {
+    "path": "include/framework/cache_patch_trace.h",
+    "lines": 64,
+    "sha256": "2184459cdff55de1b997fc38528e7524257ed30fbc164d13cd5cec9abf941038",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 64,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/cache_refresh_gate.h",
+    "lines": 35,
+    "sha256": "10e49fac2b3acbeacddcd5e35b068681041bdac2f6cf69d43fcc1ce0df0f83c4",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 35,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/destination_local_dependency_store.h",
+    "lines": 565,
+    "sha256": "9165bbca681b81ccebbb24aad3905a90c6766871e015a8122f91dbebce6c8c3c",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 565,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/dual_domain_event_runtime.h",
+    "lines": 268,
+    "sha256": "c8a3f6dc7d40c01d19e2359bcbfccf83a51bf4eefdf593b04a67558a872933b8",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 268,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/dynamic_reverse_index.h",
+    "lines": 366,
+    "sha256": "9831e16b1477676bd4abe735cd1c5559b00e8242bdaac1457b31424097574d5e",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 366,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/effective_delta_sort.h",
+    "lines": 78,
+    "sha256": "b2fe51e1fcbdb3168d7e96880a5277366974f740d7537d90a6af79bed43bfe6b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 78,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/effective_update_batch.h",
+    "lines": 263,
+    "sha256": "e297ab1252108557bbcc8a2488fc3a64a1467612a8a997a52d3435c034bc2f69",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 263,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/exact_source_frontier.h",
+    "lines": 87,
+    "sha256": "de6dc168ade3b290131fbaaa299b0f355b6013e2469167a70f5a8baaa2417bdb",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 87,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/f1_replay_state.h",
+    "lines": 89,
+    "sha256": "40ea4b235bca345740d345a45ea2cebc19e4ddaed8e1cef53edc13d26c93c735",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 89,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/framework.cuh",
+    "lines": 5849,
+    "sha256": "618a051c93f5e9627273db20b962c9c5ea57dcd5a1336f852dee23d9c05561b7",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 4135,
+    "removed_lines_vs_original": 474
+  },
+  {
+    "path": "include/framework/graph_datum.cuh",
+    "lines": 410,
+    "sha256": "89868cade1326a55eef4845821819c6f4a0c30ba4823e856b9c8381abda66f9e",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 62,
+    "removed_lines_vs_original": 13
+  },
+  {
+    "path": "include/framework/hotness_candidate_trace.h",
+    "lines": 108,
+    "sha256": "f85541139309887b92ea599f40f53ad77f89309f18b8fe3cd6fc27e4b0255023",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 108,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/i16_repair_snapshot.h",
+    "lines": 53,
+    "sha256": "23e14d2e980238cd78de3f85b2ac8891eea5daf9f8030f0be8ce2499c9a00256",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 53,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/ordered_gpu_repair.cuh",
+    "lines": 157,
+    "sha256": "b473024a703bb4850b646c82722a57fd62a49b6283d1e1bfb043c269c1a998ac",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 157,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/owner_cost_planner.h",
+    "lines": 103,
+    "sha256": "3d5740fbedcef060dc5c28c217f01a39dbfb5eee4e872d712489cebf9ef6ec17",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 103,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/persistent_dependency_graph.h",
+    "lines": 204,
+    "sha256": "716f81545bb4111cd4f78247afe2364ec65022118027d0cd1c7f6aef8b0cc273",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 204,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/publication_sources.h",
+    "lines": 24,
+    "sha256": "23f3303f4bd8bc7fdcf3f5d3edac1ba73585a2f0283bf44580ab7cb6359590a0",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 24,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/topology_replay.h",
+    "lines": 195,
+    "sha256": "186ee3ab13e736960c6158d336a7952839c465b350b538d5910e55c76f9e1f9c",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 195,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/framework/variants/api.cuh",
+    "lines": 158,
+    "sha256": "a1063b541a1d09d8caa72030ef0701e8f298c5d86d46d6b31686b1c5ccf6b2f9",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 6,
+    "removed_lines_vs_original": 12
+  },
+  {
+    "path": "include/framework/variants/driver.cuh",
+    "lines": 2163,
+    "sha256": "0427e1868e4ae4c425c75f0a95927a1c651cdeb59c69452b5cd532e7692d62e2",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 195,
+    "removed_lines_vs_original": 163
+  },
+  {
+    "path": "include/framework/variants/push_functor.h",
+    "lines": 1315,
+    "sha256": "2941501868c4470eaa29ddcbda0167bff497cc002d248e899d0c27838144541c",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 236,
+    "removed_lines_vs_original": 36
+  },
+  {
+    "path": "include/framework/variants/sync_push_dd.cuh",
+    "lines": 1579,
+    "sha256": "24e22d2fc3aa9ee590d02064cd142ebdc70f23a109f1053ac561b28b26046b1a",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 128,
+    "removed_lines_vs_original": 112
+  },
+  {
+    "path": "include/framework/weighted_score_index.h",
+    "lines": 178,
+    "sha256": "43481dc7ffff7bbd6228c710add073b28af40acb830da48f0f67cdd140162541",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 178,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/groute/device/array_bitmap.h",
+    "lines": 321,
+    "sha256": "b9c0998d511334ea35bc2e1bb047b2a09c6032db9a50d1f550890b15b5f4375d",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 1,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/groute/device/compressed_bitmap.cuh",
+    "lines": 259,
+    "sha256": "7b550533c42b710601923184c2bde2ad726f3a6fc463c4741b718fe5960f9cf5",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 1,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/groute/device/queue.cuh",
+    "lines": 349,
+    "sha256": "29462bc776f2ac69d823d246cab16208c920506b9dc33d46fb5f77ad1942fe58",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 2,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/groute/device/worklist_stack.cuh",
+    "lines": 250,
+    "sha256": "57b4241473c099488cd0183e3aeab6584fb0154c4f03c1352bec662a18afdaff",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 4,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/groute/graphs/csr_graph.cuh",
+    "lines": 3582,
+    "sha256": "2fab7ad5f1f463d6933b1528767597f3bd128e15309bc3756522f6f94df5779d",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 400,
+    "removed_lines_vs_original": 16
+  },
+  {
+    "path": "include/groute/graphs/source_local_chunk_store.h",
+    "lines": 905,
+    "sha256": "fab0d3a6bf4d1e7f63f433a6e27af20aca45b26a5d061b3dfca968c29c703d4b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 905,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/groute/graphs/topology_contract.cuh",
+    "lines": 128,
+    "sha256": "53b71edb7b887211916beaa7e416cdd213834d4c89f889a1932e1410d57a0406",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 128,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/groute/internal/cuda_utils.h",
+    "lines": 78,
+    "sha256": "58608eb64d00fd53e2827bd777ef34bfb311d0b25477a8bb76d3a667d9ec26ec",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 1,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/utils/app_skeleton.h",
+    "lines": 172,
+    "sha256": "6b18f77678c2e5519ab827bdd6d6b4b4effbbd90db9b9341e9e0e25054520a24",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 2,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/utils/communication_meter.h",
+    "lines": 65,
+    "sha256": "cffcb215a57959af14b0c35c0be64b3c6c77ad5f4caf06878140b358f6a18ff9",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 65,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/utils/communication_window.h",
+    "lines": 35,
+    "sha256": "d4daa18c0776a79e0db2f3d70929457f7a08a93e16834f8c4028e4214ce8060b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 35,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/utils/fixed_worker_pool.h",
+    "lines": 126,
+    "sha256": "9685d8eb825ba325f216edc8c0a487c4fde8a50b16aa9074c3264ea1aa719bdc",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 126,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "include/utils/i19_edge_reader.h",
+    "lines": 50,
+    "sha256": "c98dfc83e055c7328675667e59e566e5b90a2eabd093ca177e6f21d3ccacf783",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 50,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "samples/hybrid_bfs/hybrid_bfs.cu",
+    "lines": 202,
+    "sha256": "738e7e07e8ab680d2521c084f9d9d5944fa4114b1a1f34bf8d3e6beed1e18c2d",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 11,
+    "removed_lines_vs_original": 17
+  },
+  {
+    "path": "samples/hybrid_cc/hybrid_cc.cu",
+    "lines": 197,
+    "sha256": "bb756362ad32bad405c204aea3af6727ed2f80ed52afdebe9108ad2d557d1332",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 5,
+    "removed_lines_vs_original": 16
+  },
+  {
+    "path": "samples/hybrid_pr/hybrid_pr.cu",
+    "lines": 206,
+    "sha256": "3c7da396f632e472d0f9253b831962ddbcd1af29be1f16756e2eb53cac6f4e30",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 5,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "samples/hybrid_sssp/hybrid_sssp.cu",
+    "lines": 674,
+    "sha256": "5da0ff068e7ad89240b92296fa76b4c8aee3439a0b87cd5dc4a7fde364572daf",
+    "original_head_status": "modified",
+    "init_status": "modified",
+    "tracked": true,
+    "added_lines_vs_original": 419,
+    "removed_lines_vs_original": 42
+  },
+  {
+    "path": "samples/tools/gtools.cpp",
+    "lines": 28,
+    "sha256": "2e444df74772b9d1f33d09ece690e1ce92aca7d58d3ee7bed4aeab6cec69a160",
+    "original_head_status": "same",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 0,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "samples/tools/gtools.h",
+    "lines": 8,
+    "sha256": "ec1b8c233deabcd43fc07627aeb7b5272c7fca253f45692fbbf00efa15f8ff99",
+    "original_head_status": "same",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 0,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_current_substages.py",
+    "lines": 99,
+    "sha256": "044e67a426a5b23aed1d69fc7507e4fe24b1ba5249942415dde7ad4fb1669364",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 99,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_e0b_trace.py",
+    "lines": 223,
+    "sha256": "225a5a907786433c9b6aa73ffe2f375fd8a6cb29ff2c98c41785a1e29a9af425",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 223,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_e4a2_capacity.cpp",
+    "lines": 127,
+    "sha256": "7d855a429174a93051d32bb51aa7e9df4aeb26418d15e40845bbb700b278a477",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 127,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_f0l_trace.py",
+    "lines": 148,
+    "sha256": "cc76d3b68e667ec0fa1a2aed66fd371872471dc9a80ce468ef6dec6d1b140e9c",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 148,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_i11_final_state_upper_bound.py",
+    "lines": 67,
+    "sha256": "bbf40290a0d0967ff19b99d152d3a66a925bf73510b29f72a8b95772eb3303dd",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 67,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_i17_communication.py",
+    "lines": 28,
+    "sha256": "a138484522583771cbddef062c8243bcac26d773030ec9efe8480b0ceb69c772",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 28,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_i17_target_pair.py",
+    "lines": 29,
+    "sha256": "d49a54d15b599652ee1f6d1b73737b253f14806b51307c279e3395842173da8f",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 29,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_i17b5_existing.py",
+    "lines": 45,
+    "sha256": "e34cccf62369601e6feec3cf09bac93cba6cd2494fa914201d51d1711cbe50f8",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 45,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_i19.py",
+    "lines": 133,
+    "sha256": "b58b10477ed665e85263200cae97fb9f4b7b8201c9d0b77e371afacc87bb4faa",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 133,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_i8_mutation_ablation.py",
+    "lines": 67,
+    "sha256": "cda09cafc0bb08d6b6e2e8d7049eabf3605791ecab96c2256dee6874544705cf",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 67,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_i9_critical_path.py",
+    "lines": 100,
+    "sha256": "c70270ca0c704539162cf2c85feef1fbc7ee406911dd3e1fc4b5ae6f2899d814",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 100,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/analyze_performance_matrix_20260912.py",
+    "lines": 118,
+    "sha256": "ad1be8f257f98d9c52bd7dfdb1b3e4d1f23aa755ebf4eb7fa6cd289f9f2aed02",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 118,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/audit_i4_hotness_semantics.py",
+    "lines": 22,
+    "sha256": "a1d63bbd813afe87f75dd3c2f5462bf6645ccfbc82eae990239a4f9c224fe31c",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 22,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/communication/README.md",
+    "lines": 100,
+    "sha256": "7630b1e36a2b95ea3ee1cc855127f5f272cfedf71b29cc9445972a63a58d3ef4",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 100,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/communication/compare.py",
+    "lines": 62,
+    "sha256": "9fdad21385459a9a98d57f09f074973301b24f95480bc50ee5ea78ef9aa19e7d",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 62,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/communication/prepare_baseline.py",
+    "lines": 70,
+    "sha256": "17e01dbe95fdf8023d2228035b69f4a9655c697b06c6d20d32d24c122c90b508",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 70,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/communication/run_100k_background.py",
+    "lines": 268,
+    "sha256": "3068af126aed3c5ea68e5bc29dfa9c9e6117262915c95c84435361e27c734a83",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 268,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/communication/sample_pcie.py",
+    "lines": 146,
+    "sha256": "463dbb84ca509fa0d07e170fc41e663728ba5ef5d9e17f2df85959b85a0d6168",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 146,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/communication/smoke_pair.py",
+    "lines": 82,
+    "sha256": "dbfc5be9499960be97148f4ef90d58f6ec957208f3c1e05f13b23ca218ee5b27",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 82,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/diagnose_i0_failures.py",
+    "lines": 65,
+    "sha256": "3f821b84d8e99736c4756a052aadc56f456ad5f27303816d6ff13dbc4cb8f9c8",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 65,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/evaluate_e4r3_shadow.py",
+    "lines": 61,
+    "sha256": "3e0e42bad73e07dc32107dcc28c9b9aed8350c0d52a1238a05d7c740e0eb108a",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 61,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/generate_connected_road_datasets.py",
+    "lines": 129,
+    "sha256": "13493690155cedf72ab9bcc6c97ab8feeb3bd7317494c9a052e39ff272e9c093",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 129,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/generate_uk2007_datasets.py",
+    "lines": 78,
+    "sha256": "a84bb6a095f31989c8dab7527d8381471525637f6c12b9145999d84370cbd796",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 78,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/pause_trim_stage_pre_i17c.py",
+    "lines": 24,
+    "sha256": "c0d857fbcf94c61eac61de932c7eb22b211d6a98b6d0a8dfe6717b9ca186994a",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 24,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/prepare_i17_scaling.py",
+    "lines": 78,
+    "sha256": "45519498810674d75f664a4721014712a128567d1acab23ed95d3f2eed921c67",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 78,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/prepare_i19_ratios.py",
+    "lines": 158,
+    "sha256": "a457466439bc3717d2fc24694bfa265a2bedf0cf9b0c849612edd0a5397858bf",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 158,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/prepare_performance_matrix_20260912.py",
+    "lines": 87,
+    "sha256": "e13a5f7af3aafe44fe7c6d02f7bccbaeabade540e554e8d0863777aef81726bd",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 87,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/prepare_stage_twitter.py",
+    "lines": 93,
+    "sha256": "abaa5d4321de530a80c583cc6345d2c096d37aed7fa034b25c1efb03012a794b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 93,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/profile_current_runtime.py",
+    "lines": 149,
+    "sha256": "e235af93a9a158aa645fb5544014e67a49c3141e56d8390d33f42cbcb6675514",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 149,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/resume_stage_pre_i17c_short.py",
+    "lines": 38,
+    "sha256": "2573d4d673eb13a836d056b7ff9414b926b957ccff90de67d4f5b7652260c2b3",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 38,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_c4_current_vs_original.sh",
+    "lines": 457,
+    "sha256": "621f6d5dd1932cb50ce198c962de7ac1d7ccbcf534e2b41de61d9030b7f10f4b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 457,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_current_vs_cgpustreamgraph_fs_tw.sh",
+    "lines": 279,
+    "sha256": "bdfc29cfd7130ce52c77c986af5e5aafa289caa43ee1e48605795087ec7de1e3",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 279,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_f0l_critical_path.sh",
+    "lines": 70,
+    "sha256": "f9f3110d1a1da8dde638925812f25023a35ed7d647b7898a3bef4be56e7bf3ce",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 70,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_final_system_sweep.py",
+    "lines": 15,
+    "sha256": "03393381d35a1b8e451bcfbad14407b10bacfa07a4eaf7fcb80abdb514de557b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 15,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i10_topology_contract.sh",
+    "lines": 22,
+    "sha256": "82cd0c20c7431d2ae67a32318ac24e81083f355a76cadeb4bf780303f295f846",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 22,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i13_smoke.sh",
+    "lines": 38,
+    "sha256": "920e8ddcc23c13505e5c1c5fccbe48fe4f70ebb4741a1774634c98a31ccb3f7d",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 38,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i14_validation.py",
+    "lines": 87,
+    "sha256": "8ccc3f2a8ccf4974c81bacd89a3a039809db97811f99577d6dd0fb97e93d0a89",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 87,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i15_candidate_replay.py",
+    "lines": 117,
+    "sha256": "3c92338da32cd9ea92753693076ab0a2e052a52931c5486b343f400241e152c5",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 117,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i15_hotness_audit.py",
+    "lines": 78,
+    "sha256": "141b5667a10e8fa6befd5c02dbd7903d1f31b54246b9c4b282106b8843415446",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 78,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i15_pairing_validation.sh",
+    "lines": 7,
+    "sha256": "5a6b75ccd9b4a887635b4cfa714651caaf58388eb7d432949773e6d4091cd6e4",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 7,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i16_frontier_replay.py",
+    "lines": 109,
+    "sha256": "284004f75c06d440423f3359bf32e491ac1025029dd84dee19a97b192f9ab100",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 109,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i16_motivation.py",
+    "lines": 143,
+    "sha256": "efd59192497584b4d7ad231fe58f432b039cc01684946287346a16dc672bd6b8",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 143,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i16_paired.py",
+    "lines": 230,
+    "sha256": "448dd1a2573674ae601b931030c4f31f8a0a1f95d0a82b7b42054c9a713c7fcd",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 230,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i16_road_validation.py",
+    "lines": 416,
+    "sha256": "3dad9de9c1458138dea531b1ab4d257e2cb9fa78581dd7c9c24c295a65db01d0",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 416,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i17_eu_background.py",
+    "lines": 127,
+    "sha256": "7076d1c76affd1339b6cd8723428dd1bf2ce052775c428483327a27af3bf3cb0",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 127,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i17_scaling.py",
+    "lines": 83,
+    "sha256": "c5c92fbb5d49e17065473fbbd2808d00efae91b93e1f6ed9e1f930a38016bbaa",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 83,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i17_scaling_supplement.py",
+    "lines": 35,
+    "sha256": "11dee0bbe146f6f5486f74db2f15c327cbc417f20419d674f67b329d02aac4c1",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 35,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i17_social_probe.py",
+    "lines": 178,
+    "sha256": "fe7e59e0e7845b0905e66662b832cb0bac66be1a2aa6ea1759a6be41db05b8b3",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 178,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i17_target_check.py",
+    "lines": 65,
+    "sha256": "b6489513426f860d528f8d6e157a4b62b4e76521c3bb2f254c5c019cea247d4d",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 65,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i17a_delta.py",
+    "lines": 46,
+    "sha256": "077147e1182f70271989633a648fa2ac4b1f6bddf42f4ca8df2f08c738bf92a4",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 46,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i17a_sparse.py",
+    "lines": 206,
+    "sha256": "ccfb99831a144f1a6707b79adb1241a6af4bb29d0d32489b9f147f7a5cab5920",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 206,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i17b5_screen.py",
+    "lines": 55,
+    "sha256": "e4a69b654d95b8aff66ff1a171c77f497022c4c4f543a7a9a54144cad5127e13",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 55,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i17b_reverse_probe.py",
+    "lines": 88,
+    "sha256": "960bd361edadbddabccfe7d5b1aab525f730492d847bc6f6f7ee31ef5cf6be0d",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 88,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i19.py",
+    "lines": 167,
+    "sha256": "ad6998fbb5a47e44e2f776c0df303b00071aa2e4c7b2743ae57fd318cae1a77a",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 167,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i19_cpu.py",
+    "lines": 55,
+    "sha256": "b02d5dd8255b9755aba50316245c1184bec9c21260e886ad7d5267364ce823a2",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 55,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i20_screen.py",
+    "lines": 280,
+    "sha256": "849348aa938b0b4977152555c80a3f6c0ef2deee20c95ca6c7c9e7bd4ed2e0e8",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 280,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i21_publication.py",
+    "lines": 142,
+    "sha256": "62ed46328d38cc0136db5f187198be8dda14037874b677a8309c3aeb1339390f",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 142,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i21_radix_queue.py",
+    "lines": 42,
+    "sha256": "8b74ddc356befb36f240bd7ae203f6569722e627c1d96ec72a62ddf5ea1c9ee1",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 42,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i22_ordered_short.py",
+    "lines": 90,
+    "sha256": "3beeb4a19a054326015909a18918bfd21ef6f353987a3267aca731b8dbe42d29",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 90,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i22_scope.py",
+    "lines": 150,
+    "sha256": "9ff1dc0e3f9fcc46ffc06aa590795acb357fbdc3276bf4c96779f0402d3c0701",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 150,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i22_short.py",
+    "lines": 86,
+    "sha256": "22749add6f431002d5115ece082a96d831aaee985d462b194dbc194d3e29aacf",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 86,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i6_overlap_observation.sh",
+    "lines": 96,
+    "sha256": "d087d898ead6a63e0096ea6d8ef13b95bf83b7050ddaffa3dff668a891310845",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 96,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i7_mutation_ablation.sh",
+    "lines": 35,
+    "sha256": "7a27b3e5384078196aba5e98c7193345b70d5a35a45407b16f7a16a5dbc15edd",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 35,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i8_mutation_repeats.sh",
+    "lines": 90,
+    "sha256": "175353ef010e74b45aaa59aa5deb257a840bbcbffeb89f21b49b434103e14ae5",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 90,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_i9_critical_path_audit.sh",
+    "lines": 17,
+    "sha256": "7a41f5c6d48d8c2c519f75480e4f3690e293321b593d75ccbddb396d1ff742cd",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 17,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_iter_b2_gpu_delete.sh",
+    "lines": 112,
+    "sha256": "3d2ace60917d09f5d09b7322e94f3d1d0c99e356f5016aaf9e099585e7804460",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 112,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_performance_matrix_20260912.py",
+    "lines": 116,
+    "sha256": "ba8e050fdff4770ef98e34dee07a8ad4fe48fbda79587679080c8edb20235c8e",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 116,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/run_stage_pre_i17c.py",
+    "lines": 537,
+    "sha256": "e78b01a43f5466252fbeaba85c81674e34bc4856d147d1a3e6b6e1eeb6816953",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 537,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/start_stage_pre_i17c.py",
+    "lines": 40,
+    "sha256": "f519f2a407d62a3383d1d9c555d0b136e480da3a9d81a8f6010708402e69b72d",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 40,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/analyze_i17b5_continue.py",
+    "lines": 30,
+    "sha256": "41a73586f35db067e44507dea356ca8ff8927f9c5ba20ca1907f810a9e5cd912",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 30,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/e1a_edge_counter.cpp",
+    "lines": 57,
+    "sha256": "64ec894df6c7e577f541596eda9bfb69633131b536ee161ebdd4f1b35ccbbfbd",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 57,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/e1b_balanced_partition.cpp",
+    "lines": 134,
+    "sha256": "da1b8c7c9a9a2a39c88f1aea4c75d3b9732bd5ebe840c88101eb0189b1871f24",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 134,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/e1b_metis_bipartition.cpp",
+    "lines": 97,
+    "sha256": "ea820e58618eaf38ee32f3a658ac4fab24eaac321c830ec03a3a3e3b7666f5b7",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 97,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/e1b_rcm_partitioner.cpp",
+    "lines": 116,
+    "sha256": "3367752d3c849f18fa958ef89e2ef3c89f5307bf3fcafd632291dc41dbbf8a03",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 116,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/make_e2_test_domain_map.cpp",
+    "lines": 22,
+    "sha256": "ded7948b53957b6929135cb59ba42550c7b49e53f69f8aced47278fdea60a41f",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 22,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/prepare_europe_symmetric_100k.py",
+    "lines": 54,
+    "sha256": "2179cd40f634b58108a898ec8731860cef47d4c1cc2a84b7de0df787a4aa5660",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 54,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e1a_topology_quota.sh",
+    "lines": 31,
+    "sha256": "64aadc7e7755d47bb5d25cb56a03d7108974941715febed5e9b862da2c242ffe",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 31,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e1b_balanced_wiki.sh",
+    "lines": 19,
+    "sha256": "24da9465bfc0c336235da166da5a1fa8c0225e8a656981c62b9b00e15c158d30",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 19,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e1b_bipartition_wiki.sh",
+    "lines": 19,
+    "sha256": "a1e5d8a0060c8cdbeb48760a34a604168410bf334b26b74d61ad0622277c0c7a",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 19,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e1b_metis_cross_graph.sh",
+    "lines": 43,
+    "sha256": "bc08eb32eeb7d4ccd8095aebd026db518dfaecaf96f1af328665d31f81244b79",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 43,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e1b_metis_wiki.sh",
+    "lines": 28,
+    "sha256": "63d3c080486aa113e16ada2fbc1e0583ec5fc1590d257d6e1e10da394a3548f1",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 28,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e1b_rcm_wiki.sh",
+    "lines": 19,
+    "sha256": "b4cc68888c590632f9a79389335eb941c4a9666c6a2fa4a2a374f48ff7f51b83",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 19,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e2_domain_smoke.sh",
+    "lines": 57,
+    "sha256": "1c9f81cd0178bc1ba000bd54ed933aa66d8cb167ba467a67f679794b53c1df4b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 57,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e2_fs_tw_correctness.sh",
+    "lines": 78,
+    "sha256": "c900fbc5bebff77874d57117db1fb843c93bf294fd9533c68735a6fc98bda317",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 78,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e2_wiki_correctness.sh",
+    "lines": 49,
+    "sha256": "92c2f47240edc04ceddba8c0afa71d0ba7f3cf07a3d0ae42d90b16efadc7a401",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 49,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e3a_fs_tw_correctness.sh",
+    "lines": 113,
+    "sha256": "9303928a85105f18f5cfb5fe5b261057fe3d6cac3533f4b4d7a92a0f19c2e3da",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 113,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e3b_async_cross_graph.sh",
+    "lines": 55,
+    "sha256": "099d5743ca96a38509c454bdf2f6a50159fc6b9d0fb5fe1a4bb660054ce80e8b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 55,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e4a2_cross_graph.sh",
+    "lines": 38,
+    "sha256": "8abc07ade060b969bfbaa943980f60e9173c3f90fc38500f13a6e83be998acb0",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 38,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_e4r1_exact_source_gate.sh",
+    "lines": 111,
+    "sha256": "6110c4a56c1cb43320b79fa5d5483fe02ed3f3466a1ca03b908b8160f7453b95",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 111,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_europe_natural_init.sh",
+    "lines": 20,
+    "sha256": "7863c552fdb31c26b4010bdd8d40a8962aa6f68b913a7709a9ab07111d33d9e2",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 20,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_f1c2_trace_v2.sh",
+    "lines": 85,
+    "sha256": "df45062188f23242469434757f112adaa185614befdef6177494569ecaf277e6",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 85,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_i0_failure_prefixes.sh",
+    "lines": 55,
+    "sha256": "02f371889823883e47a6e1c5bfb0c92ebee9a485a9e66fb6b2e28d092f233a06",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 55,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_i17b5_continue.py",
+    "lines": 86,
+    "sha256": "ff91f23cf2ba7bafebb1220e6b89e70939b4559d22ba207ca2a8212c4b2db0bc",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 86,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_i2_six_graph_correctness.sh",
+    "lines": 86,
+    "sha256": "dc842915717579decd067fd4f9c1efcff026013df9b46a8a6be05dac3dc8724d",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 86,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_i3_current_baseline.sh",
+    "lines": 39,
+    "sha256": "8a592c17438f8b57a2828de9d87a0db07a77fa0e6f211fc7fa73ef8b980494d9",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 39,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_large_six_dataset_comparison.sh",
+    "lines": 180,
+    "sha256": "52d1593fbe9d501210a2c3212bf98033f3424bdcc999051ee1390fde16836daf",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 180,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_p0_cache_closeout.sh",
+    "lines": 44,
+    "sha256": "195515e85f80c07a860a55cc953df0343c9f48b0404e18548782e1bc89a2f9d1",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 44,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_p1_europe_correctness.sh",
+    "lines": 20,
+    "sha256": "d45ace27046a5f1a66ba4abfaac5791d07649251d39bc25e4649e47beee64916",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 20,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/run_p2_lightweight_screening.sh",
+    "lines": 74,
+    "sha256": "636f286298f21bddb5e9052e7192ae570419c6f0d773400917546207e1e4101e",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 74,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/temp_scripts/select_europe_cohort_source.cpp",
+    "lines": 118,
+    "sha256": "15f7387a7168a09eedf5938d7d1fbbdaa47803316fd9c2c1858fa3de44817b77",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 118,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/test_current_substages.py",
+    "lines": 74,
+    "sha256": "a8b0ececee3f880e0d4e68ce6603e7bfb32f4cf15471e876ccf55a31840daadb",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 74,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "scripts/topology_cpu_quota.py",
+    "lines": 213,
+    "sha256": "141fb8f3b763932b7112790e1adfc809f71e3f9620e31926a6f9a3cda04b4960",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 213,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/affected_component_analyzer.cpp",
+    "lines": 673,
+    "sha256": "07aad8432f82efe4f36f9c26d2a628d4a4a171b82f50fe13ee6868fa5825438c",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 673,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/cache_patch_replay.cpp",
+    "lines": 124,
+    "sha256": "859e11a1fbca7b727d2b05effd98a096b3558f463759d6f5b1e83bd0f44a3ca4",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 124,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/chunk_store_replay.cpp",
+    "lines": 313,
+    "sha256": "405e3302c09a9d50a53a7876702254b62d97ebb133df3123d3257c41a073f1a2",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 313,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/connected_road_generator.cpp",
+    "lines": 371,
+    "sha256": "b44d967ca7cc1152206eff2fde8e87adf651f0a0ea8d21825d600f3abaf5ebad",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 371,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/f1_crossover_replay.cu",
+    "lines": 183,
+    "sha256": "20b7e0ef2ac5f2571276336feb0d66d3f7f23a7588e93d86b2357e1b5c0eda3e",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 183,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/hotness_candidate_replay.cpp",
+    "lines": 93,
+    "sha256": "55883ee4cab5c21153e2898e25775266b9fd915212c799ae43574420d7be37b0",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 93,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/i16_frontier_replay.cu",
+    "lines": 157,
+    "sha256": "6a82b38f976809bd94de742f7cc5109e6349a56d65cdeb9d1bcdd3d6d64e5f63",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 157,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/i16_repair_oracle.cpp",
+    "lines": 106,
+    "sha256": "97cd79be818940b3db1a7c354337c0afc1f0d6875a86fb824370bc73f003c91d",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 106,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/i17a_delta_replay.cu",
+    "lines": 302,
+    "sha256": "d0e15f8bf58c8e05808abbb76d0374db4f4411e74c55ccf657159a1555c109fb",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 302,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/i19_ratio_pool.cpp",
+    "lines": 184,
+    "sha256": "af6fe8fd53daddb2036ff66a8d205f1b12ca196fecfcc43556d740b571c6767e",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 184,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/i19_topology_replay.cpp",
+    "lines": 303,
+    "sha256": "643314c62d17d93e07ca7ffec329a976e7d17dd126b4b19f70f2eed2d8be97ac",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 303,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/i23_group_replay.cpp",
+    "lines": 54,
+    "sha256": "f049bd3257a673f9c803236be654aaa9529569946ba514d05dbb6e2ae92c9603",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 54,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/road_source_scan.cpp",
+    "lines": 85,
+    "sha256": "41d719f0018ef6b3410a9387ac18906720f142317d8cb97617d58cc9a04893d6",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 85,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/topology_replay.cpp",
+    "lines": 207,
+    "sha256": "1d727aad34ef35f0c4c126c33ac576ebcdaa49b1e56f784e192163faf62ad9e9",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 207,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/utils/communication_meter.cpp",
+    "lines": 29,
+    "sha256": "00aebab68c09f896c4e32e7a209d96ad22b63a228e99a06ec539ad07ce4a6d16",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 29,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "src/verify_connected_road_dataset.cpp",
+    "lines": 149,
+    "sha256": "2c03462c8f7d5ca67ec161c7416ea4e919670d9bde01c8a66a72fc43a33d55a7",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 149,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/affected_component_trace_test.cpp",
+    "lines": 30,
+    "sha256": "f808cc6785b2082e60d0cbeaab0164d6c94a6da603d69e0bceb24a16e5008871",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 30,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/cache_patch_trace_test.cpp",
+    "lines": 40,
+    "sha256": "882a5e4e0802021c724ee4d538f2bcc0c9850f19b3d451136b57cbeb5cc7dbb5",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 40,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/cache_refresh_gate_test.cpp",
+    "lines": 12,
+    "sha256": "51d43efd76132e46bd0dc9f0c7bc82906a118a1bfcf25eaba6d9f964bc17053a",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 12,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/cache_tail_fallback_test.cu",
+    "lines": 64,
+    "sha256": "220741a7b9afaac5763236ca497b2c328158a98c8d0158c58a1b58038588c2ae",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 64,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/check_owner_planner_decision.py",
+    "lines": 5,
+    "sha256": "ac7f1f99ca97dd1070c6002fae7b349a8ea09a1350d6f8457437ded5dac6d6c6",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 5,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/communication_meter_test.cpp",
+    "lines": 33,
+    "sha256": "d49e1772d2251d6bc1e76b101ed9973d700ce3c5d65e12c4cb64ae2bdc8b5a51",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 33,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/communication_probe.cu",
+    "lines": 49,
+    "sha256": "3b264b8a1157aaed6e3342c0eac2c545868726e7d6b63a4d26398c47bd55dc95",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 49,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/communication_sampling_test.py",
+    "lines": 32,
+    "sha256": "dc8e7cee84f227b153c60f5d3c143057f295aeb99a856c8ad6a14dbc81ea2ed7",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 32,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/connected_road_generator_test.py",
+    "lines": 106,
+    "sha256": "a79b5166294401277f32ef3eebfab40811e093f4b923a9e5e70227d94f72b357",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 106,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/dependency_warp_mapping_test.cu",
+    "lines": 110,
+    "sha256": "5c9e6544c0b3c0e2d6ed344a9a269df87a8f5a0ad9ea4c4b3fac3703ad45d5e6",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 110,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/destination_local_dependency_store_test.cpp",
+    "lines": 228,
+    "sha256": "839ce9b3892b4c9f224972c2bb11cb27f60531ea84380d8d39915bc3a519bb2a",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 228,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/dual_domain_event_runtime_test.cpp",
+    "lines": 153,
+    "sha256": "cbd4647da5d115e11f03f4e3a0b72b92ecd3d305f45e3029212de3fc57f7606f",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 153,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/dynamic_reverse_index_test.cpp",
+    "lines": 313,
+    "sha256": "40ba96b71911be485385c156bbad2bf3a711b82a4627657a33e42f02afca5c6f",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 313,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/exact_source_executor_test.cu",
+    "lines": 193,
+    "sha256": "4a79596fa66bb4fa4fb936466a66bd8d5646939b8cfc6cba48474898a8e5970c",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 193,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/exact_source_frontier_test.cpp",
+    "lines": 45,
+    "sha256": "c4a15e995d9f4e1fdb11b16a6119b32181bdc6b4c8ba2db12b10dee36722df24",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 45,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/f1_replay_state_test.cpp",
+    "lines": 31,
+    "sha256": "204201969e9e101fa335b60e318326791595b83fc763ac638e3258d2deec2169",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 31,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/final_state_repair_model_test.cpp",
+    "lines": 272,
+    "sha256": "d6569c641cc848714247451cce127ae728350830e3678826bb8d16ca2cf7563f",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 272,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/fixtures/owner_planner_calibration.tsv",
+    "lines": 5,
+    "sha256": "56db80601f5275a6eb0869bc735d9c4d99ef0ced2e30949a34e0c393ef75f576",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 5,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/fixtures/owner_planner_topology.tsv",
+    "lines": 6,
+    "sha256": "84195b92c4fb294c46a11b7b7daeb8c9549b082208d82051088ab7500a7042b7",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 6,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/fixtures/owner_planner_work.tsv",
+    "lines": 2,
+    "sha256": "2f00ee3ac25dd8f884bac5de40b1363054e03f3d4fff3064a71e083a36479468",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 2,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/fixtures/topology_replay_batch_sizes.txt",
+    "lines": 2,
+    "sha256": "8e0c15ffd4f66ecd00ae2b1f06fc72dc6868fc7437cde860dcb6471289b1ec27",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 2,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/fixtures/topology_replay_graph.txt",
+    "lines": 5,
+    "sha256": "2511e344d4888bfd45a51e8ae7ef55874056da5207c11d900a6406cfadbe9c24",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 5,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/fixtures/topology_replay_updates.txt",
+    "lines": 6,
+    "sha256": "a41e207f738d17643ba814beb829c8956fe3bb1bd41529fe42bbe30e9a2dc294",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 6,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/grouped_update_batch_test.cpp",
+    "lines": 97,
+    "sha256": "e240643292f60783ba6a9568a3fc7067ad7c947f9267cab8050a4208ee79a26b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 97,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/hotness_event_model_test.cpp",
+    "lines": 191,
+    "sha256": "1954f08fcdd3647a08efbae4c6f7c319a70cdb2a018a50a892de6ff2e590b8f5",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 191,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/hotness_pairing_test.cu",
+    "lines": 65,
+    "sha256": "3c683e0d78d9faf0fef133ba01b5f77158562d6de6fe7be8ade3f18091f05d50",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 65,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/hotness_trace_test.cpp",
+    "lines": 45,
+    "sha256": "1914aeac7a88e5569ddffb91fac11016915dfbe0fb1ef100311652e30f384187",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 45,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i16_capture_smoke.py",
+    "lines": 43,
+    "sha256": "a5b8220d135b61ddf2985d628ffc3988577cfb8958e0eaf3e8475d60816e8118",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 43,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i16_frontier_test.py",
+    "lines": 35,
+    "sha256": "a92330fd5e0c1c16af5b1645699754269b1eda056ec9f1715634c36208603ce7",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 35,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i16_motivation_test.py",
+    "lines": 82,
+    "sha256": "4681cc47b4e252c67678d31f2b0297055514dac886f36846758e56b2fafcf6c0",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 82,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i16_paired_test.py",
+    "lines": 43,
+    "sha256": "a93861bf55c2837229485672cf8c7dcd12582e179de4b08285c85ce85b87fcad",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 43,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i16_repair_oracle_test.py",
+    "lines": 85,
+    "sha256": "e6885314f24a42d2ed727a3e3a6df5ae5a017584a971527ec034fe9f666eac25",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 85,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i16_road_validation_test.py",
+    "lines": 100,
+    "sha256": "6cd6ff014b1bcde727586c077ccd488a3788592fda2a3983b3e26936bc8de7cb",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 100,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i17_scaling_generator_test.py",
+    "lines": 28,
+    "sha256": "99d51541424b4fd613746617ffc2ff6e7db9de2ddb4e4fe1afc0ce17ef883867",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 28,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i17a_sparse_test.py",
+    "lines": 88,
+    "sha256": "59cc4b68ad39945d5b09e0e52cd3dcfdfefb4e327198d3edfe959932aee03c8d",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 88,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i17b5_pull_smoke.py",
+    "lines": 48,
+    "sha256": "031dcf0317dca673e1f4602fc921056df363cb042c22273d6e33756905b0a218",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 48,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i19_gpu_smoke.py",
+    "lines": 53,
+    "sha256": "6ab0daad3a6e8e9ba8d206f8d8bbc953c96e79fde75614ef4abb6269792aa29a",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 53,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i19_loader_test.cpp",
+    "lines": 18,
+    "sha256": "c80baf51445ed791c92023ca04f28ed8c36b5754774c7340d5a8f63dcb4b60e1",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 18,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i19_ratios_test.py",
+    "lines": 74,
+    "sha256": "2b13feff5ec19233df8cc61327c25fdd896548a1fa8f7761ecf3e5f3fd3922a4",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 74,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i19_work_metrics_test.cpp",
+    "lines": 51,
+    "sha256": "f67ffc08401334e0dbd39b52fa08404cefed038fe792dd78ecd6f8fb3fbc4b8b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 51,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i22_ordered_insertion_test.py",
+    "lines": 89,
+    "sha256": "b483066168accfcf01ade872eaf8a8fe6bb54c73971eb21c8bb5201f3c6e1817",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 89,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/i23_bulk_group_test.py",
+    "lines": 90,
+    "sha256": "f42c9a3ad809f238ecbf534fd5b3494c047afba182bf20128003725f6c4778cc",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 90,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/owner_cost_planner_test.cpp",
+    "lines": 27,
+    "sha256": "c30b8d7eac0ddfb86e15ee5324a98406736d33d174f5bd46e8e1f6c8069a19e2",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 27,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/owner_planner_calibration.cu",
+    "lines": 57,
+    "sha256": "2668f5372924dd8c3a8b196da748ba431f467903c7b40d76c399519a36ae3706",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 57,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/persistent_dependency_graph_test.cpp",
+    "lines": 85,
+    "sha256": "61dc9ec85aec25c11c39057931c7e995b63010416af910426e91c07210a5e241",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 85,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/publication_sources_test.cpp",
+    "lines": 21,
+    "sha256": "e2971d5bce1093764560b16595020235f9c661f36f8e666c13150dff14647e4b",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 21,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/road_source_scan_test.py",
+    "lines": 27,
+    "sha256": "3b1ee2a7f3048e5f8b0cc4637d501a65589daf0f51925aa6d1b9448c30264acd",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 27,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/source_local_chunk_store_test.cpp",
+    "lines": 466,
+    "sha256": "773e140a69ead7b6e983139c12f2de4eb82920f1b942b965d532310d45cc204d",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 466,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/stage_pre_i17c_test.py",
+    "lines": 97,
+    "sha256": "f13f523b5c2b5f1a8087d7e829af6a4f8ceaaa3984b6e90e8a65345f9b55ac69",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 97,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/topology_contract_test.cpp",
+    "lines": 124,
+    "sha256": "8be304ece04c516b138e39461b37e22ccd8baee20df133d5a66432572fcd071e",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": true,
+    "added_lines_vs_original": 124,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tests/weighted_score_index_test.cpp",
+    "lines": 71,
+    "sha256": "633ac63bb72b4385769766d26d046b9d17f1a6fb5817bf98b840c6b8dc7859c3",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 71,
+    "removed_lines_vs_original": 0
+  },
+  {
+    "path": "tools/summarize_coop_logs.py",
+    "lines": 714,
+    "sha256": "0cb2c0b84c90ab16dc0d124332b47031f96eb149ded2c52805309a0f813ee1cb",
+    "original_head_status": "added",
+    "init_status": "added",
+    "tracked": false,
+    "added_lines_vs_original": 714,
+    "removed_lines_vs_original": 0
+  }
+]

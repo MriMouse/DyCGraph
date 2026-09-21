@@ -198,6 +198,7 @@ namespace sepgraph {
         }
 
         T *GetDataPtr(uint32_t depth) {
+            cgcomm::Scope comm_scope(cgcomm::Category::Control);
             uint32_t begin_pos;
 
             GROUTE_CUDA_CHECK(cudaMemcpy(&begin_pos, m_stack + depth, sizeof(uint32_t), cudaMemcpyDeviceToHost));
@@ -205,6 +206,7 @@ namespace sepgraph {
         }
 
         uint32_t GetDepth(const groute::Stream &stream) const {
+            cgcomm::Scope comm_scope(cgcomm::Category::Control);
             uint32_t depth;
 
             GROUTE_CUDA_CHECK(cudaMemcpy(&depth, m_stack_depth, sizeof(uint32_t), cudaMemcpyDeviceToHost));
@@ -213,6 +215,7 @@ namespace sepgraph {
         }
 
         uint32_t GetCount(const groute::Stream &stream) const {
+            cgcomm::Scope comm_scope(cgcomm::Category::Control);
             uint32_t count;
 
             GROUTE_CUDA_CHECK(cudaMemcpy(&count, m_data_pos, sizeof(uint32_t), cudaMemcpyDeviceToHost));
@@ -221,6 +224,7 @@ namespace sepgraph {
         }
 
         uint32_t GetCount(uint32_t depth, const groute::Stream &stream) const {
+            cgcomm::Scope comm_scope(cgcomm::Category::Control);
             uint32_t begin_pos, end_pos;
 
             GROUTE_CUDA_CHECK(cudaMemcpy(&begin_pos, m_stack + depth, sizeof(uint32_t), cudaMemcpyDeviceToHost));

@@ -1,0 +1,892 @@
+[
+  {
+    "directory": "logs/i24_tw10m_publication_20260917",
+    "exists": true,
+    "runs": [
+      {
+        "path": "logs/i24_tw10m_publication_20260917/smoke/run.log",
+        "sha256": "523f9c073be18d3316ebab2583dfc2d959fd4d98a48d48e3f1a887fd08d447af",
+        "batch_ids": [
+          0,
+          1,
+          2
+        ],
+        "p0_sum_ms": 342.621,
+        "distance_checksums": [
+          "17323042482539835023"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i24_tw10m_publication_20260917/twitter_10000k_0_merge0/run.log",
+        "sha256": "7f87c1cc602d5a5cd01acedf6022e9a730cf3da49fa802e28a666d719a9e1db9",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 11317.119,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i24_tw10m_publication_20260917/twitter_10000k_1_merge1/run.log",
+        "sha256": "ce68a845722b757dab96be72542c45e58b39a1324840ffc2a9cadbc7cb8e3122",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 10719.232,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i24_tw10m_publication_20260917/twitter_10000k_2_merge1/run.log",
+        "sha256": "efd3bcc4f59dd4b982386911130966dca53a5a01171439feeb6c673d442ebee9",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 10652.624,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i24_tw10m_publication_20260917/twitter_10000k_3_merge0/run.log",
+        "sha256": "b93ff6cb417422edaeb36e68fb46b58243ef73e89e31894833f9035cab648968",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 11200.817,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      }
+    ]
+  },
+  {
+    "directory": "logs/i25_reverse_radix_20260917",
+    "exists": true,
+    "runs": [
+      {
+        "path": "logs/i25_reverse_radix_20260917/smoke/run.log",
+        "sha256": "4422e515cb9110ba26efc933d7114ec599e18fda9df42312501cdc46b29950f5",
+        "batch_ids": [
+          0,
+          1,
+          2
+        ],
+        "p0_sum_ms": 335.252,
+        "distance_checksums": [
+          "17323042482539835023"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i25_reverse_radix_20260917/twitter_10000k_0_reverse0/run.log",
+        "sha256": "6f0b93c059e269db5526d721bd420db559ed4a9e75680dd4b9e21b18cd12361d",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 10719.566,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i25_reverse_radix_20260917/twitter_10000k_1_reverse1/run.log",
+        "sha256": "787f49981db5487bcadbe7a06f82d44abe460888f0395fa4f44b56a8ec38c46d",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 10908.152,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i25_reverse_radix_20260917/twitter_10000k_2_reverse1/run.log",
+        "sha256": "01cd2a2f92ed9b38a3a82fe015b36507c953f4656831c64e8903ee2fc2dd2d93",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 10787.569,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i25_reverse_radix_20260917/twitter_10000k_3_reverse0/run.log",
+        "sha256": "b262e75d5883574bc3254be16d0ec54a7c7b4faf66152fc567949dbd6585c058",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 10806.187,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      }
+    ]
+  },
+  {
+    "directory": "logs/i23_bulk_tw_20260916",
+    "exists": true,
+    "runs": [
+      {
+        "path": "logs/i23_bulk_tw_20260916/1000k/twitter_1000k_0_merge0/run.log",
+        "sha256": "d84bccf6b3ef689f87b1065c26b220636996d135d79486a04c66e679ccca54ef",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 1727.615,
+        "distance_checksums": [
+          "15984646590043123926"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i23_bulk_tw_20260916/1000k/twitter_1000k_1_merge1/run.log",
+        "sha256": "7ffcd3c9d274035f4be4ae99900fe67148db7248c0640bf78d14017e0f4ab077",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 1634.365,
+        "distance_checksums": [
+          "15984646590043123926"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i23_bulk_tw_20260916/1000k/twitter_1000k_2_merge2/run.log",
+        "sha256": "3947304b7ea647f481ea60f588741b417c1458cb7adcf9ec8ddbf65c1ba739e5",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 1638.644,
+        "distance_checksums": [
+          "15984646590043123926"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i23_bulk_tw_20260916/1000k/twitter_1000k_3_merge2/run.log",
+        "sha256": "f837d2bcda22f9fc9d8392d1dba2f46e59fb2101e742ea4ca1be7e5299ddacc0",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 1736.05,
+        "distance_checksums": [
+          "15984646590043123926"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i23_bulk_tw_20260916/1000k/twitter_1000k_4_merge1/run.log",
+        "sha256": "6129ed463987274ba9b7702eb41d6858d7a0ecc98e9c2a9f075aa2cd8c721be9",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 1615.052,
+        "distance_checksums": [
+          "15984646590043123926"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i23_bulk_tw_20260916/1000k/twitter_1000k_5_merge0/run.log",
+        "sha256": "5b2e096edc508838a0cb7920d9b01b0db20a1258c6840b745acb7631c4c6127e",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 1790.352,
+        "distance_checksums": [
+          "15984646590043123926"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i23_bulk_tw_20260916/bulk_smoke/run.log",
+        "sha256": "1576550abe5d5ba4e276e376cdf318b125459287f8bbf547eb072bc7366abe01",
+        "batch_ids": [
+          0,
+          1,
+          2
+        ],
+        "p0_sum_ms": 253.7,
+        "distance_checksums": [
+          "5459860693553551573"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      }
+    ]
+  },
+  {
+    "directory": "logs/i20_short_20260915",
+    "exists": true,
+    "runs": [
+      {
+        "path": "logs/i20_short_20260915/friendster_10000k_abba0_regular/run.log",
+        "sha256": "95fe458961bf5d7a8e5af335931e77a8067dcffbbe0df5dcc590a1c0e1da2fd6",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 15152.987,
+        "distance_checksums": [
+          "7340189607729832727"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i20_short_20260915/friendster_10000k_abba1_large/run.log",
+        "sha256": "81492c47957a7fa10f57a6c4513db076d706215befcec67ef555ee5dfdb1fd77",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 13668.661,
+        "distance_checksums": [
+          "7340189607729832727"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i20_short_20260915/twitter_10000k_abba0_regular/run.log",
+        "sha256": "a8638a0c7b280ea4e0fd89bb6c1ad5772483226a7fa54927820fadd6b15e3cf2",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 12076.906,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i20_short_20260915/twitter_10000k_abba1_large/run.log",
+        "sha256": "65b485e5dadb522b4abff55e44e4f5874ea5c222e16443309e3b87060d8bfe46",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 11381.281,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      }
+    ]
+  },
+  {
+    "directory": "logs/i20_reverse_20260915",
+    "exists": true,
+    "runs": [
+      {
+        "path": "logs/i20_reverse_20260915/friendster_10000k_abba0_large/run.log",
+        "sha256": "890d2cb1e6977e66e62257e725fb5ad12f503cd2c763b4e83d8809444fa5d81b",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 13632.59,
+        "distance_checksums": [
+          "7340189607729832727"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i20_reverse_20260915/friendster_10000k_abba1_regular/run.log",
+        "sha256": "7b32542cb54aa743d685d8181bfc65c5a01add632342be471472582fdb83350b",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 15045.55,
+        "distance_checksums": [
+          "7340189607729832727"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i20_reverse_20260915/twitter_10000k_abba0_large/run.log",
+        "sha256": "77421ea8ca411cddd6f8cdc65bb74e95543c25992d5055e636dd636cd68f5922",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 11195.785,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i20_reverse_20260915/twitter_10000k_abba1_regular/run.log",
+        "sha256": "8fdc947c64ea130db9a02f63168673ffef0f87f9568dbc07b16953c236eb9edd",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 12293.419,
+        "distance_checksums": [
+          "791729548754523982"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      }
+    ]
+  },
+  {
+    "directory": "logs/i22_ordered_20260916",
+    "exists": true,
+    "runs": [
+      {
+        "path": "logs/i22_ordered_20260916/block/run.log",
+        "sha256": "9a0d455f3a551ba078fde50caee0c52805da15e0e457bc7bd85bbda6e34daf75",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 195076.038,
+        "distance_checksums": [
+          "4612202113968985553"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i22_ordered_20260916/block_smoke/run.log",
+        "sha256": "e4866aeafaaf04cbb9503fdd17773e934cb72903b7acc18cfd46fe51b4951b48",
+        "batch_ids": [
+          0,
+          1,
+          2
+        ],
+        "p0_sum_ms": 323.331,
+        "distance_checksums": [
+          "17323042482539835023"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i22_ordered_20260916/ordered/run.log",
+        "sha256": "9e0101fa7707bd9aba506a17be931ea10f09683401990796d1bf16c1e737c32f",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 42245.784,
+        "distance_checksums": [
+          "4612202113968985553"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i22_ordered_20260916/smoke_v2/run.log",
+        "sha256": "eb6b8460681e60266085c8dd556430a2a487cc27136bf8f2c668914af821c684",
+        "batch_ids": [
+          0,
+          1,
+          2
+        ],
+        "p0_sum_ms": 353.853,
+        "distance_checksums": [
+          "17323042482539835023"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i22_ordered_20260916/window_smoke_v2/run.log",
+        "sha256": "c26452874a1985f739f9ad911b529ae4917c2a30347360ad38c0bfedc4d359ad",
+        "batch_ids": [
+          0,
+          1,
+          2
+        ],
+        "p0_sum_ms": 122.651,
+        "distance_checksums": [
+          "12548351645370382951"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      }
+    ]
+  },
+  {
+    "directory": "logs/i8_mutation_repeats_20260827T031043Z",
+    "exists": true,
+    "runs": [
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/c_europe_europe_correctness_w20.log",
+        "sha256": "981aff618d2246617ac8e620ea732fe224cddd4846b6294aaa6469ae7a1559c7",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 2224350.634,
+        "distance_checksums": [
+          "13255565237499643436"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/c_friendster_friendster_correctness_w20.log",
+        "sha256": "6d1f70f50032064191bccc13bf2cfebeb015dfef488a8a20bee510804995c0b3",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 5203.597,
+        "distance_checksums": [
+          "12734023534853680802"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/eu_a1_europe_performance_w1.log",
+        "sha256": "4094c971390b022a5b95ec459ca2429ccb2b47738b9262c5596bb9c2932958c2",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 2235501.245,
+        "distance_checksums": [
+          "13255565237499643436"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/eu_b1_europe_performance_w20.log",
+        "sha256": "9cd90df749cc8587fc300cbb0b9269f9af9d55eb2ccf97ff458a65b49d6147f1",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 2247136.749,
+        "distance_checksums": [
+          "13255565237499643436"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_a1_friendster_performance_w1.log",
+        "sha256": "d9e6b1f6b3c2b93dacc6b6b1a14f8adc67cbe8128871812f520a8428c2717334",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 4730.9,
+        "distance_checksums": [
+          "12734023534853680802"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_a2_friendster_performance_w1.log",
+        "sha256": "bd4b1ef29b52f398ec6fd7514d19bcee3edf56789877e249b7c92f55493e8f55",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 5011.751,
+        "distance_checksums": [
+          "12734023534853680802"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_a3_friendster_performance_w1.log",
+        "sha256": "9ea8e96a4e81004ea76f6df2aa5e78171e74c24a177c03afb11549f98acac791",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 4734.041,
+        "distance_checksums": [
+          "12734023534853680802"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_b1_friendster_performance_w20.log",
+        "sha256": "6a7638ce83640cb19a8d768fe53ef4063712d507e6d4f65acec10ab1810f3bd4",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 3924.415,
+        "distance_checksums": [
+          "12734023534853680802"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_b2_friendster_performance_w20.log",
+        "sha256": "f12ef3a1babc2520da6491fb8b5afbcefcd6c12890165acb99b56832fd68409f",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 4025.525,
+        "distance_checksums": [
+          "12734023534853680802"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_b3_friendster_performance_w20.log",
+        "sha256": "f7cdb4ec4268d121b79f6fe4426f4374f6b71cc2600ad61272b6806c0a38227b",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 3971.274,
+        "distance_checksums": [
+          "12734023534853680802"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_a1_twitter_performance_w1.log",
+        "sha256": "49b741d4b6d4e3f6f7d52bb96860161b0ae76b24df32d9868e5f286e406d64a9",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 878.343,
+        "distance_checksums": [
+          "12687655862474487153"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_a2_twitter_performance_w1.log",
+        "sha256": "85f2a1ad0439ca63abfec65ce74a0fedf815b4a4a74cae5a4986c17b158be815",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 827.039,
+        "distance_checksums": [
+          "12687655862474487153"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_a3_twitter_performance_w1.log",
+        "sha256": "f02c9e2459c86fd96570771a81bfd55f73612dd42658b35b746fc3d51d0de6ed",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 823.918,
+        "distance_checksums": [
+          "12687655862474487153"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_b1_twitter_performance_w20.log",
+        "sha256": "e02d603a8c168d10555ed985501dcb8bec7cf85d7567b34a6a1259d38e74c638",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 579.388,
+        "distance_checksums": [
+          "12687655862474487153"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_b2_twitter_performance_w20.log",
+        "sha256": "c60896e0f3e6e63cd08effdb98a2a3e4bf5b7b01f33aff672edb1fa9460cc190",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 554.145,
+        "distance_checksums": [
+          "12687655862474487153"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_b3_twitter_performance_w20.log",
+        "sha256": "0dff9248506d7235bd0b59ab4c8f0b0fc80d194ae3e188c63a62db3f3ce89a14",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 623.553,
+        "distance_checksums": [
+          "12687655862474487153"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      }
+    ]
+  },
+  {
+    "directory": "logs/i14_effective_batch_20260906",
+    "exists": true,
+    "runs": [
+      {
+        "path": "logs/i14_effective_batch_20260906/check_friendster.log",
+        "sha256": "86a47bfe5e9dca4ccc3882367e620e248ea1fc53b92f26828ff25df29dbce582",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 1984.452,
+        "distance_checksums": [
+          "1221435124879239400"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i14_effective_batch_20260906/check_twitter.log",
+        "sha256": "a5e7872db6e707ffbc3a7a174cdd2509053ebf2c4b00301693bba82b28325234",
+        "batch_ids": [
+          0,
+          1
+        ],
+        "p0_sum_ms": 961.818,
+        "distance_checksums": [
+          "10309345756053454404"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i14_effective_batch_20260906/r1_friendster.log",
+        "sha256": "393ba39c7cbc637dc2796ad4adf43117274859ddec39b5f353756ef481af1fdc",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 4174.842,
+        "distance_checksums": [
+          "12734023534853680802"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i14_effective_batch_20260906/r1_twitter.log",
+        "sha256": "536aed06aea4ed0bc2e79323df57472f0578b3aca0780e75aa6320fc23d69e36",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 547.157,
+        "distance_checksums": [
+          "12687655862474487153"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i14_effective_batch_20260906/r2_friendster.log",
+        "sha256": "824ffd3eb20b53117daa908e44ac5e9a8599366791e05d99eb6a2c71af46e334",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 4118.635,
+        "distance_checksums": [
+          "12734023534853680802"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      },
+      {
+        "path": "logs/i14_effective_batch_20260906/r2_twitter.log",
+        "sha256": "b066e26e91b86c1df8e0626f269f157f7e80cd2b592e0fdbe45591fde8ef2d69",
+        "batch_ids": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9
+        ],
+        "p0_sum_ms": 519.54,
+        "distance_checksums": [
+          "12687655862474487153"
+        ],
+        "check_mode_note": "这里只重新提取原日志，不代表本轮重新运行/验证正确性"
+      }
+    ]
+  }
+]

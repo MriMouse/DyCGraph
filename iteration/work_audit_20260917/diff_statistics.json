@@ -1,0 +1,30 @@
+{
+  "groups": {
+    "tools_and_build": {
+      "files": 105,
+      "added_files": 104,
+      "modified_files": 1,
+      "current_lines": 11178,
+      "added_lines": 11104,
+      "removed_lines": 11
+    },
+    "core": {
+      "files": 59,
+      "added_files": 40,
+      "modified_files": 19,
+      "current_lines": 28292,
+      "added_lines": 13319,
+      "removed_lines": 1013
+    },
+    "tests": {
+      "files": 51,
+      "added_files": 51,
+      "modified_files": 0,
+      "current_lines": 4042,
+      "added_lines": 4042,
+      "removed_lines": 0
+    }
+  },
+  "total_inventory": 217,
+  "note": "Text diff counts include comments and formatting; baseline-only deleted files separately listed, not included in these line totals. src contains replay/data utilities, not all production."
+}

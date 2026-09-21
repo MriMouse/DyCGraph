@@ -1,0 +1,56 @@
+{
+  "items": 72,
+  "previous_report_items_mapped": 81,
+  "inventory_files_hash_unchanged": 217,
+  "main_report_links_checked": 244,
+  "bad_links": [],
+  "changed_implementation_files": [],
+  "historical_extractions_verified": [
+    {
+      "path": "paper/work_audit_20260917/historical/i12_pre_cleanup/include/framework/framework.cuh",
+      "source": "i12_pre_cleanup:include/framework/framework.cuh",
+      "bytes_match": true
+    },
+    {
+      "path": "paper/work_audit_20260917/historical/i12_pre_cleanup/include/groute/graphs/csr_graph.cuh",
+      "source": "i12_pre_cleanup:include/groute/graphs/csr_graph.cuh",
+      "bytes_match": true
+    },
+    {
+      "path": "paper/work_audit_20260917/historical/i12_pre_cleanup/include/groute/graphs/source_local_chunk_store.h",
+      "source": "i12_pre_cleanup:include/groute/graphs/source_local_chunk_store.h",
+      "bytes_match": true
+    },
+    {
+      "path": "paper/work_audit_20260917/historical/6295b28/include/framework/framework.cuh",
+      "source": "6295b28:include/framework/framework.cuh",
+      "bytes_match": true
+    },
+    {
+      "path": "paper/work_audit_20260917/historical/0e036c8/samples/hybrid_sssp/hybrid_sssp.cu",
+      "source": "0e036c8:samples/hybrid_sssp/hybrid_sssp.cu",
+      "bytes_match": true
+    },
+    {
+      "path": "paper/work_audit_20260917/historical/0e036c8/include/framework/framework.cuh",
+      "source": "0e036c8:include/framework/framework.cuh",
+      "bytes_match": true
+    },
+    {
+      "path": "paper/work_audit_20260917/historical/0e036c8/include/framework/algo_variants.cuh",
+      "source": "0e036c8:include/framework/algo_variants.cuh",
+      "bytes_match": true
+    },
+    {
+      "path": "paper/work_audit_20260917/historical/f527ba4/include/framework/framework.cuh",
+      "source": "f527ba4:include/framework/framework.cuh",
+      "bytes_match": true
+    },
+    {
+      "path": "paper/work_audit_20260917/historical/caf1fc2/include/framework/framework.cuh",
+      "source": "caf1fc2:include/framework/framework.cuh",
+      "bytes_match": true
+    }
+  ],
+  "scope": "静态审计完整性检查；未新跑GPU、构建或算法测试"
+}

@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
+#include <chrono>
 #include <limits>
 #include <memory>
 #include <thread>
@@ -12,6 +14,8 @@
 
 #include <groute/graphs/common.h>
 #include <framework/effective_update_batch.h>
+#include <framework/effective_delta_sort.h>
+#include <utils/fixed_worker_pool.h>
 
 namespace sepgraph {
 namespace runtime {
@@ -24,17 +28,30 @@ public:
         uint64_t output_sources = 0;
     };
 
+    struct PrepareMetrics {
+        double reset_copy_ms = 0, sort_ms = 0, group_ms = 0;
+        double slots_ms = 0, merge_ms = 0, release_ms = 0, commit_ms = 0;
+        uint64_t input_copy_bytes = 0;
+        uint64_t input_records = 0, old_records_read = 0, output_records = 0, overlay_records = 0;
+        size_t destinations = 0, new_destinations = 0, buckets_before = 0, buckets_after = 0;
+    };
+    const PrepareMetrics &LastPrepareMetrics() const { return prepare_metrics_; }
+
     DynamicReverseIndex() : nnodes_(0) {}
     DynamicReverseIndex(const DynamicReverseIndex &) = delete;
     DynamicReverseIndex &operator=(const DynamicReverseIndex &) = delete;
 
     template <typename PMAGraph>
-    void Build(const PMAGraph &graph, uint32_t requested_workers) {
+    void Build(const PMAGraph &graph, uint32_t requested_workers, uint32_t shards = 1) {
         nnodes_ = graph.nnodes;
+        overlay_records_ = 0;
         offsets_.assign(static_cast<size_t>(nnodes_) + 1, 0);
         sources_.clear();
         deltas_.clear();
+        deltas_.resize(std::max<uint32_t>(1, shards));
         pending_.clear();
+        merge_workers_.reset(new concurrency::FixedWorkerPool(
+            std::max<uint32_t>(1, requested_workers)));
 
         if (nnodes_ == 0) {
             return;
@@ -81,29 +98,80 @@ public:
     // Only forward-authorized deltas enter here. Prepare leaves the visible
     // reverse topology unchanged; Commit performs allocation-free vector swaps.
     void Prepare(const std::vector<topology::EffectiveEdgeDelta> &effective) {
+        const auto start = Clock::now();
+        auto records = effective;
+        const double copy_ms = Elapsed(start);
+        Prepare(std::move(records));
+        prepare_metrics_.reset_copy_ms += copy_ms;
+        prepare_metrics_.input_copy_bytes = effective.size() * sizeof(topology::EffectiveEdgeDelta);
+    }
+
+    // Consume the forward-authorized buffer: the producer no longer needs its
+    // source ordering after preflight. Sorting cannot change visible topology.
+    void Prepare(std::vector<topology::EffectiveEdgeDelta> &&effective) {
+        prepare_metrics_ = {};
+        auto start = Clock::now();
         for (const auto &update : pending_) {
-            const auto found = deltas_.find(update.destination);
-            if (found != deltas_.end() && found->second.empty()) deltas_.erase(found);
+            auto &shard = DeltaShard(update.destination);
+            const auto found = shard.find(update.destination);
+            if (found != shard.end() && found->second.empty()) shard.erase(found);
         }
         pending_.clear();
-        auto records = effective;
+        auto records = std::move(effective);
         records.erase(std::remove_if(records.begin(), records.end(),
             [&](const topology::EffectiveEdgeDelta &edge) {
                 return edge.source >= nnodes_ || edge.destination >= nnodes_ || edge.count == 0;
             }), records.end());
-        std::sort(records.begin(), records.end(),
-            [](const topology::EffectiveEdgeDelta &a, const topology::EffectiveEdgeDelta &b) {
-                return a.destination < b.destination ||
-                    (a.destination == b.destination && a.source < b.source);
-            });
+        prepare_metrics_.input_records = records.size();
+        prepare_metrics_.reset_copy_ms = Elapsed(start);
+        start = Clock::now();
+        const char *parallel_sort = std::getenv("CG_PARALLEL_REVERSE_RADIX");
+        topology::SortEffectiveDeltas(records,
+            parallel_sort && parallel_sort[0] == '1' ? merge_workers_.get() : nullptr);
+        prepare_metrics_.sort_ms = Elapsed(start);
+        start = Clock::now();
+        std::vector<size_t> shard_begin(deltas_.size() + 1, 0);
+        size_t next_shard = 0;
         for (size_t begin = 0; begin < records.size();) {
             const auto dst = records[begin].destination;
             size_t end = begin + 1;
             while (end < records.size() && records[end].destination == dst) ++end;
-            const auto found = deltas_.find(dst);
-            const std::vector<Delta> empty;
-            const auto &old = found == deltas_.end() ? empty : found->second;
-            std::vector<Delta> merged;
+            const size_t shard = ShardIndex(dst);
+            while (next_shard <= shard) shard_begin[next_shard++] = pending_.size();
+            pending_.push_back({dst, nullptr, {}, begin, end});
+            begin = end;
+        }
+        while (next_shard <= deltas_.size()) shard_begin[next_shard++] = pending_.size();
+        prepare_metrics_.group_ms = Elapsed(start);
+        prepare_metrics_.destinations = pending_.size();
+        for (const auto &shard : deltas_) prepare_metrics_.buckets_before += shard.bucket_count();
+        start = Clock::now();
+        std::vector<size_t> new_destinations(deltas_.size(), 0);
+        auto prepare_shard = [&](size_t index) {
+            auto &shard = deltas_[index];
+            for (size_t i = shard_begin[index]; i < shard_begin[index + 1]; ++i)
+                if (shard.find(pending_[i].destination) == shard.end()) ++new_destinations[index];
+            const size_t required = shard.size() + new_destinations[index];
+            if (required > shard.bucket_count() * shard.max_load_factor()) shard.reserve(required);
+            for (size_t i = shard_begin[index]; i < shard_begin[index + 1]; ++i)
+                pending_[i].target = &shard[pending_[i].destination];
+        };
+        // Each task owns a distinct container and a disjoint pending range.
+        // Finish all rehash/insert work before merging via stable references.
+        if (merge_workers_ && deltas_.size() > 1)
+            merge_workers_->Run(deltas_.size(), prepare_shard, 1);
+        else for (size_t i = 0; i < deltas_.size(); ++i) prepare_shard(i);
+        prepare_metrics_.slots_ms = Elapsed(start);
+        for (size_t i = 0; i < deltas_.size(); ++i) {
+            prepare_metrics_.new_destinations += new_destinations[i];
+            prepare_metrics_.buckets_after += deltas_[i].bucket_count();
+        }
+        start = Clock::now();
+        auto merge = [&](size_t index) {
+            auto &update = pending_[index];
+            const size_t begin = update.begin, end = update.end;
+            const auto &old = *update.target;
+            auto &merged = update.records;
             merged.reserve(old.size() + end - begin);
             size_t i = 0, j = begin;
             while (i < old.size() || j < end) {
@@ -115,20 +183,30 @@ public:
                 while (j < end && records[j].source == src) count += records[j++].count;
                 if (count) merged.push_back({src, count});
             }
-            pending_.push_back({dst, nullptr, std::move(merged)});
-            begin = end;
-        }
-        // Inserting empty destination slots does not change incoming edges.
-        // References remain valid across unordered_map rehashes.
-        for (auto &update : pending_) update.target = &deltas_[update.destination];
+        };
+        if (merge_workers_) merge_workers_->Run(pending_.size(), merge);
+        else for (size_t i = 0; i < pending_.size(); ++i) merge(i);
+        prepare_metrics_.merge_ms = Elapsed(start);
+        start = Clock::now();
+        std::vector<topology::EffectiveEdgeDelta>().swap(records);
+        prepare_metrics_.release_ms = Elapsed(start);
     }
 
     void Commit() noexcept {
-        for (auto &update : pending_) update.target->swap(update.records);
+        const auto start = Clock::now();
+        for (auto &update : pending_) {
+            prepare_metrics_.old_records_read += update.target->size();
+            prepare_metrics_.output_records += update.records.size();
+            overlay_records_ -= update.target->size();
+            overlay_records_ += update.records.size();
+            update.target->swap(update.records);
+        }
+        prepare_metrics_.overlay_records = overlay_records_;
         for (const auto &update : pending_) {
-            if (update.target->empty()) deltas_.erase(update.destination);
+            if (update.target->empty()) DeltaShard(update.destination).erase(update.destination);
         }
         pending_.clear();
+        prepare_metrics_.commit_ms = Elapsed(start);
     }
 
     template <typename Visitor>
@@ -143,6 +221,42 @@ public:
         MaterializeMetrics metrics;
         offsets.assign(destinations.size() + 1, 0);
         sources.clear();
+        // Each tile merges once into private storage. Prefix/copy preserves the
+        // caller's destination order (including repeats) without atomics or a
+        // second base/delta traversal. Scratch is host-only and dies on return.
+        if (merge_workers_ && merge_workers_->WorkerCount() > 1 && destinations.size() >= 4096) {
+            constexpr size_t tile_size = 4096;
+            const size_t tiles = (destinations.size() + tile_size - 1) / tile_size;
+            struct Tile {
+                std::vector<index_t> sources;
+                MaterializeMetrics metrics;
+            };
+            std::vector<Tile> scratch(tiles);
+            merge_workers_->Run(tiles, [&](size_t tile) {
+                auto &local = scratch[tile];
+                const size_t begin = tile * tile_size;
+                const size_t end = std::min(begin + tile_size, destinations.size());
+                for (size_t i = begin; i < end; ++i) {
+                    const size_t before = local.sources.size();
+                    MergeIncoming(destinations[i], [&](index_t src) {
+                        local.sources.push_back(src);
+                    }, &local.metrics);
+                    offsets[i + 1] = local.sources.size() - before;
+                }
+            }, 1);
+            for (size_t i = 1; i < offsets.size(); ++i) offsets[i] += offsets[i - 1];
+            sources.resize(offsets.back());
+            merge_workers_->Run(tiles, [&](size_t tile) {
+                const auto &local = scratch[tile].sources;
+                std::copy(local.begin(), local.end(), sources.begin() + offsets[tile * tile_size]);
+            }, 1);
+            for (const auto &tile : scratch) {
+                metrics.base_edges_scanned += tile.metrics.base_edges_scanned;
+                metrics.delta_records_scanned += tile.metrics.delta_records_scanned;
+            }
+            metrics.output_sources = sources.size();
+            return metrics;
+        }
         for (size_t i = 0; i < destinations.size(); ++i) {
             MergeIncoming(destinations[i], [&](index_t src) {
                 sources.push_back(src);
@@ -156,6 +270,12 @@ public:
     uint64_t BaseEdgeCount() const { return sources_.size(); }
 
 private:
+    using Clock = std::chrono::steady_clock;
+    static double Elapsed(Clock::time_point start) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    }
+    PrepareMetrics prepare_metrics_;
+    uint64_t overlay_records_ = 0;
     template <typename PMAGraph, typename Visitor>
     static void ParallelForVertexRanges(const PMAGraph &graph,
                                         uint32_t workers,
@@ -190,9 +310,10 @@ private:
         const uint64_t end = offsets_[static_cast<size_t>(dst) + 1];
         if (metrics != nullptr) metrics->base_edges_scanned += end - begin;
 
-        const auto delta_it = deltas_.find(dst);
+        const auto &shard = DeltaShard(dst);
+        const auto delta_it = shard.find(dst);
         const std::vector<Delta> empty;
-        const auto &sorted_delta = delta_it == deltas_.end() ? empty : delta_it->second;
+        const auto &sorted_delta = delta_it == shard.end() ? empty : delta_it->second;
         if (metrics != nullptr) {
             metrics->delta_records_scanned += sorted_delta.size();
         }
@@ -225,9 +346,18 @@ private:
         index_t destination;
         std::vector<Delta> *target;
         std::vector<Delta> records;
+        size_t begin, end;
     };
-    std::unordered_map<index_t, std::vector<Delta>> deltas_;
+    using DeltaMap = std::unordered_map<index_t, std::vector<Delta>>;
+    // Monotonic mapping keeps destination-sorted pending ranges contiguous.
+    size_t ShardIndex(index_t dst) const {
+        return static_cast<uint64_t>(dst) * deltas_.size() / std::max<index_t>(1, nnodes_);
+    }
+    DeltaMap &DeltaShard(index_t dst) { return deltas_[ShardIndex(dst)]; }
+    const DeltaMap &DeltaShard(index_t dst) const { return deltas_[ShardIndex(dst)]; }
+    std::vector<DeltaMap> deltas_{1};
     std::vector<PendingDestination> pending_;
+    std::unique_ptr<concurrency::FixedWorkerPool> merge_workers_;
 };
 
 } // namespace runtime

@@ -3,6 +3,9 @@
 
 
 #include <algorithm>
+#include <cassert>
+#include <fstream>
+#include <sstream>
 #include <cinttypes>
 #include <random>
 
@@ -17,7 +20,7 @@ template <typename NodeID_, typename DestID_ = NodeID_,
 class Loader {
   typedef EdgePair<NodeID_, DestID_> Edge;
   typedef WEdgePair<NodeID_, DestID_, WeightT_> WEdge;
-  typedef Record<NodeID_, WeightT_> Record;
+  typedef ::Record<NodeID_, WeightT_> Record;
   typedef pvector<Edge> EdgeList;
   typedef pvector<WEdge> WEdgeList;
   using Hybrid = std::pair<uint32_t,uint32_t>;

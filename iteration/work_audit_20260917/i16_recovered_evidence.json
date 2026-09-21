@@ -1,0 +1,106 @@
+[
+  {
+    "graph": "eu50_connected_v2_s1",
+    "paired_summary": {
+      "cpu_over_gpu_pair_ratios": [
+        0.2748478816897208,
+        0.26590356838575674
+      ],
+      "both_pairs_improve": true,
+      "aggregate_reduction": 0.7297047065989312,
+      "gpu_sampled_peak_mib": [
+        12484,
+        12114,
+        12114,
+        12484
+      ],
+      "cpu_max_rss_kib": [
+        12716200,
+        14337984,
+        14337724,
+        12716428
+      ],
+      "exact_gpu_peak_gate": "pending; sampled memory is supporting evidence only",
+      "timing_gate_passed": true
+    },
+    "raw_log_sums": [
+      {
+        "path": "logs/i16_paired_20260907/eu50_connected_v2_s1_0_A_gpu.log",
+        "batches": 3,
+        "paper_ms": 339324.7
+      },
+      {
+        "path": "logs/i16_paired_20260907/eu50_connected_v2_s1_1_B_cpu.log",
+        "batches": 3,
+        "paper_ms": 93262.675
+      },
+      {
+        "path": "logs/i16_paired_20260907/eu50_connected_v2_s1_2_B_cpu.log",
+        "batches": 3,
+        "paper_ms": 93532.572
+      },
+      {
+        "path": "logs/i16_paired_20260907/eu50_connected_v2_s1_3_A_gpu.log",
+        "batches": 3,
+        "paper_ms": 351753.73
+      }
+    ],
+    "tenbatch_check_counts": {
+      "SSSP-DELETE-STAGE-CHECK": 10,
+      "SSSP-BATCH-CHECK": 10
+    },
+    "tenbatch_distance_checks_pass": true
+  },
+  {
+    "graph": "usa50_connected_v2_s1",
+    "paired_summary": {
+      "cpu_over_gpu_pair_ratios": [
+        0.37396846100094244,
+        0.38529049928545867
+      ],
+      "both_pairs_improve": true,
+      "aggregate_reduction": 0.6204405209550548,
+      "gpu_sampled_peak_mib": [
+        8214,
+        8028,
+        8028,
+        8214
+      ],
+      "cpu_max_rss_kib": [
+        6249104,
+        7071648,
+        7072452,
+        6249516
+      ],
+      "exact_gpu_peak_gate": "pending; sampled memory is supporting evidence only",
+      "timing_gate_passed": true
+    },
+    "raw_log_sums": [
+      {
+        "path": "logs/i16_paired_20260907/usa50_connected_v2_s1_0_A_gpu.log",
+        "batches": 3,
+        "paper_ms": 129960.307
+      },
+      {
+        "path": "logs/i16_paired_20260907/usa50_connected_v2_s1_1_B_cpu.log",
+        "batches": 3,
+        "paper_ms": 48601.056000000004
+      },
+      {
+        "path": "logs/i16_paired_20260907/usa50_connected_v2_s1_2_B_cpu.log",
+        "batches": 3,
+        "paper_ms": 48849.259
+      },
+      {
+        "path": "logs/i16_paired_20260907/usa50_connected_v2_s1_3_A_gpu.log",
+        "batches": 3,
+        "paper_ms": 126785.527
+      }
+    ],
+    "tenbatch_check_counts": {
+      "SSSP-DELETE-STAGE-CHECK": 10,
+      "SSSP-BATCH-CHECK": 10
+    },
+    "tenbatch_distance_checks_pass": true
+  }
+]

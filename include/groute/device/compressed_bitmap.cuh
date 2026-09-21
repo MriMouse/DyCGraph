@@ -211,6 +211,7 @@ namespace sepgraph {
         }
 
         size_t GetPositiveCount(const groute::Stream &stream) {
+            cgcomm::Scope comm_scope(cgcomm::Category::Control);
             GROUTE_CUDA_CHECK(cudaMemcpyAsync(m_host_positive_count,
                                               m_positive_count,
                                               sizeof(size_t),

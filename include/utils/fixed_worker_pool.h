@@ -40,7 +40,7 @@ public:
     size_t WorkerCount() const { return workers_.size(); }
 
     template <typename Function>
-    void Run(size_t count, Function function) {
+    void Run(size_t count, Function function, size_t grain = 16) {
         if (count == 0) return;
         if (workers_.empty()) {
             for (size_t index = 0; index < count; ++index) function(index);
@@ -51,6 +51,7 @@ public:
             function_ = function;
             next_.store(0, std::memory_order_relaxed);
             count_ = count;
+            grain_ = std::max<size_t>(1, grain);
             completed_ = 0;
             error_ = nullptr;
             ++generation_;
@@ -65,13 +66,13 @@ public:
     }
 
 private:
-    static constexpr size_t kWorkGrain = 16;
 
     void WorkerLoop() {
         size_t observed_generation = 0;
         while (true) {
             std::function<void(size_t)> function;
             size_t count = 0;
+            size_t grain = 16;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
                 work_ready_.wait(lock, [this, observed_generation]() {
@@ -81,12 +82,13 @@ private:
                 observed_generation = generation_;
                 function = function_;
                 count = count_;
+                grain = grain_;
             }
             while (true) {
-                const size_t begin = next_.fetch_add(kWorkGrain,
+                const size_t begin = next_.fetch_add(grain,
                                                      std::memory_order_relaxed);
                 if (begin >= count) break;
-                const size_t end = std::min(begin + kWorkGrain, count);
+                const size_t end = std::min(begin + grain, count);
                 for (size_t index = begin; index < end; ++index) {
                     try {
                         function(index);
@@ -107,6 +109,7 @@ private:
     std::vector<std::thread> workers_;
     std::atomic<size_t> next_;
     size_t count_;
+    size_t grain_ = 16;
     size_t generation_;
     size_t completed_;
     bool stopping_;

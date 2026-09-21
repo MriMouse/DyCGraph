@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <groute/graphs/source_local_chunk_store.h>
+#include <framework/publication_sources.h>
 
 namespace {
 
@@ -370,9 +371,83 @@ void TestEpochPublicationRejectsInvalidTransitions() {
 }
 
 
+void TestMatchedPositionReuse() {
+    const char *mode_env = std::getenv("CG_BATCH_MAINTENANCE");
+    const char *positions_env = std::getenv("CG_REUSE_DELETE_POSITIONS");
+    const std::string saved_mode = mode_env ? mode_env : "";
+    const std::string saved_positions = positions_env ? positions_env : "";
+    for (bool expand : {false, true}) {
+        std::vector<index_t> initial(4096);
+        for (index_t i = 0; i < initial.size(); ++i) initial[i] = i;
+        initial[3100] = initial[3101] = 3000; // occurrence-sensitive deletion
+        TopologyMutationBatch batch;
+        batch.deletions = {{0, 3000}, {0, 3000}, {0, 3001}, {0, 3500}, {0, 99999}};
+        batch.additions.resize(expand ? 5000 : 2, {0, 17});
+        TopologyReplayModel oracle({initial});
+        oracle.ApplyBatch(batch);
+        uint64_t baseline_reads = 0, baseline_written = 0;
+        for (bool enabled : {false, true}) {
+            setenv("CG_BATCH_MAINTENANCE", "large", 1);
+            setenv("CG_REUSE_DELETE_POSITIONS", enabled ? "1" : "0", 1);
+            SourceLocalChunkStore store(1, ChunkArenaOptions{32768, 16384, 4, false, 2});
+            store.LoadSource(0, initial);
+            store.FinalizeLoad();
+            const auto metrics = store.ApplyBatch(batch);
+            AssertMatchesOracle(store, oracle, 0);
+            assert(metrics.missing_deletes == 1);
+            assert((metrics.allocations != 0) == expand);
+            if (!enabled) {
+                baseline_reads = metrics.mutation_edge_reads;
+                baseline_written = metrics.mutation_written_bytes;
+            } else {
+                assert(metrics.mutation_edge_reads < baseline_reads);
+                assert(metrics.mutation_written_bytes == baseline_written);
+                assert(metrics.deletion_position_bytes ==
+                    (batch.deletions.size() + batch.additions.size()) * sizeof(index_t));
+                std::cout << "position reuse expand=" << expand << " reads="
+                          << baseline_reads << "->" << metrics.mutation_edge_reads << "\n";
+            }
+            store.ReclaimThrough(store.Publish());
+            AssertArenaAccounting(store);
+        }
+    }
+    if (saved_mode.empty()) unsetenv("CG_BATCH_MAINTENANCE");
+    else setenv("CG_BATCH_MAINTENANCE", saved_mode.c_str(), 1);
+    if (saved_positions.empty()) unsetenv("CG_REUSE_DELETE_POSITIONS");
+    else setenv("CG_REUSE_DELETE_POSITIONS", saved_positions.c_str(), 1);
+}
+
+
 } // namespace
 
+void TestPublicationChangedFilter() {
+    using namespace sepgraph::topology;
+    SourceLocalChunkStore store(4, ChunkArenaOptions{128, 128, 4, false});
+    store.LoadSource(0, {1, 1});
+    store.LoadSource(1, {});
+    store.LoadSource(2, {3});
+    store.LoadSource(3, {});
+    store.FinalizeLoad();
+    TopologyMutationBatch batch;
+    batch.deletions = {{2, 3}, {1, 99}, {0, 1}, {0, 1}, {0, 1}};
+    batch.additions = {{3, 0}, {0, 1}, {3, 1}};
+    GroupedUpdateBatch grouped(batch);
+    IgnoreEffectiveUpdates observer;
+    store.ApplyGroupedPhase(grouped, UpdatePhase::Delete, observer);
+    auto sources = store.ChangedSources();
+    assert((sources == std::vector<index_t>{0, 2}));
+    const auto split = sources.size();
+    store.ApplyGroupedPhase(grouped, UpdatePhase::Add, observer);
+    assert((store.ChangedSources() == std::vector<index_t>{0, 3}));
+    sources.insert(sources.end(), store.ChangedSources().begin(), store.ChangedSources().end());
+    std::vector<index_t> scratch;
+    MergePublicationSources(sources, split, scratch);
+    assert((sources == std::vector<index_t>{0, 2, 3}));
+}
+
 int main() {
+    TestPublicationChangedFilter();
+    TestMatchedPositionReuse();
     TestBatchOrderingAndDuplicates();
     TestSourceIsolationAndExpansion();
     TestEpochDelayedReuse();

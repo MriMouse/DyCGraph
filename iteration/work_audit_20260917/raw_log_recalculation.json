@@ -1,0 +1,987 @@
+[
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/c_europe_europe_correctness_w20.log",
+    "batch_count": 10,
+    "paper_sum_ms": 2224350.634,
+    "paper_by_batch_ms": [
+      193861.862,
+      218412.342,
+      227255.152,
+      272717.275,
+      241199.31,
+      223465.384,
+      300209.47,
+      130930.026,
+      170031.698,
+      246268.115
+    ],
+    "final_distance_checksum": [
+      "13255565237499643436"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/c_friendster_friendster_correctness_w20.log",
+    "batch_count": 10,
+    "paper_sum_ms": 5203.597,
+    "paper_by_batch_ms": [
+      475.588,
+      512.574,
+      492.348,
+      523.72,
+      459.386,
+      550.317,
+      504.272,
+      648.772,
+      533.824,
+      502.796
+    ],
+    "final_distance_checksum": [
+      "12734023534853680802"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/eu_a1_europe_performance_w1.log",
+    "batch_count": 10,
+    "paper_sum_ms": 2235501.245,
+    "paper_by_batch_ms": [
+      193743.598,
+      214605.311,
+      230838.596,
+      274236.891,
+      243807.29,
+      224974.644,
+      301696.86,
+      134341.443,
+      171272.429,
+      245984.183
+    ],
+    "final_distance_checksum": [
+      "13255565237499643436"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/eu_b1_europe_performance_w20.log",
+    "batch_count": 10,
+    "paper_sum_ms": 2247136.749,
+    "paper_by_batch_ms": [
+      206664.51,
+      218850.277,
+      229521.629,
+      274619.089,
+      240604.771,
+      226977.752,
+      301176.524,
+      133561.325,
+      169458.461,
+      245702.411
+    ],
+    "final_distance_checksum": [
+      "13255565237499643436"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_a1_friendster_performance_w1.log",
+    "batch_count": 10,
+    "paper_sum_ms": 4730.9,
+    "paper_by_batch_ms": [
+      462.709,
+      484.776,
+      479.397,
+      504.48,
+      423.675,
+      461.519,
+      446.73,
+      601.851,
+      437.969,
+      427.794
+    ],
+    "final_distance_checksum": [
+      "12734023534853680802"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_a2_friendster_performance_w1.log",
+    "batch_count": 10,
+    "paper_sum_ms": 5011.751,
+    "paper_by_batch_ms": [
+      499.902,
+      506.237,
+      506.546,
+      530.602,
+      447.29,
+      496.186,
+      461.458,
+      594.272,
+      494.924,
+      474.334
+    ],
+    "final_distance_checksum": [
+      "12734023534853680802"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_a3_friendster_performance_w1.log",
+    "batch_count": 10,
+    "paper_sum_ms": 4734.041,
+    "paper_by_batch_ms": [
+      457.428,
+      487.935,
+      479.468,
+      527.167,
+      430.968,
+      463.674,
+      445.713,
+      588.98,
+      430.037,
+      422.671
+    ],
+    "final_distance_checksum": [
+      "12734023534853680802"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_b1_friendster_performance_w20.log",
+    "batch_count": 10,
+    "paper_sum_ms": 3924.415,
+    "paper_by_batch_ms": [
+      395.115,
+      409.845,
+      396.334,
+      429.686,
+      342.276,
+      379.489,
+      367.676,
+      501.025,
+      360.688,
+      342.281
+    ],
+    "final_distance_checksum": [
+      "12734023534853680802"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_b2_friendster_performance_w20.log",
+    "batch_count": 10,
+    "paper_sum_ms": 4025.525,
+    "paper_by_batch_ms": [
+      420.985,
+      434.103,
+      423.621,
+      432.787,
+      352.58,
+      390.552,
+      362.629,
+      507.716,
+      355.99,
+      344.562
+    ],
+    "final_distance_checksum": [
+      "12734023534853680802"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/fs_b3_friendster_performance_w20.log",
+    "batch_count": 10,
+    "paper_sum_ms": 3971.274,
+    "paper_by_batch_ms": [
+      402.691,
+      427.776,
+      409.304,
+      429.37,
+      344.079,
+      378.266,
+      381.176,
+      501.885,
+      351.111,
+      345.616
+    ],
+    "final_distance_checksum": [
+      "12734023534853680802"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_a1_twitter_performance_w1.log",
+    "batch_count": 10,
+    "paper_sum_ms": 878.343,
+    "paper_by_batch_ms": [
+      59.95,
+      63.313,
+      79.238,
+      86.833,
+      96.701,
+      95.258,
+      98.799,
+      107.382,
+      100.983,
+      89.886
+    ],
+    "final_distance_checksum": [
+      "12687655862474487153"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_a2_twitter_performance_w1.log",
+    "batch_count": 10,
+    "paper_sum_ms": 827.039,
+    "paper_by_batch_ms": [
+      58.878,
+      64.645,
+      80.437,
+      80.46,
+      88.5,
+      89.076,
+      84.661,
+      102.541,
+      92.998,
+      84.843
+    ],
+    "final_distance_checksum": [
+      "12687655862474487153"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_a3_twitter_performance_w1.log",
+    "batch_count": 10,
+    "paper_sum_ms": 823.918,
+    "paper_by_batch_ms": [
+      59.828,
+      64.103,
+      80.522,
+      81.076,
+      89.703,
+      89.071,
+      84.689,
+      103.719,
+      89.016,
+      82.191
+    ],
+    "final_distance_checksum": [
+      "12687655862474487153"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_b1_twitter_performance_w20.log",
+    "batch_count": 10,
+    "paper_sum_ms": 579.388,
+    "paper_by_batch_ms": [
+      46.583,
+      47.221,
+      56.945,
+      54.312,
+      58.318,
+      58.041,
+      58.246,
+      66.21,
+      81.02,
+      52.492
+    ],
+    "final_distance_checksum": [
+      "12687655862474487153"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_b2_twitter_performance_w20.log",
+    "batch_count": 10,
+    "paper_sum_ms": 554.145,
+    "paper_by_batch_ms": [
+      48.534,
+      47.346,
+      55.584,
+      52.55,
+      60.203,
+      54.845,
+      51.455,
+      64.088,
+      66.292,
+      53.248
+    ],
+    "final_distance_checksum": [
+      "12687655862474487153"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i8_mutation_repeats_20260827T031043Z/tw_b3_twitter_performance_w20.log",
+    "batch_count": 10,
+    "paper_sum_ms": 623.553,
+    "paper_by_batch_ms": [
+      59.233,
+      57.209,
+      65.391,
+      62.856,
+      66.646,
+      62.848,
+      53.633,
+      66.017,
+      71.111,
+      58.609
+    ],
+    "final_distance_checksum": [
+      "12687655862474487153"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i14_effective_batch_20260906/check_friendster.log",
+    "batch_count": 2,
+    "paper_sum_ms": 1984.452,
+    "paper_by_batch_ms": [
+      1003.178,
+      981.274
+    ],
+    "final_distance_checksum": [
+      "1221435124879239400"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i14_effective_batch_20260906/check_twitter.log",
+    "batch_count": 2,
+    "paper_sum_ms": 961.818,
+    "paper_by_batch_ms": [
+      459.136,
+      502.682
+    ],
+    "final_distance_checksum": [
+      "10309345756053454404"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i14_effective_batch_20260906/r1_friendster.log",
+    "batch_count": 10,
+    "paper_sum_ms": 4174.842,
+    "paper_by_batch_ms": [
+      394.425,
+      425.087,
+      444.38,
+      458.58,
+      364.56,
+      409.865,
+      415.447,
+      488.923,
+      395.235,
+      378.34
+    ],
+    "final_distance_checksum": [
+      "12734023534853680802"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i14_effective_batch_20260906/r1_twitter.log",
+    "batch_count": 10,
+    "paper_sum_ms": 547.157,
+    "paper_by_batch_ms": [
+      43.879,
+      46.135,
+      52.529,
+      65.122,
+      61.964,
+      58.214,
+      53.348,
+      62.734,
+      50.55,
+      52.682
+    ],
+    "final_distance_checksum": [
+      "12687655862474487153"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i14_effective_batch_20260906/r2_friendster.log",
+    "batch_count": 10,
+    "paper_sum_ms": 4118.635,
+    "paper_by_batch_ms": [
+      393.776,
+      417.825,
+      446.931,
+      442.353,
+      369.944,
+      401.272,
+      411.64,
+      488.547,
+      378.869,
+      367.478
+    ],
+    "final_distance_checksum": [
+      "12734023534853680802"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i14_effective_batch_20260906/r2_twitter.log",
+    "batch_count": 10,
+    "paper_sum_ms": 519.54,
+    "paper_by_batch_ms": [
+      43.872,
+      45.064,
+      52.662,
+      53.174,
+      54.184,
+      54.622,
+      51.782,
+      62.762,
+      49.894,
+      51.524
+    ],
+    "final_distance_checksum": [
+      "12687655862474487153"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/fs10000_a1/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 17950.884,
+    "paper_by_batch_ms": [
+      9166.258,
+      8784.626
+    ],
+    "final_distance_checksum": [
+      "7340189607729832727"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/fs10000_n0_a/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 16947.927,
+    "paper_by_batch_ms": [
+      8381.188,
+      8566.739
+    ],
+    "final_distance_checksum": [
+      "7340189607729832727"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/fs10000_n0_w/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 14334.668,
+    "paper_by_batch_ms": [
+      7074.411,
+      7260.257
+    ],
+    "final_distance_checksum": [
+      "7340189607729832727"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/fs10000_w_check/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 16927.248,
+    "paper_by_batch_ms": [
+      8332.468,
+      8594.78
+    ],
+    "final_distance_checksum": [
+      "7340189607729832727"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw10000_a1/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 17650.018,
+    "paper_by_batch_ms": [
+      9070.143,
+      8579.875
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw10000_a2/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 22704.563,
+    "paper_by_batch_ms": [
+      11475.718,
+      11228.845
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw10000_b1/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 18520.311,
+    "paper_by_batch_ms": [
+      9317.255,
+      9203.056
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw10000_b2/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 18689.461,
+    "paper_by_batch_ms": [
+      9567.584,
+      9121.877
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw10000_n0_a/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 16977.157,
+    "paper_by_batch_ms": [
+      8333.319,
+      8643.838
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw10000_n0_w/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 11918.18,
+    "paper_by_batch_ms": [
+      5886.42,
+      6031.76
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw10000_w_check/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 12926.26,
+    "paper_by_batch_ms": [
+      6396.557,
+      6529.703
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw1000_a1/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 4450.489,
+    "paper_by_batch_ms": [
+      2900.839,
+      1549.65
+    ],
+    "final_distance_checksum": [
+      "15984646590043123926"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw1000_b1/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 4012.252,
+    "paper_by_batch_ms": [
+      2586.723,
+      1425.529
+    ],
+    "final_distance_checksum": [
+      "15984646590043123926"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw1000_n0_a/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 3891.473,
+    "paper_by_batch_ms": [
+      2462.755,
+      1428.718
+    ],
+    "final_distance_checksum": [
+      "15984646590043123926"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw1000_n0_w/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 1808.632,
+    "paper_by_batch_ms": [
+      925.381,
+      883.251
+    ],
+    "final_distance_checksum": [
+      "15984646590043123926"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw1000_n0_w_r2/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 1749.237,
+    "paper_by_batch_ms": [
+      873.7,
+      875.537
+    ],
+    "final_distance_checksum": [
+      "15984646590043123926"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/tw1000_n0_w_r3/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 1811.779,
+    "paper_by_batch_ms": [
+      883.397,
+      928.382
+    ],
+    "final_distance_checksum": [
+      "15984646590043123926"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i17b5_continue_20260914/warp_smoke/run.log",
+    "batch_count": 3,
+    "paper_sum_ms": 339.465,
+    "paper_by_batch_ms": [
+      118.735,
+      107.567,
+      113.163
+    ],
+    "final_distance_checksum": [
+      "16817507751236714560"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i20_short_20260915/friendster_10000k_abba0_regular/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 15152.987,
+    "paper_by_batch_ms": [
+      7503.2,
+      7649.787
+    ],
+    "final_distance_checksum": [
+      "7340189607729832727"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i20_short_20260915/friendster_10000k_abba1_large/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 13668.661,
+    "paper_by_batch_ms": [
+      6740.665,
+      6927.996
+    ],
+    "final_distance_checksum": [
+      "7340189607729832727"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i20_short_20260915/twitter_10000k_abba0_regular/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 12076.906,
+    "paper_by_batch_ms": [
+      6026.997,
+      6049.909
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i20_short_20260915/twitter_10000k_abba1_large/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 11381.281,
+    "paper_by_batch_ms": [
+      5647.801,
+      5733.48
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i20_reverse_20260915/friendster_10000k_abba0_large/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 13632.59,
+    "paper_by_batch_ms": [
+      6724.013,
+      6908.577
+    ],
+    "final_distance_checksum": [
+      "7340189607729832727"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i20_reverse_20260915/friendster_10000k_abba1_regular/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 15045.55,
+    "paper_by_batch_ms": [
+      7427.981,
+      7617.569
+    ],
+    "final_distance_checksum": [
+      "7340189607729832727"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i20_reverse_20260915/twitter_10000k_abba0_large/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 11195.785,
+    "paper_by_batch_ms": [
+      5543.153,
+      5652.632
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i20_reverse_20260915/twitter_10000k_abba1_regular/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 12293.419,
+    "paper_by_batch_ms": [
+      6093.149,
+      6200.27
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i24_tw10m_publication_20260917/smoke/run.log",
+    "batch_count": 3,
+    "paper_sum_ms": 342.621,
+    "paper_by_batch_ms": [
+      123.781,
+      110.467,
+      108.373
+    ],
+    "final_distance_checksum": [
+      "17323042482539835023"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i24_tw10m_publication_20260917/twitter_10000k_0_merge0/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 11317.119,
+    "paper_by_batch_ms": [
+      5634.831,
+      5682.288
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i24_tw10m_publication_20260917/twitter_10000k_1_merge1/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 10719.232,
+    "paper_by_batch_ms": [
+      5365.238,
+      5353.994
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i24_tw10m_publication_20260917/twitter_10000k_2_merge1/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 10652.624,
+    "paper_by_batch_ms": [
+      5254.027,
+      5398.597
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i24_tw10m_publication_20260917/twitter_10000k_3_merge0/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 11200.817,
+    "paper_by_batch_ms": [
+      5538.508,
+      5662.309
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i25_reverse_radix_20260917/smoke/run.log",
+    "batch_count": 3,
+    "paper_sum_ms": 335.252,
+    "paper_by_batch_ms": [
+      120.975,
+      108.474,
+      105.803
+    ],
+    "final_distance_checksum": [
+      "17323042482539835023"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i25_reverse_radix_20260917/twitter_10000k_0_reverse0/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 10719.566,
+    "paper_by_batch_ms": [
+      5332.897,
+      5386.669
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i25_reverse_radix_20260917/twitter_10000k_1_reverse1/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 10908.152,
+    "paper_by_batch_ms": [
+      5391.75,
+      5516.402
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i25_reverse_radix_20260917/twitter_10000k_2_reverse1/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 10787.569,
+    "paper_by_batch_ms": [
+      5407.665,
+      5379.904
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i25_reverse_radix_20260917/twitter_10000k_3_reverse0/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 10806.187,
+    "paper_by_batch_ms": [
+      5403.91,
+      5402.277
+    ],
+    "final_distance_checksum": [
+      "791729548754523982"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i22_ordered_20260916/block/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 195076.038,
+    "paper_by_batch_ms": [
+      91981.19,
+      103094.848
+    ],
+    "final_distance_checksum": [
+      "4612202113968985553"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i22_ordered_20260916/block_smoke/run.log",
+    "batch_count": 3,
+    "paper_sum_ms": 323.331,
+    "paper_by_batch_ms": [
+      110.215,
+      107.042,
+      106.074
+    ],
+    "final_distance_checksum": [
+      "17323042482539835023"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i22_ordered_20260916/ordered/run.log",
+    "batch_count": 2,
+    "paper_sum_ms": 42245.784,
+    "paper_by_batch_ms": [
+      20772.822,
+      21472.962
+    ],
+    "final_distance_checksum": [
+      "4612202113968985553"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i22_ordered_20260916/smoke_v2/run.log",
+    "batch_count": 3,
+    "paper_sum_ms": 353.853,
+    "paper_by_batch_ms": [
+      128.748,
+      114.29,
+      110.815
+    ],
+    "final_distance_checksum": [
+      "17323042482539835023"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  },
+  {
+    "path": "logs/i22_ordered_20260916/window_smoke_v2/run.log",
+    "batch_count": 3,
+    "paper_sum_ms": 122.651,
+    "paper_by_batch_ms": [
+      47.341,
+      34.923,
+      40.387
+    ],
+    "final_distance_checksum": [
+      "12548351645370382951"
+    ],
+    "note": "raw log extraction only; filename/manifest determines check/profiler/performance eligibility"
+  }
+]

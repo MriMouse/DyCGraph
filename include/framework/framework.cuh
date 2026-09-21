@@ -14,6 +14,7 @@
 #include <thrust/device_vector.h>
 #include <thread>
 #include <cooperative_groups.h>
+#include <cuda_profiler_api.h>
 #include <thrust/sort.h>
 #include <cub/cub.cuh>
 #include <framework/common.h>
@@ -23,11 +24,14 @@
 #include <framework/variants/driver.cuh>
 #include <framework/hybrid_policy.h>
 #include <framework/dynamic_reverse_index.h>
+#include <framework/publication_sources.h>
 #include <framework/dual_domain_event_runtime.h>
 #include <framework/topology_replay.h>
 #include <framework/cache_patch_trace.h>
 #include <framework/cache_refresh_gate.h>
 #include <framework/affected_component_trace.h>
+#include <framework/i16_repair_snapshot.h>
+#include <framework/ordered_gpu_repair.cuh>
 #include <framework/algo_variants.cuh>
 #include <utils/cuda_utils.h>
 #include <utils/graphs/traversal.h>
@@ -122,6 +126,15 @@ namespace sepgraph {
             CPU = 1
         };
 
+        template<typename TValue, typename TBuffer>
+        __global__ void GatherI16State(const uint32_t *ids, uint32_t count,
+                                       const TValue *values, const TBuffer *buffers,
+                                       const TValue *parents, i16::State *out) {
+            for (uint32_t i=TID_1D; i<count; i+=TOTAL_THREADS_1D) {
+                const auto v=ids[i]; out[i]={v, uint32_t(values[v]), uint32_t(buffers[v]), uint32_t(parents[v])};
+            }
+        }
+
         template<typename TAppInst, typename TValue, typename TBuffer>
         __global__ void GpuAffectedPullRelax(TAppInst app_inst,
                                              const index_t *affected_vertices,
@@ -139,7 +152,11 @@ namespace sepgraph {
                           "GPU affected repair requires 32-bit values");
             const uint32_t tid = TID_1D;
             const uint32_t nthreads = TOTAL_THREADS_1D;
-            for (uint32_t i = tid; i < affected_count; i += nthreads) {
+            // Cooperate on long incoming rows instead of serializing each row
+            // in one lane. Unusual non-warp-sized blocks retain scalar groups.
+            const uint32_t width = blockDim.x % 32 == 0 ? 32 : 1;
+            const uint32_t lane = threadIdx.x % width;
+            for (uint32_t i = tid / width; i < affected_count; i += nthreads / width) {
                 const index_t dst = affected_vertices[i];
                 if (cpu_owner_flags != nullptr && cpu_owner_flags[dst]) {
                     continue;
@@ -147,8 +164,8 @@ namespace sepgraph {
                 TValue best = static_cast<TValue>(atomicAdd(
                     reinterpret_cast<unsigned int *>(&node_value[dst]), 0));
                 index_t best_parent = node_parent[dst];
-                for (uint64_t edge = incoming_offsets[i];
-                     edge < incoming_offsets[i + 1]; ++edge) {
+                for (uint64_t edge = incoming_offsets[i] + lane;
+                     edge < incoming_offsets[i + 1]; edge += width) {
                     const index_t src = incoming_sources[edge];
                     const TValue src_value = static_cast<TValue>(atomicAdd(
                         reinterpret_cast<unsigned int *>(&node_value[src]), 0));
@@ -165,6 +182,17 @@ namespace sepgraph {
                         best_parent = src;
                     }
                 }
+                if (width == 32) {
+                    for (uint32_t step = 16; step != 0; step >>= 1) {
+                        const TValue other = __shfl_down_sync(0xffffffffU, best, step);
+                        const index_t parent = __shfl_down_sync(0xffffffffU, best_parent, step);
+                        if (other < best || (other == best && parent < best_parent)) {
+                            best = other;
+                            best_parent = parent;
+                        }
+                    }
+                }
+                if (lane != 0) continue;
                 const TValue old_value = static_cast<TValue>(atomicMin(
                     reinterpret_cast<unsigned int *>(&node_value[dst]),
                     static_cast<unsigned int>(best)));
@@ -423,7 +451,7 @@ namespace sepgraph {
         }
 
         template<typename TAppInst, typename TPMAGraph, typename TValue,
-                 typename TBuffer>
+                 typename TBuffer, bool Ordered = false>
         __global__ void RunExactGpuClosure(
                 TAppInst app_inst,
                 groute::dev::Queue<index_t> input,
@@ -445,20 +473,49 @@ namespace sepgraph {
                 if (source_count == 0) break;
                 if (blockIdx.x == 0 && threadIdx.x == 0) {
                     output.reset();
+                    if (Ordered) metrics[4] = ~0ULL;
                     atomicAdd(metrics + 0,
                         static_cast<unsigned long long>(source_count));
                     atomicAdd(metrics + 3, 1ULL);
                 }
                 grid.sync();
+                if (Ordered && metrics[3] > 0xffffULL) {
+                    // Fail before ticket reuse could silently suppress work.
+                    asm("trap;");
+                }
+                // Select a distance window from pending buffers, without committing
+                // deferred vertices. Width 128 follows the shared [1,128] weight
+                // contract, not graph identity. Reduction and carry are service costs.
+                if (Ordered) {
+                    for (uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
+                         i < source_count; i += gridDim.x * blockDim.x) {
+                        const index_t source = input.read(i);
+                        atomicMin(metrics + 4,
+                            static_cast<unsigned long long>(buffers[source]));
+                    }
+                    grid.sync();
+                }
                 for (uint32_t source_index = blockIdx.x;
                      source_index < source_count;
                      source_index += gridDim.x) {
                     const index_t source = input.read(source_index);
                     if (threadIdx.x == 0) {
-                        const auto combined = app_inst.CombineValueBuffer(
-                            source, &values[source], &buffers[source]);
-                        source_value = combined.first;
-                        expand = combined.second;
+                        const bool deferred = Ordered &&
+                            static_cast<unsigned long long>(buffers[source]) > metrics[4] + 127ULL;
+                        expand = false;
+                        if (deferred) {
+                            const uint32_t ticket = (epoch << 16) |
+                                (static_cast<uint32_t>(metrics[3]) & 0xffffU);
+                            // The same ticket deduplicates carry and relax events;
+                            // a concurrent improvement remains pending next wave.
+                            if (atomicExch(node_state_epoch + source, ticket) != ticket)
+                                output.append(source);
+                        } else {
+                            const auto combined = app_inst.CombineValueBuffer(
+                                source, &values[source], &buffers[source]);
+                            source_value = combined.first;
+                            expand = combined.second;
+                        }
                         if (expand) {
                             atomicAdd(metrics + 1, 1ULL);
                             atomicAdd(metrics + 2,
@@ -491,6 +548,89 @@ namespace sepgraph {
                         }
                     }
                     __syncthreads();
+                }
+                grid.sync();
+                if (blockIdx.x == 0 && threadIdx.x == 0) input.reset();
+                grid.sync();
+                const auto previous = input;
+                input = output;
+                output = previous;
+            }
+            grid.sync();
+            if (blockIdx.x == 0 && threadIdx.x == 0) {
+                input.reset();
+                output.reset();
+            }
+            grid.sync();
+        }
+
+        template<typename TAppInst, typename TPMAGraph, typename TValue,
+                 typename TBuffer>
+        __global__ void RunThreadGpuClosure(
+                TAppInst app_inst,
+                groute::dev::Queue<index_t> input,
+                groute::dev::Queue<index_t> output,
+                TPMAGraph graph,
+                TValue *values,
+                TBuffer *buffers,
+                TValue *parents,
+                uint32_t epoch,
+                uint32_t *node_state_epoch,
+                unsigned long long *metrics) {
+            cooperative_groups::grid_group grid =
+                cooperative_groups::this_grid();
+            TBuffer source_value;
+            bool expand;
+            while (true) {
+                grid.sync();
+                const uint32_t source_count = input.count();
+                if (source_count == 0) break;
+                if (blockIdx.x == 0 && threadIdx.x == 0) {
+                    output.reset();
+                    atomicAdd(metrics + 0,
+                        static_cast<unsigned long long>(source_count));
+                    atomicAdd(metrics + 3, 1ULL);
+                }
+                grid.sync();
+                for (uint32_t source_index = blockIdx.x * blockDim.x + threadIdx.x;
+                     source_index < source_count;
+                     source_index += gridDim.x * blockDim.x) {
+                    const index_t source = input.read(source_index);
+                    {
+                        const auto combined = app_inst.CombineValueBuffer(
+                            source, &values[source], &buffers[source]);
+                        source_value = combined.first;
+                        expand = combined.second;
+                        if (expand) {
+                            atomicAdd(metrics + 1, 1ULL);
+                            atomicAdd(metrics + 2,
+                                static_cast<unsigned long long>(
+                                    graph.degree(source)));
+                        }
+                    }
+                    if (expand) {
+                        const uint64_t edge_begin = graph.begin_edge(source);
+                        const uint32_t degree = graph.degree(source);
+                        for (uint32_t offset = 0; offset < degree;
+                             ++offset) {
+                            const index_t destination =
+                                graph.edge_dest(edge_begin + offset);
+                            if (destination == static_cast<index_t>(-1)) continue;
+                            const index_t weight =
+                                (source + destination) % 128 + 1;
+                            if (app_inst.AccumulateBuffer(source, destination,
+                                    weight, &parents[destination],
+                                    &buffers[destination], source_value)) {
+                                const uint32_t wave_ticket =
+                                    (epoch << 16) |
+                                    (static_cast<uint32_t>(metrics[3]) & 0xffffU);
+                                if (atomicExch(node_state_epoch + destination,
+                                        wave_ticket) != wave_ticket) {
+                                    output.append(destination);
+                                }
+                            }
+                        }
+                    }
                 }
                 grid.sync();
                 if (blockIdx.x == 0 && threadIdx.x == 0) input.reset();
@@ -604,6 +744,8 @@ namespace sepgraph {
             std::unique_ptr<groute::graphs::single::PMAGraphAllocator> m_vcsr_dev_graph_allocator;
             std::unique_ptr<topology::SourceLocalChunkStore> m_chunk_store;
             std::vector<index_t> m_topology_patch_sources;
+            std::vector<index_t> m_topology_patch_scratch;
+            size_t m_topology_delete_source_count = 0;
             topology::GroupedUpdateBatch m_grouped_updates;
             // std::unique_ptr<groute::graphs::single::PMAGraphAllocator> m_vcsr_dev_graph_allocator_update;
             std::unique_ptr<groute::graphs::single::CSCGraphAllocator> m_csc_dev_graph_allocator;
@@ -689,6 +831,8 @@ namespace sepgraph {
             std::ofstream m_e0b_trace;
             std::ofstream m_f1_cache_trace;
             std::ofstream m_f1_component_trace;
+            std::string m_i16_snapshot_path;
+            uint32_t m_i16_snapshot_source = 0;
             std::vector<cache_patch::CandidateRecord> m_f1_previous_cache_candidates;
             uint64_t m_f1_previous_cache_edges = 0;
             bool m_f1_cache_trace_initialized = false;
@@ -1060,6 +1204,12 @@ namespace sepgraph {
         m_engine_options = engine_options;
     }
 
+    void SetRepairSnapshot(const std::string &path, uint32_t source) {
+        m_i16_snapshot_path = path;
+        m_i16_snapshot_source = source;
+    }
+
+
     index_t GetNodeNum(){
       return m_groute_context->host_graph.nnodes;
     }
@@ -1201,6 +1351,7 @@ namespace sepgraph {
             }
 
             void confirm_candidate_batch(){
+                cgcomm::Scope comm_scope(cgcomm::Category::Cache);
                 GraphDatum &graph_datum = *m_graph_datum;
                 auto &app_inst = *m_app_inst;
                 groute::Stream &stream_s = *m_stream;
@@ -1345,6 +1496,7 @@ namespace sepgraph {
             }
 
             void LoadCache(){
+                cgcomm::Scope comm_scope(cgcomm::Category::Cache);
                 auto &app_inst = *m_app_inst;
                 GraphDatum &graph_datum = *m_graph_datum;
                 Loader &load_update = *m_load_update;
@@ -1537,7 +1689,15 @@ namespace sepgraph {
             const uint32_t reverse_workers = std::max<uint32_t>(
                 1, std::min<uint32_t>(20, hardware_workers == 0 ? 1 : hardware_workers));
             Stopwatch sw_reverse_index(true);
-            m_reverse_index.Build(vcsr_graph, reverse_workers);
+            uint32_t reverse_shards = 1;
+            if (const char *value = std::getenv("CG_REVERSE_SHARDS")) {
+                const std::string setting(value);
+                if (setting != "1" && setting != "64")
+                    throw std::invalid_argument("CG_REVERSE_SHARDS must be 1 or 64");
+                reverse_shards = setting == "64" ? 64 : 1;
+            }
+            m_reverse_index.Build(vcsr_graph, reverse_workers, reverse_shards);
+            LOG("[I17-REVERSE-CONFIG] shards=%u\n", reverse_shards);
             sw_reverse_index.stop();
             LOG("[CPU-REVERSE-INDEX] base_edges=%llu workers=%u build_ms=%.3f overlay_edges=0\n",
                 static_cast<unsigned long long>(m_reverse_index.BaseEdgeCount()),
@@ -2254,6 +2414,25 @@ namespace sepgraph {
                 cudaDeviceSynchronize();
             }
 
+            void FinalizePublicationSources(index_t batch) {
+                Stopwatch timer(true);
+                const char* setting = std::getenv("CG_MERGE_PUBLICATION_SOURCES");
+                const bool merge = setting && std::string(setting) == "1";
+                const size_t input_count = m_topology_patch_sources.size();
+                if (merge) {
+                    topology::MergePublicationSources(m_topology_patch_sources,
+                        m_topology_delete_source_count, m_topology_patch_scratch);
+                } else {
+                    std::sort(m_topology_patch_sources.begin(), m_topology_patch_sources.end());
+                    m_topology_patch_sources.erase(std::unique(m_topology_patch_sources.begin(),
+                        m_topology_patch_sources.end()), m_topology_patch_sources.end());
+                }
+                timer.stop();
+                LOG("[I21-PUBLICATION][batch %u] merge=%u input_sources=%llu output_sources=%llu source_order_ms=%.3f\n",
+                    batch, unsigned(merge), static_cast<unsigned long long>(input_count),
+                    static_cast<unsigned long long>(m_topology_patch_sources.size()), timer.ms());
+            }
+
             void PrepareGroupedUpdates(const std::pair<index_t,index_t>& local_begin,
                                        index_t NumOfSnapShots) {
                 Stopwatch sw_group(true);
@@ -2270,8 +2449,17 @@ namespace sepgraph {
                     const auto &edge = load_update.added_edges_w[i];
                     batch.additions.push_back({edge.u, edge.v});
                 }
-                m_grouped_updates = topology::GroupedUpdateBatch(batch);
+                m_grouped_updates = topology::GroupedUpdateBatch(batch, &m_chunk_store->MutationWorkers());
+                LOG("[I21-RADIX][batch %u] parallel=%u\n", NumOfSnapShots,
+                    unsigned(m_grouped_updates.ParallelSourceRadix()));
+                LOG("[I23-GROUP][batch %u] bulk=%u record_ms=%.3f sort_ms=%.3f materialize_ms=%.3f\n",
+                    NumOfSnapShots, unsigned(m_grouped_updates.BulkSourceGroups()),
+                    m_grouped_updates.RecordMs(), m_grouped_updates.SortMs(), m_grouped_updates.MaterializeMs());
+                LOG("[I20-MODE][batch %u] maintenance=%s requests=%llu\n",
+                    NumOfSnapShots, m_grouped_updates.LargeMaintenance() ? "large" : "regular",
+                    static_cast<unsigned long long>(batch.deletions.size() + batch.additions.size()));
                 m_topology_patch_sources.clear();
+                m_topology_delete_source_count = 0;
                 m_topology_patch_sources.reserve(m_grouped_updates.sources.size() * 2);
                 sw_group.stop();
                 LOG("[I14-BATCH][batch %u] sources=%llu updates=%llu group_ms=%.3f\n",
@@ -2289,12 +2477,43 @@ namespace sepgraph {
                     topology::IgnoreEffectiveUpdates observer;
                     metrics = m_chunk_store->ApplyGroupedPhase(m_grouped_updates, phase, observer);
                 }
+                LOG("[I19-WORK][batch %u phase=%s] deletion_match_reads=%llu mutation_edge_reads=%llu effective_bytes=%llu\n",
+                    batch, phase == topology::UpdatePhase::Delete ? "delete" : "add",
+                    static_cast<unsigned long long>(metrics.deletion_match_reads),
+                    static_cast<unsigned long long>(metrics.mutation_edge_reads),
+                    static_cast<unsigned long long>(metrics.effective_records * sizeof(topology::EffectiveEdgeDelta)));
+                LOG("[I20-WORK][batch %u phase=%s] source_plan_duplicate_bytes=%llu source_plan_index_bytes=%llu reverse_input_copy_bytes=%llu\n",
+                    batch, phase == topology::UpdatePhase::Delete ? "delete" : "add",
+                    static_cast<unsigned long long>(metrics.source_plan_duplicate_bytes),
+                    static_cast<unsigned long long>(metrics.source_plan_index_bytes),
+                    static_cast<unsigned long long>(m_grouped_updates.LargeMaintenance() ? 0 :
+                        metrics.effective_records * sizeof(topology::EffectiveEdgeDelta)));
+                LOG("[I21-WORK][batch %u phase=%s] reuse_delete_positions=%u position_capacity_bytes=%llu\n",
+                    batch, phase == topology::UpdatePhase::Delete ? "delete" : "add",
+                    static_cast<unsigned>(m_grouped_updates.ReuseDeletePositions()),
+                    static_cast<unsigned long long>(metrics.deletion_position_bytes));
                 const auto &changed = m_chunk_store->ChangedSources();
                 m_topology_patch_sources.insert(m_topology_patch_sources.end(), changed.begin(), changed.end());
+                if (phase == topology::UpdatePhase::Delete)
+                    m_topology_delete_source_count = m_topology_patch_sources.size();
                 LOG("[C3-EFFECTIVE][batch %u phase=%s] records=%llu changed_sources=%llu reverse_prepare_ms=%.3f\n",
                     batch, phase == topology::UpdatePhase::Delete ? "delete" : "add",
                     static_cast<unsigned long long>(metrics.effective_records),
                     static_cast<unsigned long long>(changed.size()), metrics.reverse_prepare_ms);
+                if (AppImplDeviceObject::kSupportsGpuDeletionRepair) {
+                    const auto &r = m_reverse_index.LastPrepareMetrics();
+                    LOG("[I19-REVERSE-WORK][batch %u phase=%s] input_records=%llu old_records_read=%llu output_records=%llu overlay_records=%llu\n",
+                        batch, phase == topology::UpdatePhase::Delete ? "delete" : "add",
+                        static_cast<unsigned long long>(r.input_records),
+                        static_cast<unsigned long long>(r.old_records_read),
+                        static_cast<unsigned long long>(r.output_records),
+                        static_cast<unsigned long long>(r.overlay_records));
+                    LOG("[I17-REVERSE][batch %u phase=%s] reset_copy_ms=%.3f sort_ms=%.3f group_ms=%.3f slots_ms=%.3f merge_ms=%.3f release_ms=%.3f commit_ms=%.3f destinations=%zu new_destinations=%zu buckets_before=%zu buckets_after=%zu\n",
+                        batch, phase == topology::UpdatePhase::Delete ? "delete" : "add",
+                        r.reset_copy_ms, r.sort_ms, r.group_ms, r.slots_ms, r.merge_ms,
+                        r.release_ms, r.commit_ms, r.destinations, r.new_destinations,
+                        r.buckets_before, r.buckets_after);
+                }
                 return metrics;
             }
 
@@ -2578,9 +2797,7 @@ namespace sepgraph {
                 local_begin.second += load_update.m_batch_size[NumOfSnapShots].second;
                 local_begin.first += load_update.m_batch_size[NumOfSnapShots].first;
 
-                std::sort(m_topology_patch_sources.begin(), m_topology_patch_sources.end());
-                m_topology_patch_sources.erase(std::unique(m_topology_patch_sources.begin(),
-                    m_topology_patch_sources.end()), m_topology_patch_sources.end());
+                FinalizePublicationSources(NumOfSnapShots);
                 m_vcsr_dev_graph_allocator->PublishSparse(
                     m_topology_patch_sources, stream_s.cuda_stream, FLAGS_check,
                     graph_datum.cache_edges_l1, graph_datum.num_of_cache);
@@ -2671,6 +2888,7 @@ namespace sepgraph {
 
 
             void compact_cache() {
+                cgcomm::Scope comm_scope(cgcomm::Category::Cache);
                 groute::Stream &stream_s = *m_stream;
                 auto &app_inst = *m_app_inst;
                 GraphDatum &graph_datum = *m_graph_datum;
@@ -2730,6 +2948,7 @@ namespace sepgraph {
             }
 
             void evication_cache(){
+                cgcomm::Scope comm_scope(cgcomm::Category::Cache);
                 groute::Stream &stream_s = *m_stream;
                 auto &app_inst = *m_app_inst;
                 GraphDatum &graph_datum = *m_graph_datum;
@@ -3240,9 +3459,7 @@ namespace sepgraph {
                 local_begin.second += load_update.m_batch_size[NumOfSnapShots].second;
                 local_begin.first += load_update.m_batch_size[NumOfSnapShots].first;
 
-                std::sort(m_topology_patch_sources.begin(), m_topology_patch_sources.end());
-                m_topology_patch_sources.erase(std::unique(m_topology_patch_sources.begin(),
-                    m_topology_patch_sources.end()), m_topology_patch_sources.end());
+                FinalizePublicationSources(NumOfSnapShots);
                 m_vcsr_dev_graph_allocator->PublishSparse(
                     m_topology_patch_sources, stream_s.cuda_stream, FLAGS_check,
                     graph_datum.cache_edges_l1, graph_datum.num_of_cache);
@@ -3458,23 +3675,35 @@ namespace sepgraph {
                 if (m_device_exact_source_counts == nullptr) {
                     GROUTE_CUDA_CHECK(cudaMalloc(
                         reinterpret_cast<void **>(&m_device_exact_source_counts),
-                        4 * sizeof(unsigned long long)));
+                        5 * sizeof(unsigned long long)));
                 }
                 GROUTE_CUDA_CHECK(cudaMemset(m_device_exact_source_counts, 0,
-                    4 * sizeof(unsigned long long)));
+                    5 * sizeof(unsigned long long)));
+                const char *schedule_env = std::getenv("CG_INSERTION_SCHEDULE");
+                // Large-diameter mode owns both ordered phases; stale schedule
+                // environment settings cannot disable its insertion policy.
+                const char *ordered_env = std::getenv("CG_ORDERED_REPAIR");
+                const bool large_diameter = ordered_env && std::string(ordered_env) == "1";
+                const std::string schedule = large_diameter ? "ordered" :
+                    (schedule_env ? schedule_env : "block");
+                if (schedule != "block" && schedule != "thread" && schedule != "ordered")
+                    throw std::invalid_argument("CG_INSERTION_SCHEDULE must be block, thread or ordered");
+                const bool thread_schedule = schedule == "thread";
+                const auto graph = m_vcsr_dev_graph_allocator->DeviceObject();
+                using Graph = decltype(graph);
+                auto kernel = thread_schedule
+                    ? RunThreadGpuClosure<AppImplDeviceObject, Graph, TValue, TBuffer>
+                    : (schedule == "ordered"
+                        ? RunExactGpuClosure<AppImplDeviceObject, Graph, TValue, TBuffer, true>
+                        : RunExactGpuClosure<AppImplDeviceObject, Graph, TValue, TBuffer>);
                 int blocks_per_sm = 0;
                 GROUTE_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                    &blocks_per_sm,
-                    RunExactGpuClosure<AppImplDeviceObject,
-                        decltype(m_vcsr_dev_graph_allocator->DeviceObject()),
-                        TValue, TBuffer>,
-                    128, 0));
+                    &blocks_per_sm, kernel, 128, 0));
                 const int grid_blocks = blocks_per_sm * m_dev_props.multiProcessorCount;
                 if (grid_blocks <= 0) {
                     LOG("[E4-R1] protocol_error=no_resident_cooperative_blocks\n");
                     std::abort();
                 }
-                const auto graph = m_vcsr_dev_graph_allocator->DeviceObject();
                 auto input_device = input.DeviceObject();
                 auto output_device = output.DeviceObject();
                 TValue *values = graph_datum.GetValueDeviceObject();
@@ -3488,10 +3717,13 @@ namespace sepgraph {
                     &values, &buffers, &parents, &epoch, &node_state_epoch,
                     &metrics};
                 GROUTE_CUDA_CHECK(cudaLaunchCooperativeKernel(
-                    reinterpret_cast<void *>(RunExactGpuClosure<
-                        AppImplDeviceObject, decltype(graph), TValue, TBuffer>),
+                    reinterpret_cast<void *>(kernel),
                     grid_blocks, 128, arguments, 0, m_stream->cuda_stream));
                 m_stream->Sync();
+                LOG("[I22-SCHEDULE] mode=%s blocks=%d threads=128 selection=%s large_diameter=%d\n",
+                    schedule.c_str(), grid_blocks,
+                    large_diameter ? "large_diameter_mode" :
+                        (schedule_env ? "explicit" : "mode_default"), int(large_diameter));
                 unsigned long long host_metrics[4] = {0, 0, 0, 0};
                 GROUTE_CUDA_CHECK(cudaMemcpy(host_metrics,
                     m_device_exact_source_counts, sizeof(host_metrics),
@@ -3756,6 +3988,30 @@ namespace sepgraph {
                         sizeof(uint64_t) * m_gpu_repair_incoming_offsets.size()));
             }
 
+            void WriteI16States(std::ostream &output, const std::vector<uint32_t> &ids) {
+                // Diagnostic-only bounded gather; no extra allocation survives into repair.
+                const uint32_t capacity = std::min<size_t>(1048576, ids.size());
+                i16::Write(output, uint64_t(ids.size()));
+                if (!capacity) return;
+                uint32_t *device_ids = nullptr;
+                i16::State *device_states = nullptr;
+                GROUTE_CUDA_CHECK(cudaMalloc(&device_ids, size_t(capacity)*sizeof(uint32_t)));
+                GROUTE_CUDA_CHECK(cudaMalloc(&device_states, size_t(capacity)*sizeof(i16::State)));
+                std::vector<i16::State> states(capacity);
+                auto &g=*m_graph_datum;
+                for (size_t begin=0; begin<ids.size(); begin+=capacity) {
+                    const uint32_t count=std::min<size_t>(capacity,ids.size()-begin);
+                    GROUTE_CUDA_CHECK(cudaMemcpy(device_ids,ids.data()+begin,count*sizeof(uint32_t),cudaMemcpyHostToDevice));
+                    dim3 grid,block; KernelSizing(grid,block,count);
+                    GatherI16State<TValue,TBuffer><<<grid,block>>>(device_ids,count,g.GetValueDeviceObject(),
+                        g.GetBufferDeviceObject(),g.GetParentDeviceObject(),device_states);
+                    GROUTE_CUDA_CHECK(cudaMemcpy(states.data(),device_states,count*sizeof(i16::State),cudaMemcpyDeviceToHost));
+                    output.write(reinterpret_cast<const char *>(states.data()),count*sizeof(i16::State));
+                }
+                GROUTE_CUDA_CHECK(cudaFree(device_states)); GROUTE_CUDA_CHECK(cudaFree(device_ids));
+                if (!output) throw std::runtime_error("I16 state capture write failed");
+            }
+
             void RunGpuAffectedRepair(index_t batch) {
                 if (m_affected_vertices.empty()) {
                     m_gpu_repair_incoming_offsets.assign(1, 0);
@@ -3765,11 +4021,44 @@ namespace sepgraph {
                     return;
                 }
 
+                // Restrict optional CUPTI tracing to repair, excluding cooperative insertion.
+                struct RepairProfileScope {
+                    bool enabled;
+                    explicit RepairProfileScope(bool active):enabled(active) {
+                        if(enabled) GROUTE_CUDA_CHECK(cudaProfilerStart());
+                    }
+                    ~RepairProfileScope() { if(enabled) cudaProfilerStop(); }
+                } profile_scope(batch == 0 && std::getenv("CG_I16_PROFILE_REPAIR") != nullptr);
                 Stopwatch sw_topology(true);
                 const auto incoming_metrics = m_reverse_index.MaterializeIncoming(
                     m_affected_vertices, m_gpu_repair_incoming_offsets,
                     m_gpu_repair_incoming_sources);
                 sw_topology.stop();
+
+
+                const bool capture = !m_i16_snapshot_path.empty() && batch == 0;
+                std::ofstream snapshot;
+                std::vector<uint32_t> snapshot_ids;
+                double capture_before_ms = 0;
+                if (capture) {
+                    if (m_cpu_domain_map_enabled) throw std::runtime_error("I16 capture requires GPU owner");
+                    Stopwatch sw_capture(true);
+                    snapshot_ids=m_gpu_repair_incoming_sources;
+                    snapshot_ids.insert(snapshot_ids.end(),m_affected_vertices.begin(),m_affected_vertices.end());
+                    snapshot_ids.push_back(m_i16_snapshot_source);
+                    std::sort(snapshot_ids.begin(),snapshot_ids.end());
+                    snapshot_ids.erase(std::unique(snapshot_ids.begin(),snapshot_ids.end()),snapshot_ids.end());
+                    snapshot.open(m_i16_snapshot_path + ".tmp",std::ios::binary | std::ios::trunc);
+                    i16::Write(snapshot,i16::magic); i16::Write(snapshot,uint32_t(1));
+                    i16::Write(snapshot,uint32_t(UINT32_MAX)); i16::Write(snapshot,uint32_t(1));
+                    i16::Write(snapshot,uint32_t(batch)); i16::Write(snapshot,m_i16_snapshot_source);
+                    i16::Write(snapshot,uint32_t(m_graph_datum->nnodes));
+                    i16::WriteVector(snapshot,m_affected_vertices);
+                    i16::WriteVector(snapshot,m_gpu_repair_incoming_offsets);
+                    i16::WriteVector(snapshot,m_gpu_repair_incoming_sources);
+                    WriteI16States(snapshot,snapshot_ids);
+                    sw_capture.stop(); capture_before_ms=sw_capture.ms();
+                }
 
                 Stopwatch sw_allocate(true);
                 EnsureGpuAffectedRepairCapacity(m_affected_vertices.size(),
@@ -3777,6 +4066,8 @@ namespace sepgraph {
                 sw_allocate.stop();
 
                 Stopwatch sw_h2d(true);
+                {
+                cgcomm::Scope comm_scope(cgcomm::Category::Incoming);
                 GROUTE_CUDA_CHECK(cudaMemcpy(
                     m_device_gpu_repair_offsets,
                     m_gpu_repair_incoming_offsets.data(),
@@ -3788,6 +4079,7 @@ namespace sepgraph {
                         m_gpu_repair_incoming_sources.data(),
                         sizeof(index_t) * m_gpu_repair_incoming_sources.size(),
                         cudaMemcpyHostToDevice));
+                }
                 }
                 sw_h2d.stop();
 
@@ -3849,7 +4141,23 @@ namespace sepgraph {
                     }
                 }
 
-                if (!owner_local_repair) {
+                const char* ordered_env=std::getenv("CG_ORDERED_REPAIR");
+                const bool ordered=ordered_env && std::string(ordered_env)=="1";
+                if(ordered && (owner_local_repair || !FLAGS_f1_component_trace_file.empty()))
+                    throw std::runtime_error("Ordered repair requires GPU ownership and disabled component trace");
+                if (ordered) {
+                    const auto metrics=i17_ordered::Run<AppImplDeviceObject>(
+                        graph_datum.nnodes,m_affected_vertices,m_gpu_repair_incoming_offsets,
+                        m_gpu_repair_incoming_sources,m_device_affected_vertices.GetDeviceDataPtr(),
+                        m_device_gpu_repair_offsets,m_device_gpu_repair_sources,
+                        graph_datum.GetValueDeviceObject(),graph_datum.GetBufferDeviceObject(),
+                        graph_datum.GetParentDeviceObject());
+                    iterations=metrics.iterations;
+                    LOG("[I17-ORDERED][batch %u] prepare_ms=%.3f closure_ms=%.3f publish_ms=%.3f internal_scans=%llu queue_peak=%llu extra_device_bytes=%llu iterations=%u\n",
+                        batch,metrics.prepare_ms,metrics.closure_ms,metrics.publish_ms,
+                        (unsigned long long)metrics.scans,(unsigned long long)metrics.queue_peak,
+                        (unsigned long long)metrics.device_bytes,iterations);
+                } else if (!owner_local_repair) {
                     do {
                         GROUTE_CUDA_CHECK(cudaMemset(
                             m_device_gpu_repair_changed, 0, sizeof(unsigned int)));
@@ -4206,6 +4514,16 @@ namespace sepgraph {
                 TraceAffectedComponents(batch, trace_changed_source_events,
                                         !owner_local_repair);
                 sw_closure.stop();
+                if (capture) {
+                    Stopwatch sw_capture(true);
+                    WriteI16States(snapshot,snapshot_ids);
+                    snapshot.close();
+                    if (!snapshot || std::rename((m_i16_snapshot_path + ".tmp").c_str(),m_i16_snapshot_path.c_str()) != 0)
+                        throw std::runtime_error("I16 snapshot publication failed");
+                    sw_capture.stop();
+                    LOG("[I16-SNAPSHOT][batch %u] states=%llu before_ms=%.3f after_ms=%.3f temporary_device_bytes=20971520 diagnostic_only=1\n",
+                        batch,static_cast<unsigned long long>(snapshot_ids.size()),capture_before_ms,sw_capture.ms());
+                }
                 if (owner_local_repair) {
                     ++m_cpu_domain_state_epoch;
                     const long long outstanding_credit =
@@ -4352,8 +4670,8 @@ namespace sepgraph {
                 const double attributed_ms =
                     sw_reset_seed.ms() + sw_invalidation.ms() +
                     sw_physical_delete.ms() + sw_repair.ms();
-                LOG("[P0-DELETE-ATTR][batch %u] repair_executor=gpu affected=%u invalidation_rounds=%u reset_seed_ms=%.3f initial_rebuild_ms=0.000 invalidation_ms=%.3f pma_delete_ms=%.3f repair_wall_ms=%.3f residual_ms=%.3f total_ms=%.3f\n",
-                    NumOfSnapShots,
+                LOG("[P0-DELETE-ATTR][batch %u] repair_executor=%s affected=%u invalidation_rounds=%u reset_seed_ms=%.3f initial_rebuild_ms=0.000 invalidation_ms=%.3f pma_delete_ms=%.3f repair_wall_ms=%.3f residual_ms=%.3f total_ms=%.3f\n",
+                    NumOfSnapShots,"gpu",
                     static_cast<uint32_t>(m_affected_vertices.size()),
                     invalidation_rounds,
                     sw_reset_seed.ms(),
@@ -4370,6 +4688,7 @@ namespace sepgraph {
             }
 
             void GatherValue() {
+                cgcomm::Scope comm_scope(cgcomm::Category::State);
                 return m_graph_datum->GatherValue();
             }
 
@@ -4386,10 +4705,12 @@ namespace sepgraph {
             }
 
             void GatherParent() {
+                cgcomm::Scope comm_scope(cgcomm::Category::State);
                 return m_graph_datum->GatherParent();
             }
 
             void GatherBuffer() {
+                cgcomm::Scope comm_scope(cgcomm::Category::State);
                 return m_graph_datum->GatherBuffer();
             }
 
@@ -4969,11 +5290,11 @@ namespace sepgraph {
                 if (m_insertion_epoch_active && m_device_exact_source_counts == nullptr) {
                     GROUTE_CUDA_CHECK(cudaMalloc(
                         reinterpret_cast<void **>(&m_device_exact_source_counts),
-                        4 * sizeof(unsigned long long)));
+                        5 * sizeof(unsigned long long)));
                 }
                 if (m_insertion_epoch_active) {
                     GROUTE_CUDA_CHECK(cudaMemset(m_device_exact_source_counts, 0,
-                        4 * sizeof(unsigned long long)));
+                        5 * sizeof(unsigned long long)));
                 }
                 if (exact_all_gpu && m_exact_source_frontier_ready) {
                     active_sources = m_exact_source_frontier_count;

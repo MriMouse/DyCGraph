@@ -1,0 +1,1286 @@
+COMMIT f527ba40845aaf6be6d85ee492cd52f8bdcbdf4a
+DATE 2026-06-18T05:36:11+00:00
+SUBJECT init
+
+ .gitignore                                         |     8 +
+ CMakeLists.txt                                     |    85 +
+ LICENSE                                            |   201 +
+ README.md                                          |    99 +
+ data                                               |     1 +
+ deps/SlabHash/.clang-format                        |     6 +
+ deps/SlabHash/.gitignore                           |     9 +
+ deps/SlabHash/.gitmodules                          |     9 +
+ deps/SlabHash/CMakeLists.txt                       |    96 +
+ deps/SlabHash/LICENSE                              |   201 +
+ deps/SlabHash/README.md                            |   492 +
+ deps/SlabHash/SlabAlloc/.gitignore                 |     8 +
+ deps/SlabHash/SlabAlloc/CMakeLists.txt             |    75 +
+ deps/SlabHash/SlabAlloc/LICENSE                    |   201 +
+ deps/SlabHash/SlabAlloc/README.md                  |    12 +
+ deps/SlabHash/SlabAlloc/src/slab_alloc.cu          |    16 +
+ deps/SlabHash/SlabAlloc/src/slab_alloc.cuh         |   392 +
+ deps/SlabHash/SlabAlloc/src/slab_alloc_global.cuh  |    31 +
+ deps/SlabHash/SlabAlloc/test/CMakeLists.txt        |     2 +
+ deps/SlabHash/SlabAlloc/test/test_slab_alloc.cu    |    40 +
+ deps/SlabHash/ThirdParty/googletest/.clang-format  |     4 +
+ deps/SlabHash/ThirdParty/googletest/.gitignore     |    84 +
+ deps/SlabHash/ThirdParty/googletest/.travis.yml    |    77 +
+ deps/SlabHash/ThirdParty/googletest/BUILD.bazel    |   177 +
+ deps/SlabHash/ThirdParty/googletest/CMakeLists.txt |    36 +
+ .../SlabHash/ThirdParty/googletest/CONTRIBUTING.md |   163 +
+ deps/SlabHash/ThirdParty/googletest/LICENSE        |    28 +
+ deps/SlabHash/ThirdParty/googletest/README.md      |   139 +
+ deps/SlabHash/ThirdParty/googletest/WORKSPACE      |    10 +
+ deps/SlabHash/ThirdParty/googletest/appveyor.yml   |   154 +
+ .../ThirdParty/googletest/ci/build-linux-bazel.sh  |    36 +
+ .../ThirdParty/googletest/ci/build-platformio.sh   |     2 +
+ .../SlabHash/ThirdParty/googletest/ci/env-linux.sh |    41 +
+ deps/SlabHash/ThirdParty/googletest/ci/env-osx.sh  |    47 +
+ .../ThirdParty/googletest/ci/get-nprocessors.sh    |    48 +
+ .../ThirdParty/googletest/ci/install-linux.sh      |    49 +
+ .../ThirdParty/googletest/ci/install-osx.sh        |    40 +
+ .../ThirdParty/googletest/ci/install-platformio.sh |     5 +
+ .../ThirdParty/googletest/ci/log-config.sh         |    51 +
+ deps/SlabHash/ThirdParty/googletest/ci/travis.sh   |    44 +
+ .../googletest/googlemock/CMakeLists.txt           |   228 +
+ .../ThirdParty/googletest/googlemock/CONTRIBUTORS  |    40 +
+ .../ThirdParty/googletest/googlemock/LICENSE       |    28 +
+ .../ThirdParty/googletest/googlemock/README.md     |    37 +
+ .../googletest/googlemock/cmake/gmock.pc.in        |    11 +
+ .../googletest/googlemock/cmake/gmock_main.pc.in   |    11 +
+ .../googlemock/include/gmock/gmock-actions.h       |  1141 ++
+ .../googlemock/include/gmock/gmock-cardinalities.h |   153 +
+ .../include/gmock/gmock-function-mocker.h          |   218 +
+ .../include/gmock/gmock-generated-actions.h        |  1885 +++
+ .../include/gmock/gmock-generated-actions.h.pump   |   628 +
+ .../gmock/gmock-generated-function-mockers.h       |   752 ++
+ .../gmock/gmock-generated-function-mockers.h.pump  |   227 +
+ .../include/gmock/gmock-generated-matchers.h       |  1100 ++
+ .../include/gmock/gmock-generated-matchers.h.pump  |   349 +
+ .../googlemock/include/gmock/gmock-matchers.h      |  4570 +++++++
+ .../googlemock/include/gmock/gmock-more-actions.h  |   162 +
+ .../googlemock/include/gmock/gmock-more-matchers.h |    92 +
+ .../googlemock/include/gmock/gmock-nice-strict.h   |   215 +
+ .../googlemock/include/gmock/gmock-spec-builders.h |  1982 +++
+ .../googletest/googlemock/include/gmock/gmock.h    |   101 +
+ .../googlemock/scripts/fuse_gmock_files.py         |   240 +
+ .../googlemock/scripts/generator/LICENSE           |   203 +
+ .../googletest/googlemock/scripts/generator/README |    34 +
+ .../googlemock/scripts/generator/README.cppclean   |   115 +
+ .../googlemock/scripts/generator/gmock_gen.py      |    31 +
+ .../googletest/googlemock/scripts/gmock_doctor.py  |   640 +
+ .../googletest/googlemock/scripts/upload.py        |  1387 ++
+ .../googletest/googlemock/scripts/upload_gmock.py  |    78 +
+ .../googletest/googlemock/src/gmock-all.cc         |    46 +
+ .../googlemock/src/gmock-cardinalities.cc          |   155 +
+ .../googlemock/src/gmock-internal-utils.cc         |   200 +
+ .../googletest/googlemock/src/gmock-matchers.cc    |   462 +
+ .../googlemock/src/gmock-spec-builders.cc          |   887 ++
+ .../ThirdParty/googletest/googlemock/src/gmock.cc  |   213 +
+ .../googletest/googlemock/src/gmock_main.cc        |    65 +
+ .../googletest/googlemock/test/BUILD.bazel         |   107 +
+ .../googlemock/test/gmock-actions_test.cc          |  1453 +++
+ .../googlemock/test/gmock-cardinalities_test.cc    |   427 +
+ .../googlemock/test/gmock-function-mocker_nc.cc    |    16 +
+ .../test/gmock-function-mocker_nc_test.py          |    43 +
+ .../googlemock/test/gmock-function-mocker_test.cc  |   660 +
+ .../test/gmock-generated-actions_test.cc           |  1064 ++
+ .../test/gmock-generated-function-mockers_test.cc  |   659 +
+ .../test/gmock-generated-matchers_test.cc          |  1324 ++
+ .../googlemock/test/gmock-internal-utils_test.cc   |   757 ++
+ .../googlemock/test/gmock-matchers_test.cc         |  6792 ++++++++++
+ .../googlemock/test/gmock-more-actions_test.cc     |   699 +
+ .../googlemock/test/gmock-nice-strict_test.cc      |   500 +
+ .../googletest/googlemock/test/gmock-port_test.cc  |    42 +
+ .../googlemock/test/gmock-pp-string_test.cc        |   206 +
+ .../googletest/googlemock/test/gmock-pp_test.cc    |    73 +
+ .../googlemock/test/gmock-spec-builders_test.cc    |  2773 ++++
+ .../googletest/googlemock/test/gmock_all_test.cc   |    49 +
+ .../googletest/googlemock/test/gmock_ex_test.cc    |    80 +
+ .../googletest/googlemock/test/gmock_leak_test.py  |   104 +
+ .../googletest/googlemock/test/gmock_leak_test_.cc |    99 +
+ .../googletest/googlemock/test/gmock_link2_test.cc |    39 +
+ .../googletest/googlemock/test/gmock_link_test.cc  |    39 +
+ .../googletest/googlemock/test/gmock_link_test.h   |   690 +
+ .../googlemock/test/gmock_output_test.py           |   183 +
+ .../googlemock/test/gmock_output_test_.cc          |   309 +
+ .../googlemock/test/gmock_output_test_golden.txt   |   317 +
+ .../googlemock/test/gmock_stress_test.cc           |   240 +
+ .../googletest/googlemock/test/gmock_test.cc       |   181 +
+ .../googletest/googlemock/test/gmock_test_utils.py |   108 +
+ .../googletest/googletest/CMakeLists.txt           |   328 +
+ .../ThirdParty/googletest/googletest/CONTRIBUTORS  |    37 +
+ .../ThirdParty/googletest/googletest/LICENSE       |    28 +
+ .../ThirdParty/googletest/googletest/README.md     |   244 +
+ .../googletest/googletest/cmake/Config.cmake.in    |     9 +
+ .../googletest/googletest/cmake/gtest.pc.in        |    10 +
+ .../googletest/googletest/cmake/gtest_main.pc.in   |    11 +
+ .../googletest/cmake/internal_utils.cmake          |   358 +
+ .../googletest/googletest/cmake/libgtest.la.in     |    21 +
+ .../googletest/include/gtest/gtest-death-test.h    |   343 +
+ .../googletest/include/gtest/gtest-matchers.h      |   748 ++
+ .../googletest/include/gtest/gtest-message.h       |   218 +
+ .../googletest/include/gtest/gtest-param-test.h    |   503 +
+ .../googletest/include/gtest/gtest-printers.h      |   928 ++
+ .../googletest/include/gtest/gtest-spi.h           |   238 +
+ .../googletest/include/gtest/gtest-test-part.h     |   184 +
+ .../googletest/include/gtest/gtest-typed-test.h    |   336 +
+ .../googletest/googletest/include/gtest/gtest.h    |  2458 ++++
+ .../googletest/include/gtest/gtest_pred_impl.h     |   359 +
+ .../googletest/include/gtest/gtest_prod.h          |    61 +
+ .../googletest/googletest/samples/prime_tables.h   |   126 +
+ .../googletest/googletest/samples/sample1.cc       |    66 +
+ .../googletest/googletest/samples/sample1.h        |    41 +
+ .../googletest/samples/sample10_unittest.cc        |   139 +
+ .../googletest/samples/sample1_unittest.cc         |   151 +
+ .../googletest/googletest/samples/sample2.cc       |    54 +
+ .../googletest/googletest/samples/sample2.h        |    81 +
+ .../googletest/samples/sample2_unittest.cc         |   107 +
+ .../googletest/googletest/samples/sample3-inl.h    |   172 +
+ .../googletest/samples/sample3_unittest.cc         |   149 +
+ .../googletest/googletest/samples/sample4.cc       |    54 +
+ .../googletest/googletest/samples/sample4.h        |    53 +
+ .../googletest/samples/sample4_unittest.cc         |    53 +
+ .../googletest/samples/sample5_unittest.cc         |   196 +
+ .../googletest/samples/sample6_unittest.cc         |   224 +
+ .../googletest/samples/sample7_unittest.cc         |   117 +
+ .../googletest/samples/sample8_unittest.cc         |   154 +
+ .../googletest/samples/sample9_unittest.cc         |   156 +
+ .../googletest/googletest/scripts/common.py        |    83 +
+ .../googletest/scripts/fuse_gtest_files.py         |   249 +
+ .../googletest/scripts/gen_gtest_pred_impl.py      |   730 ++
+ .../googletest/googletest/scripts/gtest-config.in  |   274 +
+ .../googletest/googletest/scripts/pump.py          |   855 ++
+ .../googletest/googletest/scripts/upload.py        |  1387 ++
+ .../googletest/googletest/scripts/upload_gtest.py  |    78 +
+ .../googletest/googletest/src/gtest-all.cc         |    48 +
+ .../googletest/googletest/src/gtest-death-test.cc  |  1653 +++
+ .../googletest/googletest/src/gtest-filepath.cc    |   379 +
+ .../googletest/googletest/src/gtest-internal-inl.h |  1210 ++
+ .../googletest/googletest/src/gtest-matchers.cc    |    97 +
+ .../googletest/googletest/src/gtest-port.cc        |  1402 ++
+ .../googletest/googletest/src/gtest-printers.cc    |   442 +
+ .../googletest/googletest/src/gtest-test-part.cc   |   104 +
+ .../googletest/googletest/src/gtest-typed-test.cc  |   118 +
+ .../ThirdParty/googletest/googletest/src/gtest.cc  |  6124 +++++++++
+ .../googletest/googletest/src/gtest_main.cc        |    47 +
+ .../googletest/googletest/test/BUILD.bazel         |   518 +
+ .../test/googletest-break-on-failure-unittest.py   |   208 +
+ .../test/googletest-break-on-failure-unittest_.cc  |    86 +
+ .../test/googletest-catch-exceptions-test.py       |   236 +
+ .../test/googletest-catch-exceptions-test_.cc      |   293 +
+ .../googletest/test/googletest-color-test.py       |   127 +
+ .../googletest/test/googletest-color-test_.cc      |    62 +
+ .../googletest/test/googletest-death-test-test.cc  |  1460 +++
+ .../test/googletest-death-test_ex_test.cc          |    92 +
+ .../googletest/test/googletest-env-var-test.py     |   117 +
+ .../googletest/test/googletest-env-var-test_.cc    |   122 +
+ .../googletest/test/googletest-filepath-test.cc    |   649 +
+ .../googletest/test/googletest-filter-unittest.py  |   639 +
+ .../googletest/test/googletest-filter-unittest_.cc |   137 +
+ .../test/googletest-json-outfiles-test.py          |   185 +
+ .../test/googletest-json-output-unittest.py        |   758 ++
+ .../test/googletest-list-tests-unittest.py         |   205 +
+ .../test/googletest-list-tests-unittest_.cc        |   156 +
+ .../googletest/test/googletest-listener-test.cc    |   407 +
+ .../googletest/test/googletest-message-test.cc     |   158 +
+ .../googletest/test/googletest-options-test.cc     |   216 +
+ .../test/googletest-output-test-golden-lin.txt     |  1137 ++
+ .../googletest/test/googletest-output-test.py      |   346 +
+ .../googletest/test/googletest-output-test_.cc     |  1149 ++
+ .../googletest-param-test-invalid-name1-test.py    |    63 +
+ .../googletest-param-test-invalid-name1-test_.cc   |    50 +
+ .../googletest-param-test-invalid-name2-test.py    |    62 +
+ .../googletest-param-test-invalid-name2-test_.cc   |    55 +
+ .../googletest/test/googletest-param-test-test.cc  |  1055 ++
+ .../googletest/test/googletest-param-test-test.h   |    51 +
+ .../googletest/test/googletest-param-test2-test.cc |    61 +
+ .../googletest/test/googletest-port-test.cc        |  1290 ++
+ .../googletest/test/googletest-printers-test.cc    |  1620 +++
+ .../googletest/test/googletest-shuffle-test.py     |   323 +
+ .../googletest/test/googletest-shuffle-test_.cc    |   101 +
+ .../googletest/test/googletest-test-part-test.cc   |   230 +
+ .../googletest/test/googletest-test2_test.cc       |    61 +
+ .../test/googletest-throw-on-failure-test.py       |   168 +
+ .../test/googletest-throw-on-failure-test_.cc      |    71 +
+ .../test/googletest-uninitialized-test.py          |    67 +
+ .../test/googletest-uninitialized-test_.cc         |    42 +
+ .../googletest/test/gtest-typed-test2_test.cc      |    44 +
+ .../googletest/test/gtest-typed-test_test.cc       |   461 +
+ .../googletest/test/gtest-typed-test_test.h        |    65 +
+ .../googletest/test/gtest-unittest-api_test.cc     |   340 +
+ .../googletest/googletest/test/gtest_all_test.cc   |    46 +
+ .../test/gtest_assert_by_exception_test.cc         |   116 +
+ .../googletest/test/gtest_environment_test.cc      |   188 +
+ .../googletest/googletest/test/gtest_help_test.py  |   170 +
+ .../googletest/googletest/test/gtest_help_test_.cc |    45 +
+ .../googletest/test/gtest_json_test_utils.py       |    60 +
+ .../googletest/test/gtest_list_output_unittest.py  |   141 +
+ .../googletest/test/gtest_list_output_unittest_.cc |    51 +
+ .../googletest/test/gtest_main_unittest.cc         |    44 +
+ .../googletest/test/gtest_no_test_unittest.cc      |    54 +
+ .../googletest/test/gtest_pred_impl_unittest.cc    |  2427 ++++
+ .../googletest/test/gtest_premature_exit_test.cc   |   126 +
+ .../googletest/googletest/test/gtest_prod_test.cc  |    56 +
+ .../googletest/test/gtest_repeat_test.cc           |   233 +
+ .../gtest_skip_environment_check_output_test.py    |    54 +
+ .../test/gtest_skip_in_environment_setup_test.cc   |    49 +
+ .../googletest/googletest/test/gtest_skip_test.cc  |    55 +
+ .../googletest/test/gtest_sole_header_test.cc      |    56 +
+ .../googletest/test/gtest_stress_test.cc           |   248 +
+ .../test/gtest_test_macro_stack_footprint_test.cc  |    89 +
+ .../googletest/googletest/test/gtest_test_utils.py |   313 +
+ .../googletest/test/gtest_testbridge_test.py       |    63 +
+ .../googletest/test/gtest_testbridge_test_.cc      |    43 +
+ .../test/gtest_throw_on_failure_ex_test.cc         |    90 +
+ .../googletest/googletest/test/gtest_unittest.cc   |  7568 +++++++++++
+ .../googletest/test/gtest_xml_outfile1_test_.cc    |    43 +
+ .../googletest/test/gtest_xml_outfile2_test_.cc    |    43 +
+ .../googletest/test/gtest_xml_outfiles_test.py     |   135 +
+ .../googletest/test/gtest_xml_output_unittest.py   |   389 +
+ .../googletest/test/gtest_xml_output_unittest_.cc  |   188 +
+ .../googletest/test/gtest_xml_test_utils.py        |   196 +
+ .../googletest/googletest/test/production.cc       |    35 +
+ .../googletest/googletest/test/production.h        |    54 +
+ deps/SlabHash/ThirdParty/googletest/library.json   |    59 +
+ deps/SlabHash/ThirdParty/googletest/platformio.ini |    31 +
+ deps/SlabHash/ThirdParty/rapidjson/.gitattributes  |    22 +
+ deps/SlabHash/ThirdParty/rapidjson/.gitignore      |    28 +
+ deps/SlabHash/ThirdParty/rapidjson/.gitmodules     |     3 +
+ deps/SlabHash/ThirdParty/rapidjson/.travis.yml     |    99 +
+ deps/SlabHash/ThirdParty/rapidjson/CHANGELOG.md    |   158 +
+ deps/SlabHash/ThirdParty/rapidjson/CMakeLists.txt  |   221 +
+ .../rapidjson/CMakeModules/FindGTestSrc.cmake      |    30 +
+ deps/SlabHash/ThirdParty/rapidjson/RapidJSON.pc.in |     7 +
+ .../ThirdParty/rapidjson/RapidJSONConfig.cmake.in  |    15 +
+ .../rapidjson/RapidJSONConfigVersion.cmake.in      |    10 +
+ deps/SlabHash/ThirdParty/rapidjson/appveyor.yml    |    54 +
+ .../ThirdParty/rapidjson/bin/data/abcde.txt        |     1 +
+ .../ThirdParty/rapidjson/bin/data/glossary.json    |   Bin 0 -> 603 bytes
+ .../ThirdParty/rapidjson/bin/data/menu.json        |   Bin 0 -> 898 bytes
+ .../ThirdParty/rapidjson/bin/data/readme.txt       |     1 +
+ .../ThirdParty/rapidjson/bin/data/sample.json      |   Bin 0 -> 687491 bytes
+ .../ThirdParty/rapidjson/bin/data/webapp.json      |   Bin 0 -> 3554 bytes
+ .../ThirdParty/rapidjson/bin/data/widget.json      |   Bin 0 -> 626 bytes
+ .../rapidjson/bin/encodings/utf16be.json           |   Bin 0 -> 368 bytes
+ .../rapidjson/bin/encodings/utf16bebom.json        |   Bin 0 -> 370 bytes
+ .../rapidjson/bin/encodings/utf16le.json           |   Bin 0 -> 368 bytes
+ .../rapidjson/bin/encodings/utf16lebom.json        |   Bin 0 -> 370 bytes
+ .../rapidjson/bin/encodings/utf32be.json           |   Bin 0 -> 736 bytes
+ .../rapidjson/bin/encodings/utf32bebom.json        |   Bin 0 -> 740 bytes
+ .../rapidjson/bin/encodings/utf32le.json           |   Bin 0 -> 736 bytes
+ .../rapidjson/bin/encodings/utf32lebom.json        |   Bin 0 -> 740 bytes
+ .../ThirdParty/rapidjson/bin/encodings/utf8.json   |   Bin 0 -> 322 bytes
+ .../rapidjson/bin/encodings/utf8bom.json           |   Bin 0 -> 325 bytes
+ .../rapidjson/bin/jsonchecker/fail1.json           |   Bin 0 -> 60 bytes
+ .../rapidjson/bin/jsonchecker/fail10.json          |   Bin 0 -> 58 bytes
+ .../rapidjson/bin/jsonchecker/fail11.json          |   Bin 0 -> 29 bytes
+ .../rapidjson/bin/jsonchecker/fail12.json          |   Bin 0 -> 31 bytes
+ .../rapidjson/bin/jsonchecker/fail13.json          |   Bin 0 -> 43 bytes
+ .../rapidjson/bin/jsonchecker/fail14.json          |   Bin 0 -> 31 bytes
+ .../rapidjson/bin/jsonchecker/fail15.json          |   Bin 0 -> 34 bytes
+ .../rapidjson/bin/jsonchecker/fail16.json          |   Bin 0 -> 8 bytes
+ .../rapidjson/bin/jsonchecker/fail17.json          |   Bin 0 -> 34 bytes
+ .../rapidjson/bin/jsonchecker/fail18.json          |   Bin 0 -> 50 bytes
+ .../rapidjson/bin/jsonchecker/fail19.json          |   Bin 0 -> 22 bytes
+ .../rapidjson/bin/jsonchecker/fail2.json           |   Bin 0 -> 17 bytes
+ .../rapidjson/bin/jsonchecker/fail20.json          |   Bin 0 -> 23 bytes
+ .../rapidjson/bin/jsonchecker/fail21.json          |   Bin 0 -> 32 bytes
+ .../rapidjson/bin/jsonchecker/fail22.json          |   Bin 0 -> 33 bytes
+ .../rapidjson/bin/jsonchecker/fail23.json          |   Bin 0 -> 20 bytes
+ .../rapidjson/bin/jsonchecker/fail24.json          |   Bin 0 -> 16 bytes
+ .../rapidjson/bin/jsonchecker/fail25.json          |   Bin 0 -> 29 bytes
+ .../rapidjson/bin/jsonchecker/fail26.json          |   Bin 0 -> 38 bytes
+ .../rapidjson/bin/jsonchecker/fail27.json          |   Bin 0 -> 14 bytes
+ .../rapidjson/bin/jsonchecker/fail28.json          |   Bin 0 -> 15 bytes
+ .../rapidjson/bin/jsonchecker/fail29.json          |   Bin 0 -> 4 bytes
+ .../rapidjson/bin/jsonchecker/fail3.json           |   Bin 0 -> 37 bytes
+ .../rapidjson/bin/jsonchecker/fail30.json          |   Bin 0 -> 5 bytes
+ .../rapidjson/bin/jsonchecker/fail31.json          |   Bin 0 -> 7 bytes
+ .../rapidjson/bin/jsonchecker/fail32.json          |   Bin 0 -> 40 bytes
+ .../rapidjson/bin/jsonchecker/fail33.json          |   Bin 0 -> 12 bytes
+ .../rapidjson/bin/jsonchecker/fail4.json           |   Bin 0 -> 16 bytes
+ .../rapidjson/bin/jsonchecker/fail5.json           |   Bin 0 -> 24 bytes
+ .../rapidjson/bin/jsonchecker/fail6.json           |   Bin 0 -> 26 bytes
+ .../rapidjson/bin/jsonchecker/fail7.json           |   Bin 0 -> 26 bytes
+ .../rapidjson/bin/jsonchecker/fail8.json           |   Bin 0 -> 16 bytes
+ .../rapidjson/bin/jsonchecker/fail9.json           |   Bin 0 -> 22 bytes
+ .../rapidjson/bin/jsonchecker/pass1.json           |   Bin 0 -> 1441 bytes
+ .../rapidjson/bin/jsonchecker/pass2.json           |   Bin 0 -> 52 bytes
+ .../rapidjson/bin/jsonchecker/pass3.json           |   Bin 0 -> 148 bytes
+ .../rapidjson/bin/jsonchecker/readme.txt           |     3 +
+ .../ThirdParty/rapidjson/bin/types/booleans.json   |   Bin 0 -> 849 bytes
+ .../ThirdParty/rapidjson/bin/types/floats.json     |   Bin 0 -> 1698 bytes
+ .../ThirdParty/rapidjson/bin/types/guids.json      |   Bin 0 -> 4202 bytes
+ .../ThirdParty/rapidjson/bin/types/integers.json   |   Bin 0 -> 1098 bytes
+ .../ThirdParty/rapidjson/bin/types/mixed.json      |   Bin 0 -> 15142 bytes
+ .../ThirdParty/rapidjson/bin/types/nulls.json      |   Bin 0 -> 802 bytes
+ .../ThirdParty/rapidjson/bin/types/paragraphs.json |   Bin 0 -> 33764 bytes
+ .../ThirdParty/rapidjson/bin/types/readme.txt      |     1 +
+ .../ThirdParty/rapidjson/contrib/natvis/LICENSE    |    45 +
+ .../ThirdParty/rapidjson/contrib/natvis/README.md  |     7 +
+ .../rapidjson/contrib/natvis/rapidjson.natvis      |    38 +
+ .../ThirdParty/rapidjson/doc/CMakeLists.txt        |    27 +
+ deps/SlabHash/ThirdParty/rapidjson/doc/Doxyfile.in |  2369 ++++
+ .../ThirdParty/rapidjson/doc/Doxyfile.zh-cn.in     |  2369 ++++
+ .../rapidjson/doc/diagram/architecture.dot         |    50 +
+ .../rapidjson/doc/diagram/architecture.png         |   Bin 0 -> 16569 bytes
+ .../rapidjson/doc/diagram/insituparsing.dot        |    65 +
+ .../rapidjson/doc/diagram/insituparsing.png        |   Bin 0 -> 37281 bytes
+ .../diagram/iterative-parser-states-diagram.dot    |    62 +
+ .../diagram/iterative-parser-states-diagram.png    |   Bin 0 -> 92378 bytes
+ .../ThirdParty/rapidjson/doc/diagram/makefile      |     8 +
+ .../ThirdParty/rapidjson/doc/diagram/move1.dot     |    47 +
+ .../ThirdParty/rapidjson/doc/diagram/move1.png     |   Bin 0 -> 16081 bytes
+ .../ThirdParty/rapidjson/doc/diagram/move2.dot     |    62 +
+ .../ThirdParty/rapidjson/doc/diagram/move2.png     |   Bin 0 -> 41517 bytes
+ .../ThirdParty/rapidjson/doc/diagram/move3.dot     |    60 +
+ .../ThirdParty/rapidjson/doc/diagram/move3.png     |   Bin 0 -> 36371 bytes
+ .../rapidjson/doc/diagram/normalparsing.dot        |    56 +
+ .../rapidjson/doc/diagram/normalparsing.png        |   Bin 0 -> 32887 bytes
+ .../ThirdParty/rapidjson/doc/diagram/simpledom.dot |    54 +
+ .../ThirdParty/rapidjson/doc/diagram/simpledom.png |   Bin 0 -> 43670 bytes
+ .../ThirdParty/rapidjson/doc/diagram/tutorial.dot  |    58 +
+ .../ThirdParty/rapidjson/doc/diagram/tutorial.png  |   Bin 0 -> 44634 bytes
+ .../rapidjson/doc/diagram/utilityclass.dot         |    73 +
+ .../rapidjson/doc/diagram/utilityclass.png         |   Bin 0 -> 99993 bytes
+ deps/SlabHash/ThirdParty/rapidjson/doc/dom.md      |   280 +
+ .../SlabHash/ThirdParty/rapidjson/doc/dom.zh-cn.md |   284 +
+ deps/SlabHash/ThirdParty/rapidjson/doc/encoding.md |   146 +
+ .../ThirdParty/rapidjson/doc/encoding.zh-cn.md     |   152 +
+ deps/SlabHash/ThirdParty/rapidjson/doc/faq.md      |   289 +
+ .../SlabHash/ThirdParty/rapidjson/doc/faq.zh-cn.md |   290 +
+ deps/SlabHash/ThirdParty/rapidjson/doc/features.md |   104 +
+ .../ThirdParty/rapidjson/doc/features.zh-cn.md     |   103 +
+ .../SlabHash/ThirdParty/rapidjson/doc/internals.md |   368 +
+ .../ThirdParty/rapidjson/doc/internals.zh-cn.md    |   363 +
+ .../ThirdParty/rapidjson/doc/logo/rapidjson.png    |   Bin 0 -> 5259 bytes
+ .../ThirdParty/rapidjson/doc/logo/rapidjson.svg    |   119 +
+ .../rapidjson/doc/misc/DoxygenLayout.xml           |   194 +
+ .../ThirdParty/rapidjson/doc/misc/doxygenextra.css |   274 +
+ .../ThirdParty/rapidjson/doc/misc/footer.html      |    11 +
+ .../ThirdParty/rapidjson/doc/misc/header.html      |    24 +
+ deps/SlabHash/ThirdParty/rapidjson/doc/npm.md      |    31 +
+ .../ThirdParty/rapidjson/doc/performance.md        |    26 +
+ .../ThirdParty/rapidjson/doc/performance.zh-cn.md  |    26 +
+ deps/SlabHash/ThirdParty/rapidjson/doc/pointer.md  |   234 +
+ .../ThirdParty/rapidjson/doc/pointer.zh-cn.md      |   234 +
+ deps/SlabHash/ThirdParty/rapidjson/doc/sax.md      |   509 +
+ .../SlabHash/ThirdParty/rapidjson/doc/sax.zh-cn.md |   487 +
+ deps/SlabHash/ThirdParty/rapidjson/doc/schema.md   |   505 +
+ .../ThirdParty/rapidjson/doc/schema.zh-cn.md       |   237 +
+ deps/SlabHash/ThirdParty/rapidjson/doc/stream.md   |   429 +
+ .../ThirdParty/rapidjson/doc/stream.zh-cn.md       |   429 +
+ deps/SlabHash/ThirdParty/rapidjson/doc/tutorial.md |   536 +
+ .../ThirdParty/rapidjson/doc/tutorial.zh-cn.md     |   535 +
+ .../ThirdParty/rapidjson/docker/debian/Dockerfile  |     8 +
+ .../ThirdParty/rapidjson/example/CMakeLists.txt    |    46 +
+ .../rapidjson/example/archiver/archiver.cpp        |   292 +
+ .../rapidjson/example/archiver/archiver.h          |   145 +
+ .../rapidjson/example/archiver/archivertest.cpp    |   287 +
+ .../rapidjson/example/capitalize/capitalize.cpp    |    67 +
+ .../rapidjson/example/condense/condense.cpp        |    32 +
+ .../rapidjson/example/filterkey/filterkey.cpp      |   135 +
+ .../example/filterkeydom/filterkeydom.cpp          |   170 +
+ .../ThirdParty/rapidjson/example/jsonx/jsonx.cpp   |   207 +
+ .../example/lookaheadparser/lookaheadparser.cpp    |   350 +
+ .../example/messagereader/messagereader.cpp        |   105 +
+ .../example/parsebyparts/parsebyparts.cpp          |   176 +
+ .../ThirdParty/rapidjson/example/pretty/pretty.cpp |    30 +
+ .../rapidjson/example/prettyauto/prettyauto.cpp    |    56 +
+ .../example/schemavalidator/schemavalidator.cpp    |    78 +
+ .../rapidjson/example/serialize/serialize.cpp      |   173 +
+ .../rapidjson/example/simpledom/simpledom.cpp      |    29 +
+ .../example/simplepullreader/simplepullreader.cpp  |    53 +
+ .../example/simplereader/simplereader.cpp          |    42 +
+ .../example/simplewriter/simplewriter.cpp          |    36 +
+ .../rapidjson/example/sortkeys/sortkeys.cpp        |    62 +
+ .../rapidjson/example/tutorial/tutorial.cpp        |   151 +
+ .../rapidjson/include/rapidjson/allocators.h       |   284 +
+ .../include/rapidjson/cursorstreamwrapper.h        |    78 +
+ .../rapidjson/include/rapidjson/document.h         |  2652 ++++
+ .../rapidjson/include/rapidjson/encodedstream.h    |   299 +
+ .../rapidjson/include/rapidjson/encodings.h        |   716 +
+ .../rapidjson/include/rapidjson/error/en.h         |    74 +
+ .../rapidjson/include/rapidjson/error/error.h      |   161 +
+ .../rapidjson/include/rapidjson/filereadstream.h   |    99 +
+ .../rapidjson/include/rapidjson/filewritestream.h  |   104 +
+ .../ThirdParty/rapidjson/include/rapidjson/fwd.h   |   151 +
+ .../include/rapidjson/internal/biginteger.h        |   290 +
+ .../rapidjson/include/rapidjson/internal/diyfp.h   |   271 +
+ .../rapidjson/include/rapidjson/internal/dtoa.h    |   245 +
+ .../rapidjson/include/rapidjson/internal/ieee754.h |    78 +
+ .../rapidjson/include/rapidjson/internal/itoa.h    |   308 +
+ .../rapidjson/include/rapidjson/internal/meta.h    |   186 +
+ .../rapidjson/include/rapidjson/internal/pow10.h   |    55 +
+ .../rapidjson/include/rapidjson/internal/regex.h   |   740 ++
+ .../rapidjson/include/rapidjson/internal/stack.h   |   232 +
+ .../rapidjson/include/rapidjson/internal/strfunc.h |    69 +
+ .../rapidjson/include/rapidjson/internal/strtod.h  |   290 +
+ .../rapidjson/include/rapidjson/internal/swap.h    |    46 +
+ .../rapidjson/include/rapidjson/istreamwrapper.h   |   127 +
+ .../rapidjson/include/rapidjson/memorybuffer.h     |    70 +
+ .../rapidjson/include/rapidjson/memorystream.h     |    71 +
+ .../include/rapidjson/msinttypes/inttypes.h        |   316 +
+ .../include/rapidjson/msinttypes/stdint.h          |   300 +
+ .../rapidjson/include/rapidjson/ostreamwrapper.h   |    81 +
+ .../rapidjson/include/rapidjson/pointer.h          |  1414 ++
+ .../rapidjson/include/rapidjson/prettywriter.h     |   277 +
+ .../rapidjson/include/rapidjson/rapidjson.h        |   656 +
+ .../rapidjson/include/rapidjson/reader.h           |  2230 ++++
+ .../rapidjson/include/rapidjson/schema.h           |  2496 ++++
+ .../rapidjson/include/rapidjson/stream.h           |   223 +
+ .../rapidjson/include/rapidjson/stringbuffer.h     |   121 +
+ .../rapidjson/include/rapidjson/writer.h           |   709 +
+ deps/SlabHash/ThirdParty/rapidjson/include_dirs.js |     2 +
+ deps/SlabHash/ThirdParty/rapidjson/library.json    |   Bin 0 -> 355 bytes
+ deps/SlabHash/ThirdParty/rapidjson/license.txt     |    57 +
+ deps/SlabHash/ThirdParty/rapidjson/package.json    |   Bin 0 -> 561 bytes
+ .../ThirdParty/rapidjson/rapidjson.autopkg         |    77 +
+ deps/SlabHash/ThirdParty/rapidjson/readme.md       |   160 +
+ deps/SlabHash/ThirdParty/rapidjson/readme.zh-cn.md |   152 +
+ .../ThirdParty/rapidjson/test/CMakeLists.txt       |    20 +
+ .../rapidjson/test/perftest/CMakeLists.txt         |    28 +
+ .../rapidjson/test/perftest/misctest.cpp           |   974 ++
+ .../rapidjson/test/perftest/perftest.cpp           |    24 +
+ .../ThirdParty/rapidjson/test/perftest/perftest.h  |   185 +
+ .../rapidjson/test/perftest/platformtest.cpp       |   166 +
+ .../rapidjson/test/perftest/rapidjsontest.cpp      |   546 +
+ .../rapidjson/test/perftest/schematest.cpp         |   223 +
+ .../rapidjson/test/unittest/CMakeLists.txt         |    92 +
+ .../rapidjson/test/unittest/allocatorstest.cpp     |   100 +
+ .../rapidjson/test/unittest/bigintegertest.cpp     |   138 +
+ .../test/unittest/cursorstreamwrappertest.cpp      |   115 +
+ .../rapidjson/test/unittest/documenttest.cpp       |   672 +
+ .../rapidjson/test/unittest/dtoatest.cpp           |    98 +
+ .../rapidjson/test/unittest/encodedstreamtest.cpp  |   313 +
+ .../rapidjson/test/unittest/encodingstest.cpp      |   451 +
+ .../rapidjson/test/unittest/filestreamtest.cpp     |   155 +
+ .../ThirdParty/rapidjson/test/unittest/fwdtest.cpp |   230 +
+ .../rapidjson/test/unittest/istreamwrappertest.cpp |   181 +
+ .../rapidjson/test/unittest/itoatest.cpp           |   160 +
+ .../rapidjson/test/unittest/jsoncheckertest.cpp    |   143 +
+ .../rapidjson/test/unittest/namespacetest.cpp      |    70 +
+ .../rapidjson/test/unittest/ostreamwrappertest.cpp |    92 +
+ .../rapidjson/test/unittest/pointertest.cpp        |  1635 +++
+ .../rapidjson/test/unittest/prettywritertest.cpp   |   373 +
+ .../rapidjson/test/unittest/readertest.cpp         |  2201 ++++
+ .../rapidjson/test/unittest/regextest.cpp          |   639 +
+ .../rapidjson/test/unittest/schematest.cpp         |  2072 +++
+ .../rapidjson/test/unittest/simdtest.cpp           |   219 +
+ .../rapidjson/test/unittest/strfunctest.cpp        |    30 +
+ .../rapidjson/test/unittest/stringbuffertest.cpp   |   192 +
+ .../rapidjson/test/unittest/strtodtest.cpp         |   132 +
+ .../rapidjson/test/unittest/unittest.cpp           |    51 +
+ .../ThirdParty/rapidjson/test/unittest/unittest.h  |   140 +
+ .../rapidjson/test/unittest/valuetest.cpp          |  1851 +++
+ .../rapidjson/test/unittest/writertest.cpp         |   598 +
+ .../ThirdParty/rapidjson/test/valgrind.supp        |    17 +
+ .../ThirdParty/rapidjson/travis-doxygen.sh         |   121 +
+ deps/SlabHash/bench/CMakeLists.txt                 |     5 +
+ deps/SlabHash/bench/batched_data_gen.cpp           |   218 +
+ deps/SlabHash/bench/batched_data_gen.h             |    66 +
+ deps/SlabHash/bench/bencher.py                     |   230 +
+ deps/SlabHash/bench/experiments.cuh                |   724 ++
+ deps/SlabHash/bench/main_benchmarks.cu             |   172 +
+ deps/SlabHash/src/CMakeLists.txt                   |     8 +
+ deps/SlabHash/src/CommandLine.h                    |    29 +
+ deps/SlabHash/src/concurrent_map/cmap_class.cuh    |   269 +
+ .../src/concurrent_map/cmap_implementation.cuh     |   165 +
+ deps/SlabHash/src/concurrent_map/device/build.cuh  |    82 +
+ .../concurrent_map/device/concurrent_kernel.cuh    |    65 +
+ .../src/concurrent_map/device/count_kernel.cuh     |    50 +
+ .../src/concurrent_map/device/delete_kernel.cuh    |    43 +
+ .../src/concurrent_map/device/misc_kernels.cuh     |    67 +
+ .../src/concurrent_map/device/search_kernel.cuh    |    79 +
+ deps/SlabHash/src/concurrent_map/warp/count.cuh    |    67 +
+ deps/SlabHash/src/concurrent_map/warp/delete.cuh   |    82 +
+ deps/SlabHash/src/concurrent_map/warp/insert.cuh   |   188 +
+ deps/SlabHash/src/concurrent_map/warp/search.cuh   |   116 +
+ deps/SlabHash/src/concurrent_set/cset_class.cuh    |   239 +
+ .../src/concurrent_set/cset_helper_kernels.cuh     |    78 +
+ .../src/concurrent_set/cset_implementation.cuh     |    55 +
+ .../src/concurrent_set/cset_warp_operations.cuh    |   146 +
+ deps/SlabHash/src/gpu_hash_table.cuh               |   315 +
+ deps/SlabHash/src/slab_hash.cuh                    |    54 +
+ deps/SlabHash/src/slab_hash_global.cuh             |   144 +
+ deps/SlabHash/src/slab_hash_helper_methods.cuh     |    46 +
+ deps/SlabHash/src/slab_iterator.cuh                |    71 +
+ deps/SlabHash/test/CMakeLists.txt                  |    15 +
+ deps/SlabHash/test/cmap_test.cu                    |   340 +
+ deps/SlabHash/test/concurrent_map.cu               |   150 +
+ deps/SlabHash/test/concurrent_set.cu               |   133 +
+ deps/SlabHash/test/iterator_test.cu                |   111 +
+ deps/SlabHash/test/test_slab_hash.cu               |    55 +
+ deps/cub/.cproject                                 |  1223 ++
+ deps/cub/.project                                  |    27 +
+ deps/cub/.settings/.gitignore                      |     1 +
+ .../cub/.settings/org.eclipse.cdt.codan.core.prefs |    72 +
+ deps/cub/.settings/org.eclipse.cdt.core.prefs      |   177 +
+ deps/cub/.settings/org.eclipse.cdt.ui.prefs        |     3 +
+ deps/cub/.settings/org.eclipse.core.runtime.prefs  |     4 +
+ deps/cub/CHANGE_LOG.TXT                            |   403 +
+ deps/cub/LICENSE.TXT                               |    24 +
+ deps/cub/README.md                                 |   128 +
+ deps/cub/common.mk                                 |   233 +
+ deps/cub/cub/agent/agent_histogram.cuh             |   787 ++
+ deps/cub/cub/agent/agent_radix_sort_downsweep.cuh  |   789 ++
+ deps/cub/cub/agent/agent_radix_sort_upsweep.cuh    |   526 +
+ deps/cub/cub/agent/agent_reduce.cuh                |   385 +
+ deps/cub/cub/agent/agent_reduce_by_key.cuh         |   547 +
+ deps/cub/cub/agent/agent_rle.cuh                   |   837 ++
+ deps/cub/cub/agent/agent_scan.cuh                  |   471 +
+ deps/cub/cub/agent/agent_segment_fixup.cuh         |   375 +
+ deps/cub/cub/agent/agent_select_if.cuh             |   703 +
+ deps/cub/cub/agent/agent_spmv_orig.cuh             |   670 +
+ deps/cub/cub/agent/single_pass_scan_operators.cuh  |   815 ++
+ deps/cub/cub/block/block_adjacent_difference.cuh   |   596 +
+ deps/cub/cub/block/block_discontinuity.cuh         |  1148 ++
+ deps/cub/cub/block/block_exchange.cuh              |  1248 ++
+ deps/cub/cub/block/block_histogram.cuh             |   415 +
+ deps/cub/cub/block/block_load.cuh                  |  1241 ++
+ deps/cub/cub/block/block_radix_rank.cuh            |   696 +
+ deps/cub/cub/block/block_radix_sort.cuh            |   863 ++
+ deps/cub/cub/block/block_raking_layout.cuh         |   152 +
+ deps/cub/cub/block/block_reduce.cuh                |   607 +
+ deps/cub/cub/block/block_scan.cuh                  |  2126 +++
+ deps/cub/cub/block/block_shuffle.cuh               |   305 +
+ deps/cub/cub/block/block_store.cuh                 |  1000 ++
+ .../specializations/block_histogram_atomic.cuh     |    82 +
+ .../block/specializations/block_histogram_sort.cuh |   226 +
+ .../block/specializations/block_reduce_raking.cuh  |   226 +
+ .../block_reduce_raking_commutative_only.cuh       |   199 +
+ .../block_reduce_warp_reductions.cuh               |   218 +
+ .../block/specializations/block_scan_raking.cuh    |   666 +
+ .../specializations/block_scan_warp_scans.cuh      |   392 +
+ .../specializations/block_scan_warp_scans2.cuh     |   436 +
+ .../specializations/block_scan_warp_scans3.cuh     |   418 +
+ deps/cub/cub/cub.cuh                               |    95 +
+ deps/cub/cub/device/device_histogram.cuh           |   866 ++
+ deps/cub/cub/device/device_partition.cuh           |   273 +
+ deps/cub/cub/device/device_radix_sort.cuh          |   797 ++
+ deps/cub/cub/device/device_reduce.cuh              |   734 ++
+ deps/cub/cub/device/device_run_length_encode.cuh   |   278 +
+ deps/cub/cub/device/device_scan.cuh                |   443 +
+ .../cub/cub/device/device_segmented_radix_sort.cuh |   876 ++
+ deps/cub/cub/device/device_segmented_reduce.cuh    |   619 +
+ deps/cub/cub/device/device_select.cuh              |   369 +
+ deps/cub/cub/device/device_spmv.cuh                |   174 +
+ .../cub/cub/device/dispatch/dispatch_histogram.cuh |  1096 ++
+ .../cub/device/dispatch/dispatch_radix_sort.cuh    |  1619 +++
+ deps/cub/cub/device/dispatch/dispatch_reduce.cuh   |   882 ++
+ .../cub/device/dispatch/dispatch_reduce_by_key.cuh |   554 +
+ deps/cub/cub/device/dispatch/dispatch_rle.cuh      |   538 +
+ deps/cub/cub/device/dispatch/dispatch_scan.cuh     |   563 +
+ .../cub/cub/device/dispatch/dispatch_select_if.cuh |   542 +
+ .../cub/cub/device/dispatch/dispatch_spmv_orig.cuh |   834 ++
+ deps/cub/cub/grid/grid_barrier.cuh                 |   211 +
+ deps/cub/cub/grid/grid_even_share.cuh              |   222 +
+ deps/cub/cub/grid/grid_mapping.cuh                 |   113 +
+ deps/cub/cub/grid/grid_queue.cuh                   |   220 +
+ deps/cub/cub/host/mutex.cuh                        |   171 +
+ deps/cub/cub/iterator/arg_index_input_iterator.cuh |   259 +
+ .../cub/iterator/cache_modified_input_iterator.cuh |   240 +
+ .../iterator/cache_modified_output_iterator.cuh    |   254 +
+ deps/cub/cub/iterator/constant_input_iterator.cuh  |   235 +
+ deps/cub/cub/iterator/counting_input_iterator.cuh  |   228 +
+ deps/cub/cub/iterator/discard_output_iterator.cuh  |   220 +
+ deps/cub/cub/iterator/tex_obj_input_iterator.cuh   |   310 +
+ deps/cub/cub/iterator/tex_ref_input_iterator.cuh   |   374 +
+ deps/cub/cub/iterator/transform_input_iterator.cuh |   252 +
+ deps/cub/cub/thread/thread_load.cuh                |   438 +
+ deps/cub/cub/thread/thread_operators.cuh           |   317 +
+ deps/cub/cub/thread/thread_reduce.cuh              |   152 +
+ deps/cub/cub/thread/thread_scan.cuh                |   268 +
+ deps/cub/cub/thread/thread_search.cuh              |   154 +
+ deps/cub/cub/thread/thread_store.cuh               |   422 +
+ deps/cub/cub/util_allocator.cuh                    |   708 +
+ deps/cub/cub/util_arch.cuh                         |   151 +
+ deps/cub/cub/util_debug.cuh                        |   145 +
+ deps/cub/cub/util_device.cuh                       |   347 +
+ deps/cub/cub/util_macro.cuh                        |   103 +
+ deps/cub/cub/util_namespace.cuh                    |    46 +
+ deps/cub/cub/util_ptx.cuh                          |   758 ++
+ deps/cub/cub/util_type.cuh                         |  1167 ++
+ .../cub/warp/specializations/warp_reduce_shfl.cuh  |   541 +
+ .../cub/warp/specializations/warp_reduce_smem.cuh  |   372 +
+ .../cub/warp/specializations/warp_scan_shfl.cuh    |   632 +
+ .../cub/warp/specializations/warp_scan_smem.cuh    |   397 +
+ deps/cub/cub/warp/warp_reduce.cuh                  |   612 +
+ deps/cub/cub/warp/warp_scan.cuh                    |   936 ++
+ deps/cub/eclipse code style profile.xml            |   155 +
+ deps/cub/examples/block/.gitignore                 |     7 +
+ deps/cub/examples/block/Makefile                   |   128 +
+ .../cub/examples/block/example_block_radix_sort.cu |   323 +
+ deps/cub/examples/block/example_block_reduce.cu    |   290 +
+ deps/cub/examples/block/example_block_scan.cu      |   334 +
+ deps/cub/examples/block/reduce_by_key.cu           |    57 +
+ deps/cub/examples/device/.gitignore                |     8 +
+ deps/cub/examples/device/Makefile                  |   197 +
+ deps/cub/examples/device/a.out                     |   Bin 0 -> 438808 bytes
+ .../device/example_device_partition_flagged.cu     |   233 +
+ .../examples/device/example_device_partition_if.cu |   244 +
+ .../examples/device/example_device_radix_sort.cu   |   232 +
+ deps/cub/examples/device/example_device_reduce.cu  |   180 +
+ deps/cub/examples/device/example_device_scan.cu    |   186 +
+ .../device/example_device_select_flagged.cu        |   233 +
+ .../examples/device/example_device_select_if.cu    |   242 +
+ .../device/example_device_select_unique.cu         |   221 +
+ .../example_device_sort_find_non_trivial_runs.cu   |   384 +
+ deps/cub/examples/device/log                       |   315 +
+ deps/cub/examples/device/log_int                   |   315 +
+ deps/cub/experimental/.gitignore                   |     1 +
+ deps/cub/experimental/Makefile                     |   125 +
+ deps/cub/experimental/defunct/example_coo_spmv.cu  |  1070 ++
+ .../experimental/defunct/test_device_seg_reduce.cu |  2142 +++
+ deps/cub/experimental/histogram/histogram_cub.h    |   109 +
+ .../histogram/histogram_gmem_atomics.h             |   185 +
+ .../histogram/histogram_smem_atomics.h             |   195 +
+ deps/cub/experimental/histogram_compare.cu         |   635 +
+ deps/cub/experimental/sparse_matrix.h              |  1244 ++
+ deps/cub/experimental/spmv_compare.cu              |   917 ++
+ deps/cub/experimental/spmv_script.sh               |    30 +
+ deps/cub/test/.gitignore                           |     3 +
+ deps/cub/test/Makefile                             |   468 +
+ deps/cub/test/half.h                               |   298 +
+ deps/cub/test/link_a.cu                            |    11 +
+ deps/cub/test/link_b.cu                            |    11 +
+ deps/cub/test/link_main.cpp                        |    10 +
+ deps/cub/test/mersenne.h                           |   160 +
+ deps/cub/test/test_allocator.cu                    |   459 +
+ deps/cub/test/test_block_histogram.cu              |   310 +
+ deps/cub/test/test_block_load_store.cu             |   549 +
+ deps/cub/test/test_block_radix_sort.cu             |   717 +
+ deps/cub/test/test_block_reduce.cu                 |   822 ++
+ deps/cub/test/test_block_scan.cu                   |   929 ++
+ deps/cub/test/test_device_histogram.cu             |  1669 +++
+ deps/cub/test/test_device_radix_sort.cu            |  1298 ++
+ deps/cub/test/test_device_reduce.cu                |  1359 ++
+ deps/cub/test/test_device_reduce_by_key.cu         |   853 ++
+ deps/cub/test/test_device_run_length_encode.cu     |   890 ++
+ deps/cub/test/test_device_scan.cu                  |  1015 ++
+ deps/cub/test/test_device_select_if.cu             |  1039 ++
+ deps/cub/test/test_device_select_unique.cu         |   651 +
+ deps/cub/test/test_grid_barrier.cu                 |   152 +
+ deps/cub/test/test_iterator.cu                     |   805 ++
+ deps/cub/test/test_util.h                          |  1628 +++
+ deps/cub/test/test_warp_reduce.cu                  |   840 ++
+ deps/cub/test/test_warp_scan.cu                    |   661 +
+ deps/cub/tune/.gitignore                           |     1 +
+ deps/cub/tune/Makefile                             |   192 +
+ deps/cub/tune/tune_device_reduce.cu                |   763 ++
+ deps/gflags/.gitattributes                         |     3 +
+ deps/gflags/.gitignore                             |    25 +
+ deps/gflags/.gitmodules                            |     4 +
+ deps/gflags/.travis.yml                            |    20 +
+ deps/gflags/AUTHORS.txt                            |     2 +
+ deps/gflags/BUILD                                  |    18 +
+ deps/gflags/CMakeLists.txt                         |   741 ++
+ deps/gflags/COPYING.txt                            |    28 +
+ deps/gflags/ChangeLog.txt                          |   276 +
+ deps/gflags/INSTALL.md                             |    83 +
+ deps/gflags/README.md                              |   320 +
+ deps/gflags/WORKSPACE                              |     6 +
+ deps/gflags/appveyor.yml                           |    68 +
+ deps/gflags/bazel/gflags.bzl                       |   103 +
+ deps/gflags/cmake/README_runtime.txt               |     4 +
+ deps/gflags/cmake/cmake_uninstall.cmake.in         |    26 +
+ deps/gflags/cmake/config.cmake.in                  |   183 +
+ deps/gflags/cmake/execute_test.cmake               |    53 +
+ deps/gflags/cmake/package.cmake.in                 |    49 +
+ deps/gflags/cmake/package.pc.in                    |    14 +
+ deps/gflags/cmake/utils.cmake                      |   205 +
+ deps/gflags/cmake/version.cmake.in                 |    21 +
+ deps/gflags/cmake_install.cmake                    |    43 +
+ deps/gflags/doc/.nojekyll                          |     0
+ deps/gflags/doc/designstyle.css                    |   115 +
+ deps/gflags/doc/index.html                         |   638 +
+ deps/gflags/gflags-config-install.cmake            |   183 +
+ deps/gflags/gflags-config-version.cmake            |    21 +
+ deps/gflags/gflags-config.cmake                    |   183 +
+ deps/gflags/gflags-nonamespace-targets.cmake       |    64 +
+ deps/gflags/gflags-targets.cmake                   |    64 +
+ deps/gflags/gflags.pc                              |    14 +
+ deps/gflags/include/gflags/defines.h               |    48 +
+ deps/gflags/src/config.h                           |    59 +
+ deps/gflags/src/defines.h.in                       |    48 +
+ deps/gflags/src/gflags.cc                          |  2013 +++
+ deps/gflags/src/gflags.h.in                        |   626 +
+ deps/gflags/src/gflags_completions.cc              |   772 ++
+ deps/gflags/src/gflags_completions.h.in            |   121 +
+ deps/gflags/src/gflags_completions.sh              |   117 +
+ deps/gflags/src/gflags_declare.h.in                |   156 +
+ deps/gflags/src/gflags_ns.h.in                     |   102 +
+ deps/gflags/src/gflags_reporting.cc                |   442 +
+ deps/gflags/src/mutex.h                            |   348 +
+ deps/gflags/src/util.h                             |   373 +
+ deps/gflags/src/windows_port.cc                    |    73 +
+ deps/gflags/src/windows_port.h                     |   135 +
+ deps/gflags/test/CMakeLists.txt                    |   209 +
+ deps/gflags/test/config/CMakeLists.txt             |    10 +
+ deps/gflags/test/config/main.cc                    |    20 +
+ deps/gflags/test/flagfile.1                        |     1 +
+ deps/gflags/test/flagfile.2                        |     2 +
+ deps/gflags/test/flagfile.3                        |     1 +
+ deps/gflags/test/gflags_build.py.in                |    43 +
+ deps/gflags/test/gflags_declare_flags.cc           |    12 +
+ deps/gflags/test/gflags_declare_test.cc            |    12 +
+ deps/gflags/test/gflags_strip_flags_test.cc        |    60 +
+ deps/gflags/test/gflags_strip_flags_test.cmake     |     7 +
+ deps/gflags/test/gflags_unittest.cc                |  1572 +++
+ deps/gflags/test/gflags_unittest_flagfile          |     2 +
+ deps/gflags/test/nc/CMakeLists.txt                 |    16 +
+ deps/gflags/test/nc/gflags_nc.cc                   |    73 +
+ deps/json/nlohmann/json.hpp                        | 13003 +++++++++++++++++++
+ deps/stdgpu/.clang-format                          |    20 +
+ deps/stdgpu/.clang-tidy                            |    37 +
+ deps/stdgpu/.github/ISSUE_TEMPLATE/bug_report.md   |    26 +
+ .../.github/ISSUE_TEMPLATE/feature_request.md      |    17 +
+ deps/stdgpu/.github/workflows/analysis.yml         |    72 +
+ deps/stdgpu/.github/workflows/coverage.yml         |    53 +
+ deps/stdgpu/.github/workflows/documentation.yml    |    52 +
+ deps/stdgpu/.github/workflows/style.yml            |    41 +
+ deps/stdgpu/.github/workflows/ubuntu.yml           |   146 +
+ deps/stdgpu/.github/workflows/windows.yml          |   114 +
+ deps/stdgpu/.gitignore                             |     9 +
+ deps/stdgpu/CHANGELOG.md                           |   184 +
+ deps/stdgpu/CMakeLists.txt                         |   215 +
+ deps/stdgpu/CONTRIBUTING.md                        |    31 +
+ deps/stdgpu/LICENSE                                |   177 +
+ deps/stdgpu/README.md                              |   336 +
+ deps/stdgpu/STYLE_GUIDE.md                         |    15 +
+ deps/stdgpu/benchmark/CMakeLists.txt               |    25 +
+ deps/stdgpu/benchmark/benchmark_utils.h            |    58 +
+ deps/stdgpu/benchmark/stdgpu/CMakeLists.txt        |    22 +
+ deps/stdgpu/benchmark/stdgpu/bitset.inc            |   180 +
+ deps/stdgpu/benchmark/stdgpu/cuda/CMakeLists.txt   |     7 +
+ deps/stdgpu/benchmark/stdgpu/cuda/bitset.cu        |    16 +
+ deps/stdgpu/benchmark/stdgpu/cuda/deque.cu         |    16 +
+ deps/stdgpu/benchmark/stdgpu/cuda/mutex.cu         |    16 +
+ deps/stdgpu/benchmark/stdgpu/cuda/unordered_map.cu |    16 +
+ deps/stdgpu/benchmark/stdgpu/cuda/unordered_set.cu |    16 +
+ deps/stdgpu/benchmark/stdgpu/cuda/vector.cu        |    16 +
+ deps/stdgpu/benchmark/stdgpu/deque.inc             |   266 +
+ deps/stdgpu/benchmark/stdgpu/hip/CMakeLists.txt    |     7 +
+ deps/stdgpu/benchmark/stdgpu/hip/bitset.hip        |    16 +
+ deps/stdgpu/benchmark/stdgpu/hip/deque.hip         |    16 +
+ deps/stdgpu/benchmark/stdgpu/hip/mutex.hip         |    16 +
+ deps/stdgpu/benchmark/stdgpu/hip/unordered_map.hip |    16 +
+ deps/stdgpu/benchmark/stdgpu/hip/unordered_set.hip |    16 +
+ deps/stdgpu/benchmark/stdgpu/hip/vector.hip        |    16 +
+ deps/stdgpu/benchmark/stdgpu/main.cpp              |    77 +
+ deps/stdgpu/benchmark/stdgpu/mutex.inc             |    40 +
+ deps/stdgpu/benchmark/stdgpu/openmp/CMakeLists.txt |     7 +
+ deps/stdgpu/benchmark/stdgpu/openmp/bitset.cpp     |    16 +
+ deps/stdgpu/benchmark/stdgpu/openmp/deque.cpp      |    16 +
+ deps/stdgpu/benchmark/stdgpu/openmp/mutex.cpp      |    16 +
+ .../benchmark/stdgpu/openmp/unordered_map.cpp      |    16 +
+ .../benchmark/stdgpu/openmp/unordered_set.cpp      |    16 +
+ deps/stdgpu/benchmark/stdgpu/openmp/vector.cpp     |    16 +
+ .../benchmark/stdgpu/unordered_datastructure.inc   |   231 +
+ deps/stdgpu/benchmark/stdgpu/unordered_map.inc     |   117 +
+ deps/stdgpu/benchmark/stdgpu/unordered_set.inc     |   114 +
+ deps/stdgpu/benchmark/stdgpu/vector.inc            |   226 +
+ deps/stdgpu/cmake/FindClangFormat.cmake            |    24 +
+ deps/stdgpu/cmake/FindClangTidy.cmake              |    23 +
+ deps/stdgpu/cmake/FindCppcheck.cmake               |    23 +
+ deps/stdgpu/cmake/Findthrust.cmake                 |    40 +
+ deps/stdgpu/cmake/add_uninstall_target.cmake       |    12 +
+ deps/stdgpu/cmake/cmake_uninstall.cmake.in         |    24 +
+ deps/stdgpu/cmake/code_coverage.cmake              |   246 +
+ deps/stdgpu/cmake/config_summary.cmake             |    58 +
+ .../cmake/cuda/check_compute_capability.cmake      |    29 +
+ deps/stdgpu/cmake/cuda/compute_capability.cpp      |    50 +
+ .../stdgpu/cmake/cuda/determine_thrust_paths.cmake |    11 +
+ deps/stdgpu/cmake/cuda/set_device_flags.cmake      |    71 +
+ deps/stdgpu/cmake/hip/determine_thrust_paths.cmake |    17 +
+ deps/stdgpu/cmake/hip/set_device_flags.cmake       |    38 +
+ .../cmake/openmp/determine_thrust_paths.cmake      |    15 +
+ deps/stdgpu/cmake/openmp/set_device_flags.cmake    |     9 +
+ deps/stdgpu/cmake/set_host_flags.cmake             |    50 +
+ deps/stdgpu/cmake/setup_clang_format.cmake         |    53 +
+ deps/stdgpu/cmake/setup_clang_tidy.cmake           |    19 +
+ deps/stdgpu/cmake/setup_cppcheck.cmake             |    17 +
+ deps/stdgpu/cmake/stdgpu-config.cmake.in           |    10 +
+ deps/stdgpu/cmake/stdgpu-dependencies.cmake.in     |    13 +
+ deps/stdgpu/doc/CMakeLists.txt                     |    74 +
+ deps/stdgpu/doc/Doxyfile.in                        |  2709 ++++
+ deps/stdgpu/doc/DoxygenLayout.xml                  |   248 +
+ deps/stdgpu/doc/README.md                          |     9 +
+ deps/stdgpu/doc/custom.css                         |     3 +
+ deps/stdgpu/doc/footer.html                        |    17 +
+ deps/stdgpu/doc/header.html                        |    83 +
+ deps/stdgpu/doc/stdgpu/chapters.md                 |     8 +
+ deps/stdgpu/doc/stdgpu/index.md                    |   333 +
+ deps/stdgpu/doc/stdgpu/iterator.md                 |   110 +
+ deps/stdgpu/doc/stdgpu/memory.md                   |    91 +
+ deps/stdgpu/doc/stdgpu/modules.doxy                |     9 +
+ deps/stdgpu/doc/stdgpu/object.md                   |   128 +
+ deps/stdgpu/doc/stdgpu_logo.ico                    |   Bin 0 -> 15086 bytes
+ deps/stdgpu/doc/stdgpu_logo.png                    |   Bin 0 -> 68377 bytes
+ deps/stdgpu/examples/CMakeLists.txt                |    27 +
+ deps/stdgpu/examples/README.md                     |     7 +
+ deps/stdgpu/examples/contract.cpp                  |    44 +
+ .../examples/createAndDestroyDeviceArray.cpp       |    47 +
+ .../examples/createAndDestroyDeviceObject.cpp      |   119 +
+ deps/stdgpu/examples/cuda/CMakeLists.txt           |    14 +
+ deps/stdgpu/examples/cuda/atomic.cu                |    91 +
+ deps/stdgpu/examples/cuda/bitset.cu                |   107 +
+ deps/stdgpu/examples/cuda/deque.cu                 |    99 +
+ deps/stdgpu/examples/cuda/iterator.cu              |    66 +
+ deps/stdgpu/examples/cuda/mutex_array.cu           |   107 +
+ deps/stdgpu/examples/cuda/ranges.cu                |    92 +
+ deps/stdgpu/examples/cuda/unordered_map.cu         |   116 +
+ deps/stdgpu/examples/cuda/unordered_set.cu         |    96 +
+ deps/stdgpu/examples/cuda/vector.cu                |    81 +
+ deps/stdgpu/examples/hip/CMakeLists.txt            |     8 +
+ deps/stdgpu/examples/hip/atomic.hip                |    91 +
+ deps/stdgpu/examples/hip/iterator.hip              |    66 +
+ deps/stdgpu/examples/hip/ranges.hip                |    92 +
+ deps/stdgpu/examples/openmp/CMakeLists.txt         |    10 +
+ deps/stdgpu/examples/openmp/atomic.cpp             |    91 +
+ deps/stdgpu/examples/openmp/bitset.cpp             |   101 +
+ deps/stdgpu/examples/openmp/deque.cpp              |    93 +
+ deps/stdgpu/examples/openmp/iterator.cpp           |    66 +
+ deps/stdgpu/examples/openmp/mutex_array.cpp        |   100 +
+ deps/stdgpu/examples/openmp/ranges.cpp             |    92 +
+ deps/stdgpu/examples/openmp/unordered_map.cpp      |   112 +
+ deps/stdgpu/examples/openmp/unordered_set.cpp      |    92 +
+ deps/stdgpu/examples/openmp/vector.cpp             |    75 +
+ deps/stdgpu/scripts/build.sh                       |    18 +
+ deps/stdgpu/scripts/ci/check_install_openmp.sh     |    17 +
+ deps/stdgpu/scripts/ci/configure_cuda.sh           |    15 +
+ deps/stdgpu/scripts/ci/configure_hip.sh            |    15 +
+ deps/stdgpu/scripts/ci/configure_openmp.sh         |    15 +
+ .../scripts/ci/configure_openmp_clang_tidy.sh      |     8 +
+ .../stdgpu/scripts/ci/configure_openmp_cppcheck.sh |     8 +
+ .../scripts/ci/configure_openmp_documentation.sh   |     8 +
+ deps/stdgpu/scripts/ci/configure_openmp_lcov.sh    |     8 +
+ deps/stdgpu/scripts/ci/run_coverage.sh             |     6 +
+ deps/stdgpu/scripts/install.sh                     |    18 +
+ deps/stdgpu/scripts/run_tests.sh                   |    18 +
+ deps/stdgpu/scripts/setup.sh                       |    26 +
+ deps/stdgpu/scripts/uninstall.sh                   |    18 +
+ deps/stdgpu/scripts/utils/apply_code_style.sh      |     6 +
+ deps/stdgpu/scripts/utils/build_documentation.sh   |     6 +
+ deps/stdgpu/scripts/utils/check_code_style.sh      |     6 +
+ deps/stdgpu/scripts/utils/configure.sh             |    13 +
+ .../stdgpu/scripts/utils/create_empty_directory.sh |    16 +
+ deps/stdgpu/scripts/utils/download_dependencies.sh |     9 +
+ deps/stdgpu/scripts/utils/download_thrust.sh       |     7 +
+ .../utils/install_clang_format_ubuntu2004.sh       |     6 +
+ .../scripts/utils/install_clang_tidy_ubuntu.sh     |     6 +
+ .../scripts/utils/install_cppcheck_ubuntu.sh       |     6 +
+ .../utils/install_doxygen_dependencies_ubuntu.sh   |     6 +
+ deps/stdgpu/scripts/utils/install_lcov_ubuntu.sh   |     6 +
+ deps/stdgpu/scripts/utils/install_openmp_ubuntu.sh |     7 +
+ .../scripts/utils/set_cxx_compiler_ubuntu.sh       |    16 +
+ deps/stdgpu/scripts/utils/verify_headers.sh        |     6 +
+ deps/stdgpu/src/CMakeLists.txt                     |     1 +
+ deps/stdgpu/src/stdgpu/CMakeLists.txt              |   190 +
+ deps/stdgpu/src/stdgpu/algorithm.h                 |   172 +
+ deps/stdgpu/src/stdgpu/atomic.cuh                  |   927 ++
+ deps/stdgpu/src/stdgpu/bit.h                       |   121 +
+ deps/stdgpu/src/stdgpu/bitset.cuh                  |   420 +
+ deps/stdgpu/src/stdgpu/compiler.h                  |   105 +
+ deps/stdgpu/src/stdgpu/config.h.in                 |    88 +
+ deps/stdgpu/src/stdgpu/contract.h                  |   118 +
+ deps/stdgpu/src/stdgpu/cstddef.h                   |    99 +
+ deps/stdgpu/src/stdgpu/cuda/CMakeLists.txt         |    32 +
+ deps/stdgpu/src/stdgpu/cuda/atomic.cuh             |   185 +
+ deps/stdgpu/src/stdgpu/cuda/device.h               |    30 +
+ deps/stdgpu/src/stdgpu/cuda/impl/atomic_detail.cuh |   181 +
+ deps/stdgpu/src/stdgpu/cuda/impl/device.cpp        |    99 +
+ deps/stdgpu/src/stdgpu/cuda/impl/error.h           |    58 +
+ deps/stdgpu/src/stdgpu/cuda/impl/memory.cpp        |   144 +
+ deps/stdgpu/src/stdgpu/cuda/memory.h               |    65 +
+ deps/stdgpu/src/stdgpu/cuda/platform.h             |    76 +
+ deps/stdgpu/src/stdgpu/cuda/platform_check.h       |    31 +
+ deps/stdgpu/src/stdgpu/deque.cuh                   |   410 +
+ deps/stdgpu/src/stdgpu/device.h                    |    30 +
+ deps/stdgpu/src/stdgpu/execution.h                 |    95 +
+ deps/stdgpu/src/stdgpu/functional.h                |   522 +
+ deps/stdgpu/src/stdgpu/hip/CMakeLists.txt          |    42 +
+ deps/stdgpu/src/stdgpu/hip/atomic.h                |   185 +
+ deps/stdgpu/src/stdgpu/hip/device.h                |    30 +
+ deps/stdgpu/src/stdgpu/hip/impl/atomic_detail.h    |   135 +
+ deps/stdgpu/src/stdgpu/hip/impl/device.cpp         |   101 +
+ deps/stdgpu/src/stdgpu/hip/impl/error.h            |    58 +
+ deps/stdgpu/src/stdgpu/hip/impl/memory.cpp         |   145 +
+ deps/stdgpu/src/stdgpu/hip/memory.h                |    65 +
+ deps/stdgpu/src/stdgpu/hip/platform.h              |    76 +
+ deps/stdgpu/src/stdgpu/hip/platform_check.h        |    31 +
+ deps/stdgpu/src/stdgpu/impl/algorithm_detail.h     |   160 +
+ deps/stdgpu/src/stdgpu/impl/atomic_detail.cuh      |   866 ++
+ deps/stdgpu/src/stdgpu/impl/bit_detail.h           |   156 +
+ deps/stdgpu/src/stdgpu/impl/bitset_detail.cuh      |   470 +
+ deps/stdgpu/src/stdgpu/impl/deque_detail.cuh       |   691 +
+ deps/stdgpu/src/stdgpu/impl/device.cpp             |    31 +
+ deps/stdgpu/src/stdgpu/impl/functional_detail.h    |   145 +
+ deps/stdgpu/src/stdgpu/impl/iterator.cpp           |    30 +
+ deps/stdgpu/src/stdgpu/impl/iterator_detail.h      |   410 +
+ deps/stdgpu/src/stdgpu/impl/limits_detail.h        |   726 ++
+ deps/stdgpu/src/stdgpu/impl/memory.cpp             |   469 +
+ deps/stdgpu/src/stdgpu/impl/memory_detail.h        |   791 ++
+ deps/stdgpu/src/stdgpu/impl/mutex_detail.cuh       |   195 +
+ deps/stdgpu/src/stdgpu/impl/numeric_detail.h       |    83 +
+ deps/stdgpu/src/stdgpu/impl/platform_check.h       |    23 +
+ deps/stdgpu/src/stdgpu/impl/preprocessor.h         |    29 +
+ deps/stdgpu/src/stdgpu/impl/queue_detail.cuh       |    92 +
+ deps/stdgpu/src/stdgpu/impl/ranges_detail.h        |   213 +
+ deps/stdgpu/src/stdgpu/impl/stack_detail.cuh       |    92 +
+ deps/stdgpu/src/stdgpu/impl/type_traits_detail.h   |    84 +
+ deps/stdgpu/src/stdgpu/impl/unordered_base.cuh     |   543 +
+ .../src/stdgpu/impl/unordered_base_detail.cuh      |  1307 ++
+ .../src/stdgpu/impl/unordered_map_detail.cuh       |   412 +
+ .../src/stdgpu/impl/unordered_set_detail.cuh       |   393 +
+ deps/stdgpu/src/stdgpu/impl/utility_detail.h       |    45 +
+ deps/stdgpu/src/stdgpu/impl/vector_detail.cuh      |   655 +
+ deps/stdgpu/src/stdgpu/iterator.h                  |   538 +
+ deps/stdgpu/src/stdgpu/limits.h                    |  1569 +++
+ deps/stdgpu/src/stdgpu/memory.h                    |   859 ++
+ deps/stdgpu/src/stdgpu/mutex.cuh                   |   228 +
+ deps/stdgpu/src/stdgpu/numeric.h                   |    78 +
+ deps/stdgpu/src/stdgpu/openmp/CMakeLists.txt       |    29 +
+ deps/stdgpu/src/stdgpu/openmp/atomic.h             |   185 +
+ deps/stdgpu/src/stdgpu/openmp/device.h             |    30 +
+ deps/stdgpu/src/stdgpu/openmp/impl/atomic_detail.h |   221 +
+ deps/stdgpu/src/stdgpu/openmp/impl/device.cpp      |    42 +
+ deps/stdgpu/src/stdgpu/openmp/impl/memory.cpp      |    92 +
+ deps/stdgpu/src/stdgpu/openmp/memory.h             |    65 +
+ deps/stdgpu/src/stdgpu/openmp/platform.h           |    76 +
+ deps/stdgpu/src/stdgpu/openmp/platform_check.h     |    26 +
+ deps/stdgpu/src/stdgpu/platform.h                  |   136 +
+ deps/stdgpu/src/stdgpu/queue.cuh                   |   141 +
+ deps/stdgpu/src/stdgpu/ranges.h                    |   299 +
+ deps/stdgpu/src/stdgpu/stack.cuh                   |   141 +
+ deps/stdgpu/src/stdgpu/type_traits.h               |    53 +
+ deps/stdgpu/src/stdgpu/unordered_map.cuh           |   500 +
+ deps/stdgpu/src/stdgpu/unordered_set.cuh           |   488 +
+ deps/stdgpu/src/stdgpu/utility.h                   |    82 +
+ deps/stdgpu/src/stdgpu/vector.cuh                  |   475 +
+ deps/stdgpu/test/CMakeLists.txt                    |    22 +
+ deps/stdgpu/test/install_test/CMakeLists.txt       |    14 +
+ deps/stdgpu/test/install_test/install_test.cpp     |    29 +
+ deps/stdgpu/test/stdgpu/CMakeLists.txt             |    38 +
+ deps/stdgpu/test/stdgpu/algorithm.cpp              |   485 +
+ deps/stdgpu/test/stdgpu/atomic.inc                 |  2311 ++++
+ deps/stdgpu/test/stdgpu/bit.cpp                    |   340 +
+ deps/stdgpu/test/stdgpu/bitset.inc                 |   830 ++
+ deps/stdgpu/test/stdgpu/contract.cpp               |   142 +
+ deps/stdgpu/test/stdgpu/cuda/CMakeLists.txt        |     9 +
+ deps/stdgpu/test/stdgpu/cuda/atomic.cu             |    16 +
+ deps/stdgpu/test/stdgpu/cuda/bitset.cu             |    16 +
+ deps/stdgpu/test/stdgpu/cuda/deque.cu              |    16 +
+ deps/stdgpu/test/stdgpu/cuda/memory.cu             |    18 +
+ deps/stdgpu/test/stdgpu/cuda/mutex.cu              |    16 +
+ deps/stdgpu/test/stdgpu/cuda/unordered_map.cu      |    16 +
+ deps/stdgpu/test/stdgpu/cuda/unordered_set.cu      |    16 +
+ deps/stdgpu/test/stdgpu/cuda/vector.cu             |    16 +
+ deps/stdgpu/test/stdgpu/deque.inc                  |  2679 ++++
+ deps/stdgpu/test/stdgpu/functional.cpp             |   536 +
+ deps/stdgpu/test/stdgpu/hip/CMakeLists.txt         |     8 +
+ deps/stdgpu/test/stdgpu/hip/atomic.hip             |    16 +
+ deps/stdgpu/test/stdgpu/hip/bitset.hip             |    16 +
+ deps/stdgpu/test/stdgpu/hip/deque.hip              |    16 +
+ deps/stdgpu/test/stdgpu/hip/mutex.hip              |    16 +
+ deps/stdgpu/test/stdgpu/hip/unordered_map.hip      |    16 +
+ deps/stdgpu/test/stdgpu/hip/unordered_set.hip      |    16 +
+ deps/stdgpu/test/stdgpu/hip/vector.hip             |    16 +
+ deps/stdgpu/test/stdgpu/iterator.cpp               |   472 +
+ deps/stdgpu/test/stdgpu/limits.cpp                 |   226 +
+ deps/stdgpu/test/stdgpu/main.cpp                   |    78 +
+ deps/stdgpu/test/stdgpu/memory.cpp                 |    18 +
+ deps/stdgpu/test/stdgpu/memory.inc                 |  1974 +++
+ deps/stdgpu/test/stdgpu/mutex.inc                  |   407 +
+ deps/stdgpu/test/stdgpu/numeric.cpp                |    93 +
+ deps/stdgpu/test/stdgpu/openmp/CMakeLists.txt      |     8 +
+ deps/stdgpu/test/stdgpu/openmp/atomic.cpp          |    16 +
+ deps/stdgpu/test/stdgpu/openmp/bitset.cpp          |    16 +
+ deps/stdgpu/test/stdgpu/openmp/deque.cpp           |    16 +
+ deps/stdgpu/test/stdgpu/openmp/mutex.cpp           |    16 +
+ deps/stdgpu/test/stdgpu/openmp/unordered_map.cpp   |    16 +
+ deps/stdgpu/test/stdgpu/openmp/unordered_set.cpp   |    16 +
+ deps/stdgpu/test/stdgpu/openmp/vector.cpp          |    16 +
+ deps/stdgpu/test/stdgpu/ranges.cpp                 |   349 +
+ .../stdgpu/test/stdgpu/unordered_datastructure.inc |  2547 ++++
+ deps/stdgpu/test/stdgpu/unordered_map.inc          |   249 +
+ deps/stdgpu/test/stdgpu/unordered_set.inc          |   238 +
+ deps/stdgpu/test/stdgpu/vector.inc                 |  1808 +++
+ deps/stdgpu/test/test_memory_utils.cpp             |    36 +
+ deps/stdgpu/test/test_memory_utils.h               |   126 +
+ deps/stdgpu/test/test_memory_utils_detail.h        |    74 +
+ deps/stdgpu/test/test_utils.h                      |   118 +
+ include/framework/Loader.h                         |   142 +
+ include/framework/algo_variants.cuh                |  2907 +++++
+ include/framework/clion_cuda.cuh                   |    29 +
+ include/framework/common.h                         |   344 +
+ include/framework/edgepair.h                       |    40 +
+ include/framework/framework.cuh                    |  4572 +++++++
+ include/framework/generator.h                      |   162 +
+ include/framework/graph_datum.cuh                  |   361 +
+ include/framework/hybrid_policy.h                  |   344 +
+ include/framework/pvector.h                        |   158 +
+ include/framework/variants/api.cuh                 |   164 +
+ include/framework/variants/async_pull_dd.cuh       |   140 +
+ include/framework/variants/async_pull_td.cuh       |    59 +
+ include/framework/variants/async_push_dd.cuh       |   151 +
+ include/framework/variants/async_push_td.cuh       |   152 +
+ include/framework/variants/common.cuh              |   120 +
+ include/framework/variants/driver.cuh              |  2179 ++++
+ include/framework/variants/pull_functor.h          |   369 +
+ include/framework/variants/push_functor.h          |  1341 ++
+ include/framework/variants/sync_pull_dd.cuh        |   357 +
+ include/framework/variants/sync_pull_td.cuh        |   394 +
+ include/framework/variants/sync_push_dd.cuh        |  1627 +++
+ include/framework/variants/sync_push_td.cuh        |   313 +
+ include/groute/common.h                            |   278 +
+ include/groute/context.h                           |   231 +
+ include/groute/device/array_bitmap.h               |   320 +
+ include/groute/device/bitmap_impls.h               |    21 +
+ include/groute/device/compressed_bitmap.cuh        |   258 +
+ include/groute/device/cta_scheduler.cuh            |   260 +
+ include/groute/device/cta_scheduler_hybrid.cuh     |   434 +
+ include/groute/device/queue.cuh                    |   347 +
+ include/groute/device/work_source.cuh              |   123 +
+ include/groute/device/worklist_stack.cuh           |   246 +
+ include/groute/event_pool.h                        |   403 +
+ include/groute/graphs/common.h                     |    39 +
+ include/groute/graphs/csr_graph.cuh                |  3198 +++++
+ include/groute/graphs/timer.h                      |    49 +
+ include/groute/graphs/util.h                       |   131 +
+ include/groute/internal/cuda_utils.h               |    77 +
+ include/groute/rmat_util.h                         |   116 +
+ include/utils/app_skeleton.h                       |   170 +
+ include/utils/cuda_utils.h                         |   231 +
+ include/utils/graphs/traversal.h                   |   224 +
+ include/utils/interactor.h                         |    94 +
+ include/utils/markers.h                            |   178 +
+ include/utils/parser.h                             |   154 +
+ include/utils/stopwatch.h                          |    51 +
+ include/utils/to_json.h                            |    45 +
+ include/utils/utils.h                              |    53 +
+ samples/hybrid_bfs/hybrid_bfs.cu                   |   227 +
+ samples/hybrid_bfs/hybrid_bfs_common.h             |    45 +
+ samples/hybrid_bfs/hybrid_bfs_host.cpp             |   127 +
+ samples/hybrid_bfs/main.cpp                        |    69 +
+ samples/hybrid_cc/hybrid_cc.cu                     |   223 +
+ samples/hybrid_cc/hybrid_cc_common.h               |    18 +
+ samples/hybrid_cc/main.cu                          |    55 +
+ samples/hybrid_pr/hybrid_pr.cu                     |   201 +
+ samples/hybrid_pr/hybrid_pr_common.h               |    46 +
+ samples/hybrid_pr/hybrid_pr_host.cu                |   229 +
+ samples/hybrid_pr/main.cu                          |    77 +
+ samples/hybrid_pr/old_pr.cu                        |   227 +
+ samples/hybrid_sssp/hybrid_sssp copy.cu            |   297 +
+ samples/hybrid_sssp/hybrid_sssp.cu                 |   447 +
+ samples/hybrid_sssp/hybrid_sssp_common.h           |    49 +
+ samples/hybrid_sssp/hybrid_sssp_host.cu            |   188 +
+ samples/hybrid_sssp/main.cu                        |    69 +
+ samples/validation.py                              |    38 +
+ src/utils/parser.cpp                               |   406 +
+ src/utils/to_json.cpp                              |    61 +
+ src/utils/utils.cpp                                |   409 +
+ 1079 files changed, 324536 insertions(+)
+COMMIT e6bc4060e5a0ea570108871feaa3aaf87b0fa84d
+DATE 2026-06-20T16:10:04+00:00
+SUBJECT Overlap
+
+ include/framework/framework.cuh    | 949 ++++++++++++++++++++++++++++++++++++-
+ samples/hybrid_bfs/hybrid_bfs.cu   |  11 +
+ samples/hybrid_cc/hybrid_cc.cu     |  11 +
+ samples/hybrid_sssp/hybrid_sssp.cu |  22 +
+ 4 files changed, 992 insertions(+), 1 deletion(-)
+COMMIT 9b590a217984a74e373af1f5242c223aa036ea4d
+DATE 2026-06-23T03:30:33+00:00
+SUBJECT 优化合并
+
+ find_high_load.py                   |  28 ++
+ include/framework/algo_variants.cuh |  10 +-
+ include/framework/framework.cuh     | 605 ++++++++++++++++++++++++++++++++++--
+ samples/hybrid_bfs/hybrid_bfs.cu    |   1 +
+ samples/hybrid_cc/hybrid_cc.cu      |   1 +
+ samples/hybrid_pr/hybrid_pr.cu      |  29 +-
+ samples/hybrid_sssp/hybrid_sssp.cu  |   2 +
+ 7 files changed, 650 insertions(+), 26 deletions(-)
+COMMIT 0e036c869b69a3f3c5b895a57557cbbec1897e16
+DATE 2026-07-06T06:57:15+00:00
+SUBJECT D10归档
+
+ include/framework/framework.cuh    | 154 +++++++++++++++++++++++++++++++++++++
+ samples/hybrid_sssp/hybrid_sssp.cu |   8 +-
+ 2 files changed, 158 insertions(+), 4 deletions(-)
+COMMIT caf1fc20c10397fcbe68efd737ba19e54aed380b
+DATE 2026-07-12T08:49:42+00:00
+SUBJECT CPU-owned
+
+ include/framework/framework.cuh               | 469 +++++++++++++++++++++++---
+ samples/hybrid_bfs/hybrid_bfs.cu              |   1 +
+ samples/hybrid_cc/hybrid_cc.cu                |   1 +
+ samples/hybrid_pr/hybrid_pr.cu                |   1 +
+ samples/hybrid_sssp/hybrid_sssp.cu            |  12 +-
+ scripts/extract_coop_mechanism_tsv.py         | 135 ++++++++
+ scripts/run_coop_packet_policy_sweep.sh       | 183 ++++++++++
+ scripts/run_friendster_cache01_experiments.sh | 205 +++++++++++
+ 8 files changed, 965 insertions(+), 42 deletions(-)
+COMMIT ddd253b4ab3933600654b1f50d551254565a9bc9
+DATE 2026-07-27T07:34:29+00:00
+SUBJECT two-path
+
+ .gitignore                                      |    1 +
+ include/framework/algo_variants.cuh             |  257 +-
+ include/framework/dynamic_reverse_index.h       |  180 +
+ include/framework/framework.cuh                 | 6801 ++++++-----------------
+ include/framework/graph_datum.cuh               |   75 +-
+ include/framework/variants/api.cuh              |   18 +-
+ include/framework/variants/driver.cuh           |  264 +-
+ include/framework/variants/push_functor.h       |  288 +-
+ include/framework/variants/sync_push_dd.cuh     |  186 +-
+ include/groute/graphs/csr_graph.cuh             |    3 -
+ samples/hybrid_bfs/hybrid_bfs.cu                |   44 +-
+ samples/hybrid_cc/hybrid_cc.cu                  |   45 +-
+ samples/hybrid_pr/hybrid_pr.cu                  |   29 +-
+ samples/hybrid_sssp/hybrid_sssp copy.cu         |  297 -
+ samples/hybrid_sssp/hybrid_sssp.cu              |  323 +-
+ scripts/extract_coop_mechanism_tsv.py           |  135 -
+ scripts/run_coop_packet_policy_sweep.sh         |  183 -
+ scripts/run_current_vs_cgpustreamgraph_fs_tw.sh |  279 +
+ scripts/run_friendster_cache01_experiments.sh   |  205 -
+ scripts/run_iter_b2_gpu_delete.sh               |  112 +
+ 20 files changed, 3043 insertions(+), 6682 deletions(-)
+COMMIT 7dec6b44ecab3e6571e0bac3d9c2b5270bbc042b
+DATE 2026-07-27T14:34:19+00:00
+SUBJECT new data
+
+ CMakeLists.txt                                   |  36 ++
+ include/framework/dynamic_reverse_index.h        |   8 +-
+ include/framework/framework.cuh                  | 168 +++++++-
+ include/framework/topology_replay.h              | 195 +++++++++
+ include/groute/graphs/csr_graph.cuh              |  40 +-
+ include/groute/graphs/source_local_chunk_store.h | 511 +++++++++++++++++++++++
+ include/groute/graphs/topology_contract.cuh      | 113 +++++
+ include/utils/app_skeleton.h                     |   2 +
+ src/chunk_store_replay.cpp                       | 313 ++++++++++++++
+ src/topology_replay.cpp                          | 207 +++++++++
+ tests/fixtures/topology_replay_batch_sizes.txt   |   2 +
+ tests/fixtures/topology_replay_graph.txt         |   5 +
+ tests/fixtures/topology_replay_updates.txt       |   6 +
+ tests/source_local_chunk_store_test.cpp          | 158 +++++++
+ tests/topology_contract_test.cpp                 | 121 ++++++
+ 15 files changed, 1850 insertions(+), 35 deletions(-)
+COMMIT 94a631d525da161d1328e4b640d32e6f9b8ced51
+DATE 2026-07-31T09:17:28+00:00
+SUBJECT chunk data
+
+ include/framework/framework.cuh                  | 248 ++++++++----
+ include/framework/variants/push_functor.h        |   3 +-
+ include/groute/graphs/csr_graph.cuh              | 309 ++++++++++++++-
+ include/groute/graphs/source_local_chunk_store.h | 308 ++++++++++++---
+ include/groute/graphs/topology_contract.cuh      |  15 +
+ samples/hybrid_sssp/hybrid_sssp.cu               |  33 +-
+ scripts/run_c4_current_vs_original.sh            | 457 +++++++++++++++++++++++
+ tests/source_local_chunk_store_test.cpp          | 136 +++++++
+ 8 files changed, 1360 insertions(+), 149 deletions(-)
+COMMIT 6295b288e2e4d70315ed679f6d27608a495fa0d4
+DATE 2026-08-18T02:10:27+00:00
+SUBJECT E迭代
+
+ .gitignore                                         |    3 +-
+ CMakeLists.txt                                     |   47 +
+ .../framework/destination_local_dependency_store.h |  565 +++++++
+ include/framework/dual_domain_event_runtime.h      |  268 +++
+ include/framework/dynamic_reverse_index.h          |   94 +-
+ include/framework/exact_source_frontier.h          |   87 +
+ include/framework/framework.cuh                    | 1724 ++++++++++++++++++--
+ include/framework/owner_cost_planner.h             |  103 ++
+ include/framework/persistent_dependency_graph.h    |  204 +++
+ include/framework/variants/push_functor.h          |    8 +
+ .../cggraph_cpu_gpu_dev_implementation_plan.md     |  895 ++++++++++
+ samples/hybrid_bfs/hybrid_bfs.cu                   |    2 +
+ samples/hybrid_cc/hybrid_cc.cu                     |    2 +
+ samples/hybrid_pr/hybrid_pr.cu                     |    2 +
+ samples/hybrid_sssp/hybrid_sssp.cu                 |   16 +-
+ .../evaluate_e4r3_shadow.cpython-313.pyc           |  Bin 0 -> 3798 bytes
+ scripts/analyze_e0b_trace.py                       |  223 +++
+ scripts/analyze_e4a2_capacity.cpp                  |  127 ++
+ scripts/evaluate_e4r3_shadow.py                    |   61 +
+ scripts/topology_cpu_quota.py                      |  213 +++
+ tests/check_owner_planner_decision.py              |    5 +
+ tests/dependency_warp_mapping_test.cu              |  110 ++
+ tests/destination_local_dependency_store_test.cpp  |  228 +++
+ tests/dual_domain_event_runtime_test.cpp           |  153 ++
+ tests/dynamic_reverse_index_test.cpp               |   58 +
+ tests/exact_source_executor_test.cu                |  193 +++
+ tests/exact_source_frontier_test.cpp               |   45 +
+ tests/fixtures/owner_planner_calibration.tsv       |    5 +
+ tests/fixtures/owner_planner_topology.tsv          |    6 +
+ tests/fixtures/owner_planner_work.tsv              |    2 +
+ tests/owner_cost_planner_test.cpp                  |   27 +
+ tests/owner_planner_calibration.cu                 |   57 +
+ tests/persistent_dependency_graph_test.cpp         |   85 +
+ 33 files changed, 5444 insertions(+), 174 deletions(-)
+COMMIT 6ef292c88be07f9507c363c1bb0b8f1a7f0c0e65
+DATE 2026-08-25T07:14:43+00:00
+SUBJECT 收尾
+
+ CMakeLists.txt                                     |  36 ++
+ include/framework/affected_component_trace.h       | 128 ++++
+ include/framework/cache_patch_trace.h              |  64 ++
+ include/framework/cache_refresh_gate.h             |  35 ++
+ include/framework/f1_replay_state.h                |  89 +++
+ include/framework/framework.cuh                    | 318 +++++++++-
+ include/framework/variants/driver.cuh              |  72 ++-
+ include/framework/variants/push_functor.h          |  49 +-
+ include/groute/graphs/csr_graph.cuh                |  76 ++-
+ .../cggraph_cpu_gpu_dev_implementation_plan.md     | 124 +++-
+ ...50\241\214\346\214\207\345\274\225_20260823.md" | 181 ++++++
+ ...46\255\245\347\255\226\347\225\245_20260820.md" | 155 +++++
+ samples/hybrid_bfs/hybrid_bfs.cu                   |   2 +
+ samples/hybrid_cc/hybrid_cc.cu                     |   2 +
+ samples/hybrid_pr/hybrid_pr.cu                     |   2 +
+ samples/hybrid_sssp/hybrid_sssp.cu                 |  30 +-
+ scripts/analyze_f0l_trace.py                       | 148 +++++
+ scripts/run_f0l_critical_path.sh                   |  70 +++
+ src/affected_component_analyzer.cpp                | 673 +++++++++++++++++++++
+ src/cache_patch_replay.cpp                         | 124 ++++
+ src/f1_crossover_replay.cu                         | 183 ++++++
+ tests/affected_component_trace_test.cpp            |  30 +
+ tests/cache_patch_trace_test.cpp                   |  40 ++
+ tests/cache_refresh_gate_test.cpp                  |  12 +
+ tests/cache_tail_fallback_test.cu                  |  61 ++
+ tests/f1_replay_state_test.cpp                     |  31 +
+ 26 files changed, 2631 insertions(+), 104 deletions(-)
+COMMIT 26939b73f0a17aa09367372177d28f6871e7360c
+DATE 2026-09-07T02:14:47+00:00
+SUBJECT Unify effective topology updates and fix SSSP hotness pairing
+
+ .gitignore                                         |   2 +-
+ CMakeLists.txt                                     |  13 +-
+ include/framework/dynamic_reverse_index.h          | 100 +++--
+ include/framework/effective_update_batch.h         |  82 ++++
+ include/framework/framework.cuh                    | 162 +++++--
+ include/framework/variants/driver.cuh              |  34 +-
+ include/groute/graphs/source_local_chunk_store.h   | 252 ++++++++---
+ include/utils/fixed_worker_pool.h                  | 123 ++++++
+ .../cggraph_cpu_gpu_dev_implementation_plan.md     | 483 ++++++++++++++++++++-
+ iteration/cggraph_cpu_gpu_progress_report.md       | 174 ++++++++
+ "iteration/fable5\347\273\223\350\256\272.md"      | 257 +++++++++++
+ iteration/i11_final_state_repair_semantics.md      | 109 +++++
+ iteration/i12_i10_baseline_manifest.md             |  85 ++++
+ iteration/i14_i15_checkpoint_20260907.md           |  64 +++
+ iteration/paper_plan_and_research_directions.md    | 341 +++++++++++++++
+ samples/hybrid_sssp/hybrid_sssp.cu                 |   6 +-
+ scripts/analyze_current_substages.py               |  99 +++++
+ scripts/profile_current_runtime.py                 | 149 +++++++
+ scripts/run_i13_smoke.sh                           |  38 ++
+ scripts/run_i14_validation.py                      |  87 ++++
+ scripts/run_i15_hotness_audit.py                   |  78 ++++
+ scripts/run_i15_pairing_validation.sh              |   7 +
+ scripts/test_current_substages.py                  |  74 ++++
+ tests/cache_tail_fallback_test.cu                  |   3 +
+ tests/dynamic_reverse_index_test.cpp               | 164 +++++--
+ tests/final_state_repair_model_test.cpp            | 272 ++++++++++++
+ tests/hotness_pairing_test.cu                      |  65 +++
+ tests/source_local_chunk_store_test.cpp            |  97 +++++
+ tests/topology_contract_test.cpp                   |   3 +
+ 29 files changed, 3229 insertions(+), 194 deletions(-)

@@ -1,0 +1,911 @@
+[
+  {
+    "path": "iteration/cggraph_cpu_gpu_dev_implementation_plan.md",
+    "lines": 1564,
+    "sha256": "400e6ed5bb60e2e39da9de2e6ecfb0068938f7b3f20a3dd23add4286868b3f70",
+    "log_references": [
+      {
+        "path": "logs/communication_100k_20260915_0815/",
+        "exists": true
+      },
+      {
+        "path": "logs/communication_audit_20260915/",
+        "exists": true
+      },
+      {
+        "path": "logs/communication_audit_20260915/pair_final/result.json",
+        "exists": true
+      },
+      {
+        "path": "logs/current_profile_20260906T094718Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/d1_gate_20260729/",
+        "exists": true
+      },
+      {
+        "path": "logs/d2_gate_20260729",
+        "exists": true
+      },
+      {
+        "path": "logs/d3_gate_20260729/",
+        "exists": true
+      },
+      {
+        "path": "logs/d3_gate_20260729/orkut_check_final.log",
+        "exists": true
+      },
+      {
+        "path": "logs/e0_screen_20260731/",
+        "exists": true
+      },
+      {
+        "path": "logs/e0b_20260731/",
+        "exists": true
+      },
+      {
+        "path": "logs/e1b_metis_cross_graph_20260731_143415/",
+        "exists": true
+      },
+      {
+        "path": "logs/e1b_metis_wiki_20260731_143014/wiki.tsv",
+        "exists": true
+      },
+      {
+        "path": "logs/e2c_fs_tw_20260805/",
+        "exists": true
+      },
+      {
+        "path": "logs/e2c_persistent_20260805/wiki_b2_fixed.log",
+        "exists": true
+      },
+      {
+        "path": "logs/e2c_persistent_20260805/wiki_b2_owner_delete.log",
+        "exists": true
+      },
+      {
+        "path": "logs/e3_close_wiki_20260810_150244/wiki.log",
+        "exists": true
+      },
+      {
+        "path": "logs/e3a_fs_tw_correctness_20260806_131625/",
+        "exists": true
+      },
+      {
+        "path": "logs/e3b_async_20260810_103038/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4a2_capacity_projection_20260811/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4a2_contiguous_gate_20260812/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4a2_contiguous_smoke_20260812/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4a2_cross_graph_20260811_152451/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4a2_smoke_20260811/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4r1_exact_source_correctness_20260812_160526/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4r1_exact_source_correctness_20260812_165113/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4r1_exact_source_performance_20260812_165748/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4r2_sorted_merge_friendster_20260813_095928/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4r2_sorted_merge_friendster_b10_20260813_100837/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4r2_sorted_merge_twitter_20260813_101610/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4r2_sorted_merge_wiki_20260813_095642/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4r3b_shadow_20260813/",
+        "exists": true
+      },
+      {
+        "path": "logs/e4r3c_runtime_20260816/",
+        "exists": true
+      },
+      {
+        "path": "logs/f1_crossover_capture_20260820/",
+        "exists": true
+      },
+      {
+        "path": "logs/f1c2_trace_v2_20260820/",
+        "exists": true
+      },
+      {
+        "path": "logs/final_system_sweep_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/i0_failure_prefixes_20260825/",
+        "exists": true
+      },
+      {
+        "path": "logs/i10_topology_contract_20260827T094010Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/i12_dev/",
+        "exists": true
+      },
+      {
+        "path": "logs/i13_cleanup_20260906/",
+        "exists": true
+      },
+      {
+        "path": "logs/i13_cleanup_20260906/README.md",
+        "exists": true
+      },
+      {
+        "path": "logs/i13_cleanup_20260906/pre_cleanup.tar.gz",
+        "exists": true
+      },
+      {
+        "path": "logs/i14_effective_batch_20260906/",
+        "exists": true
+      },
+      {
+        "path": "logs/i14_effective_batch_20260906/status.json",
+        "exists": true
+      },
+      {
+        "path": "logs/i14_host_attribution_20260906/",
+        "exists": true
+      },
+      {
+        "path": "logs/i14_host_attribution_20260906/status.json",
+        "exists": true
+      },
+      {
+        "path": "logs/i15_candidate_index_20260907/",
+        "exists": true
+      },
+      {
+        "path": "logs/i15_hotness_audit_20260906/audit.json",
+        "exists": true
+      },
+      {
+        "path": "logs/i15_pairing_fix_20260907/",
+        "exists": true
+      },
+      {
+        "path": "logs/i15_pairing_fix_20260907/validation/",
+        "exists": true
+      },
+      {
+        "path": "logs/i16_",
+        "exists": false
+      },
+      {
+        "path": "logs/i17_cpu_retirement/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17a_sparse_20260909/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b_final_compact_20260908/",
+        "exists": true
+      },
+      {
+        "path": "logs/i21_publication_1m_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/i21_radix_tw_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/i22_ordered_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/i22_scope_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/i23_bulk_tw_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/i24_tw10m_publication_20260917/",
+        "exists": true
+      },
+      {
+        "path": "logs/i25_reverse_radix_20260917/",
+        "exists": true
+      },
+      {
+        "path": "logs/i2_six_graph_correctness_20260825/",
+        "exists": true
+      },
+      {
+        "path": "logs/i3_current_baseline_20260825/",
+        "exists": true
+      },
+      {
+        "path": "logs/i4r1_audit_20260826/",
+        "exists": true
+      },
+      {
+        "path": "logs/i4r2_two_extent_20260826/friendster_5batch_correctness.log",
+        "exists": true
+      },
+      {
+        "path": "logs/i4r2_two_extent_20260826/twitter_2batch_correctness.log",
+        "exists": true
+      },
+      {
+        "path": "logs/i4r_",
+        "exists": false
+      },
+      {
+        "path": "logs/i4r_sanity_20260826/",
+        "exists": true
+      },
+      {
+        "path": "logs/i5_1_mutation_profile_20260826/twitter_2batch.log",
+        "exists": true
+      },
+      {
+        "path": "logs/i5_2_parallel_mutation_20260826/friendster_2batch_check.log",
+        "exists": true
+      },
+      {
+        "path": "logs/i5_2_parallel_mutation_20260826/twitter_2batch_indexed.log",
+        "exists": true
+      },
+      {
+        "path": "logs/i5_3_gate_20260826/friendster_b10.log",
+        "exists": true
+      },
+      {
+        "path": "logs/i5_3_gate_20260826/twitter_b10.log",
+        "exists": true
+      },
+      {
+        "path": "logs/i6_overlap_observation.launch.log",
+        "exists": false
+      },
+      {
+        "path": "logs/i6_overlap_observation_",
+        "exists": false
+      },
+      {
+        "path": "logs/i6_overlap_observation_20260826_060919/",
+        "exists": true
+      },
+      {
+        "path": "logs/i7_mutation_ablation_20260826T082725Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/i9_critical_path_20260827T082919Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/large_six_dataset_",
+        "exists": false
+      },
+      {
+        "path": "logs/large_six_dataset_20260824T170000Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/p0_cache_closeout_20260824T080611Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/p1_europe_natural_batch1_20260824T134504Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/p1_europe_natural_init_20260824T133914Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/p2_lightweight_20260824T135650Z/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/connected_road_dataset_generation.md",
+    "lines": 71,
+    "sha256": "25075fe76eacbd6927a094b7cd32f6a74f663e4fa83a017f26e5cefe3d1f692a",
+    "log_references": []
+  },
+  {
+    "path": "iteration/subiteration_file/expansion_bottleneck_assessment_20260916.md",
+    "lines": 30,
+    "sha256": "383fa984fab3f41e7eb19e0d0cd416334859a0bc686c0ffe1a2704cb956985ce",
+    "log_references": []
+  },
+  {
+    "path": "iteration/subiteration_file/fable5结论.md",
+    "lines": 257,
+    "sha256": "dcbf4de0d48911925294d721e8ec04e48167230c20d6a465b90db7ac132a9378",
+    "log_references": []
+  },
+  {
+    "path": "iteration/subiteration_file/final_system_sweep_20260916.md",
+    "lines": 12,
+    "sha256": "289cfbcb4d3c902368008ad8e5e7e1fb14354fac6a412307647e2d169de10c76",
+    "log_references": [
+      {
+        "path": "logs/final_system_sweep_20260916/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/formal_experiment_optimization_plan_20260913.md",
+    "lines": 26,
+    "sha256": "80ddec12221e2a61bc371cedf196364f5865e72c60053cb2e49db045ef710ecc",
+    "log_references": []
+  },
+  {
+    "path": "iteration/subiteration_file/i11_final_state_repair_semantics.md",
+    "lines": 109,
+    "sha256": "f010195a878ffea724e1b3136a1b073186f2970c42d5f00fbf4e6a2467cf94fe",
+    "log_references": []
+  },
+  {
+    "path": "iteration/subiteration_file/i12_i10_baseline_manifest.md",
+    "lines": 85,
+    "sha256": "906e89ede1ef436d1f7f6809238a69254fd3f9021b833319fbc470f87570a204",
+    "log_references": [
+      {
+        "path": "logs/i10_topology_contract_20260827T094010Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/i8_mutation_repeats_20260827T031043Z/",
+        "exists": true
+      },
+      {
+        "path": "logs/i9_critical_path_20260827T082919Z/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i15_event_contract.md",
+    "lines": 150,
+    "sha256": "89b79a5930ed02bcca7d3e83f78130805d51ddc62bc75ce83b42e77a0da78cd2",
+    "log_references": [
+      {
+        "path": "logs/i15_candidate_index_20260907/",
+        "exists": true
+      },
+      {
+        "path": "logs/i15_pairing_fix_20260907/validation/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i17b53_batch_reverse_screen.md",
+    "lines": 33,
+    "sha256": "042ed1234dfff9ceb831613bf808f6fab76de5211ea0c477f4c4afc0b85f8da7",
+    "log_references": [
+      {
+        "path": "logs/i17b5_20260909/b53_candidate/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b5_20260909/b53_screen2/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i17b541_fs1000k_test.md",
+    "lines": 7,
+    "sha256": "abfbe64530f567ade3de308e8d3bc75103938d1bf68ff52267ced0193979eee0",
+    "log_references": []
+  },
+  {
+    "path": "iteration/subiteration_file/i17b543_reverse_shards.md",
+    "lines": 138,
+    "sha256": "c77e96353a53c473bfdbab2a3a0d04016031097711b0a2c97de8b53e9709030e",
+    "log_references": [
+      {
+        "path": "logs/i17b5_20260911/b543_reverse_profile/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b5_20260911/b543_reverse_profile/shards_binary",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b5_20260911/your_new_probe",
+        "exists": false
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i17b54_attribution_20260910.md",
+    "lines": 9,
+    "sha256": "f3685d53da39303607d662e9b9fd92e4aec0598baf8eac2e20e3a671dfe168ec",
+    "log_references": [
+      {
+        "path": "logs/i17b5_20260909/b53_screen2/",
+        "exists": true
+      },
+      {
+        "path": "logs/stage_pre_i17c_20260908/runs.json",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i17b5_incoming_source_order_20260914.md",
+    "lines": 80,
+    "sha256": "146537bb5130fc502648432757546589553b3096989f010b08f67fdc3001a3b5",
+    "log_references": [
+      {
+        "path": "logs/i17b5_continue_20260914/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i17b5_workspace_screen.md",
+    "lines": 62,
+    "sha256": "dc0c28b6a77a4f40f5a0d90fcc474986280e085705b65678a95721bf45aeb28c",
+    "log_references": [
+      {
+        "path": "logs/i17b5_20260909/build_release/hybrid_sssp",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b5_20260909/screen/0_baseline",
+        "exists": false
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i17b6_completed_analysis.md",
+    "lines": 37,
+    "sha256": "2e8bb79105e0bd1b30b46a0acbb474e76de15ea188773f60383671ad1df61154",
+    "log_references": [
+      {
+        "path": "logs/i17_scaling_20260911/experiments/results.json",
+        "exists": true
+      },
+      {
+        "path": "logs/i17_scaling_20260911/supplement/results.json",
+        "exists": true
+      },
+      {
+        "path": "logs/i17_scaling_20260911/supplement/status.json",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i17b6_scaling_ordered.md",
+    "lines": 44,
+    "sha256": "d66bc63ab8c600d0be7643515f730dbe985b21079bc3f3b90c6ea3edec40bddb",
+    "log_references": [
+      {
+        "path": "logs/i17_scaling_20260911/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17_scaling_20260911/experiments/report.md",
+        "exists": true
+      },
+      {
+        "path": "logs/i17_scaling_20260911/experiments/status.json",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i17b7_b5_progress_20260914.md",
+    "lines": 49,
+    "sha256": "98d223075fe2ceb139524a27c2ff37cbc065d97c5f07bce7b1b00f6ce524c407",
+    "log_references": [
+      {
+        "path": "logs/i17b7_b5_20260914/before_b5",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b7_b5_20260914/communication_smoke.log",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i17b_gpu_cost_results.md",
+    "lines": 68,
+    "sha256": "77093563825ace556c7e3e1923d3a7e566232ac9a068ac6451413c255b27a4c4",
+    "log_references": [
+      {
+        "path": "logs/i16_e2_capture_20260907/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b_compact_20260908/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b_compact_v2_20260908/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b_control_20260908/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b_final_compact_20260908/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b_reproduce",
+        "exists": false
+      },
+      {
+        "path": "logs/i17b_reuse_confirm_20260908/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17b_reuse_v2_20260908/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i19_complete_results_20260915.md",
+    "lines": 66,
+    "sha256": "896ff89aacb6c19d42513c4ba05075b41ad358b172d11ef2f5b6cecb6a6ee7a8",
+    "log_references": [
+      {
+        "path": "logs/i19_20260914_v2/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i19_profile_tables_20260915.md",
+    "lines": 65,
+    "sha256": "0abccd437e5dfa3abce4c31f8417464fa29b19534e0df38b7bcd31f0475a9994",
+    "log_references": []
+  },
+  {
+    "path": "iteration/subiteration_file/i19_ratio_data_20260914.md",
+    "lines": 28,
+    "sha256": "2a6da7aff4c02f67e0d32448aab7f718ea5e6bb4e6a31a4de78f3d7b601d9d5c",
+    "log_references": []
+  },
+  {
+    "path": "iteration/subiteration_file/i19_work_amplification_20260914.md",
+    "lines": 65,
+    "sha256": "5a950cec4ba0aaa184d5f75ae7f237c76138cab94665e96e20872a2dc3d71f31",
+    "log_references": [
+      {
+        "path": "logs/i19_20260914_v2/",
+        "exists": true
+      },
+      {
+        "path": "logs/i19_20260914_v2/analysis.json",
+        "exists": true
+      },
+      {
+        "path": "logs/i19_20260914_v2/asymmetric_smoke/",
+        "exists": true
+      },
+      {
+        "path": "logs/i19_20260914_v2/interrupted_attempts/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i20_shared_plan_20260915.md",
+    "lines": 93,
+    "sha256": "b4cee97f3961126753d87a0a745655b81a7e66326ab4c5c61c5cac82d891d4f7",
+    "log_references": [
+      {
+        "path": "logs/i20_20260915",
+        "exists": true
+      },
+      {
+        "path": "logs/i20_20260915/",
+        "exists": true
+      },
+      {
+        "path": "logs/i20_20260915/status.json",
+        "exists": true
+      },
+      {
+        "path": "logs/i20_reverse_20260915",
+        "exists": true
+      },
+      {
+        "path": "logs/i20_reverse_20260915/review_stages.json",
+        "exists": true
+      },
+      {
+        "path": "logs/i20_reverse_20260915/status.json",
+        "exists": true
+      },
+      {
+        "path": "logs/i20_short_20260915",
+        "exists": true
+      },
+      {
+        "path": "logs/i20_short_20260915/status.json",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i21_delete_positions_20260915.md",
+    "lines": 64,
+    "sha256": "39b8af43ca11ae43023315c9e6c800b313ea8ff69014d3845f4f164d78a3fe36",
+    "log_references": [
+      {
+        "path": "logs/i21_positions_20260915",
+        "exists": true
+      },
+      {
+        "path": "logs/i21_positions_20260915/status.json",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i21_publication_1m_20260916.md",
+    "lines": 31,
+    "sha256": "9fad856cc0ee338f913d2812af51dfae43d721e5fb799aa652a3275ba5d77184",
+    "log_references": [
+      {
+        "path": "logs/i21_publication_1m_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/i21_publication_1m_20260916/smoke/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i21_radix_tw_20260916.md",
+    "lines": 34,
+    "sha256": "9297552a0eaf3018259247ea21ca4ea4f57a5b2c7252675b698e370b431897ee",
+    "log_references": [
+      {
+        "path": "logs/i21_radix_tw_20260916/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i22_cggraph_scheduling_20260915.md",
+    "lines": 70,
+    "sha256": "443fe2bf92b41068a8badf8074134aa52aa92c80b4aa40fbf8ac3c835002e42c",
+    "log_references": [
+      {
+        "path": "logs/i22_thread_20260915/",
+        "exists": true
+      },
+      {
+        "path": "logs/i22_thread_20260915/status.json",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i22_ordered_insertion_20260916.md",
+    "lines": 121,
+    "sha256": "7729abd5aec1625b7db7e847ac5a602366e570f2d778b2f51383dbc9f50a09fa",
+    "log_references": [
+      {
+        "path": "logs/i22_mode_binding_20260916/build.log",
+        "exists": true
+      },
+      {
+        "path": "logs/i22_mode_priority_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/i22_ordered_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/i22_ordered_20260916/smoke/",
+        "exists": true
+      },
+      {
+        "path": "logs/i22_scope_20260916/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i23_bulk_groups_20260916.md",
+    "lines": 69,
+    "sha256": "800259c5494f77bc330216cbb2f09f135e2d92ba3592702501cd8989ae2162cd",
+    "log_references": [
+      {
+        "path": "logs/i23_bulk_tw_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/i23_bulk_tw_20260916/group_probe.jsonl",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i24_tw10m_publication_20260917.md",
+    "lines": 89,
+    "sha256": "635e891f758dbaaeb0fbe61b57e702021b7bc6c47951066ee41db4f0d780c0aa",
+    "log_references": [
+      {
+        "path": "logs/i24_tw10m_publication_20260917/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/i25_reverse_radix_20260917.md",
+    "lines": 74,
+    "sha256": "43819bd50a43edfd46ad66b8a0fe3e82e91296a70823291bf5bb8756e3dfd562",
+    "log_references": [
+      {
+        "path": "logs/i25_reverse_radix_20260917/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/paper_plan_and_research_directions.md",
+    "lines": 341,
+    "sha256": "7290537971879ad2fc1e6a6b0fcbef75f71f605e65d8074410d939e44c064b58",
+    "log_references": []
+  },
+  {
+    "path": "iteration/subiteration_file/performance_matrix_20260912.md",
+    "lines": 57,
+    "sha256": "d65ca730a1f8e42fbe470c1f4bbee0fdb31d0e9c4df0e4997b058ffa2677d298",
+    "log_references": [
+      {
+        "path": "logs/performance_matrix_20260912",
+        "exists": true
+      },
+      {
+        "path": "logs/performance_matrix_20260912/",
+        "exists": true
+      },
+      {
+        "path": "logs/performance_matrix_20260912/report.md",
+        "exists": true
+      },
+      {
+        "path": "logs/performance_matrix_20260912/runner/run_performance_matrix_20260912.py",
+        "exists": true
+      },
+      {
+        "path": "logs/performance_matrix_20260912/status.json",
+        "exists": true
+      },
+      {
+        "path": "logs/performance_matrix_20260912/supervisor.log",
+        "exists": true
+      },
+      {
+        "path": "logs/stage_pre_i17c_20260908/twitter_true",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/performance_matrix_20260912_review.md",
+    "lines": 92,
+    "sha256": "f770fe6c42f4cf772229adc2bf44742257fcafdc64fbf94134dd324181ad071c",
+    "log_references": [
+      {
+        "path": "logs/performance_matrix_20260912/status.json",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/pre_i17c_stage_matrix.md",
+    "lines": 83,
+    "sha256": "50a37ab7e1071d94838c918502b5cd55da2b547e19b3e3cb7232ed3e3c3b96fb",
+    "log_references": [
+      {
+        "path": "logs/stage_pre_i17c_20260908",
+        "exists": true
+      },
+      {
+        "path": "logs/stage_pre_i17c_20260908/",
+        "exists": true
+      },
+      {
+        "path": "logs/stage_pre_i17c_20260908/runner/start_stage_pre_i17c.py",
+        "exists": true
+      },
+      {
+        "path": "logs/stage_pre_i17c_20260908/status.json",
+        "exists": true
+      },
+      {
+        "path": "logs/stage_pre_i17c_20260908/supervisor.out",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/scaling_feasibility_10m_100m_20260916.md",
+    "lines": 126,
+    "sha256": "496da595abc072ae6663300f59e39c49fd3a3cf1af4b957d2911278e72dc36a0",
+    "log_references": [
+      {
+        "path": "logs/i22_scope_20260916/",
+        "exists": true
+      },
+      {
+        "path": "logs/scaling_feasibility_20260916/",
+        "exists": true
+      }
+    ]
+  },
+  {
+    "path": "iteration/subiteration_file/system_review_20260912.md",
+    "lines": 123,
+    "sha256": "4c5ad53115d13073fdff2eb9feec498fe5643dd272ad4546064f723485740fe6",
+    "log_references": [
+      {
+        "path": "logs/i17_scaling_20260911/",
+        "exists": true
+      },
+      {
+        "path": "logs/i17_scaling_20260911/experiments/results.json",
+        "exists": true
+      },
+      {
+        "path": "logs/i17_scaling_20260911/supplement/results.json",
+        "exists": true
+      }
+    ]
+  }
+]

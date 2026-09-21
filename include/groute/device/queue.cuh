@@ -313,6 +313,7 @@ namespace groute {
         }
 
         uint32_t GetCount(const Stream &stream) const {
+            cgcomm::Scope comm_scope(cgcomm::Category::Control);
             assert(m_current_slot >= 0 && m_current_slot < NUM_COUNTERS);
             GROUTE_CUDA_CHECK(
                     cudaMemcpyAsync(m_host_count, m_counters + m_current_slot, sizeof(uint32_t), cudaMemcpyDeviceToHost,
@@ -322,6 +323,7 @@ namespace groute {
         }
 
         void SetLength(const Stream &stream, uint32_t new_length) {
+            cgcomm::Scope comm_scope(cgcomm::Category::Control);
             assert(m_current_slot >= 0 && m_current_slot < NUM_COUNTERS);
             assert(new_length <= m_capacity);
 

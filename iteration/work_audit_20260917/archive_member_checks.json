@@ -1,0 +1,20 @@
+[
+  {
+    "id": "N16",
+    "archive": "/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/i13_cleanup_20260906/pre_cleanup.tar.gz",
+    "member": "include/groute/graphs/source_local_chunk_store.h",
+    "exists": true
+  },
+  {
+    "id": "N16",
+    "archive": "/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/i13_cleanup_20260906/pre_cleanup.tar.gz",
+    "member": "include/framework/framework.cuh",
+    "exists": true
+  },
+  {
+    "id": "N18",
+    "archive": "/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/i17_cpu_retirement/source_and_notes.tar.gz",
+    "member": "include/framework/i16_cpu_repair.h",
+    "exists": true
+  }
+]

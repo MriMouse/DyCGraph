@@ -1,0 +1,12 @@
+[
+  {
+    "baseline": "original",
+    "revision": "HEAD",
+    "path": "samples/hybrid_sssp/hybrid_sssp copy.cu"
+  },
+  {
+    "baseline": "initial",
+    "revision": "f527ba4",
+    "path": "samples/hybrid_sssp/hybrid_sssp copy.cu"
+  }
+]

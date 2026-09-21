@@ -1,0 +1,56 @@
+# 2 Background and Motivation
+
+## 2.1 Streaming Graph Processing
+
+A graph represents entities as vertices and their relationships as edges. Graph algorithms derive properties from these relationships: breadth-first search (BFS) computes hop distances from a source, single-source shortest paths (SSSP) computes minimum path weights, and connected components (CC) identifies connected groups in an undirected graph. Many algorithms maintain a state for each vertex and iteratively exchange information along edges. Vertices requiring processing form an active set, or *frontier*: their neighbors are examined, states are updated, and further work is generated until the algorithm terminates.
+
+In streaming applications, a streaming graph evolves through continuous edge insertions and deletions. We group these changes into batches over a fixed vertex set. Let $G_t=(V,E_t)$ be the current graph, $\Delta G_t$ an update batch, and $\mathcal A$ a graph algorithm. Applying the batch produces the updated graph $G_{t+1}$, for which the result must be maintained:
+
+\[
+G_{t+1}=\operatorname{Apply}(G_t,\Delta G_t),
+\qquad R_{t+1}=\mathcal A(G_{t+1}).
+\]
+
+Streaming graph updates often modify only a portion of the graph, and their effects on algorithm results can also be confined to a subset of vertices. We refer to this property of graph modifications and their computational effects as *regionality*. For SSSP, inserting an edge may introduce a shorter path, whereas deleting an edge supporting a shortest path may invalidate distances several hops away.
+
+## 2.2 CPU Graph Processing and Incremental Systems
+
+Early research on graph processing primarily focused on CPU-based systems. To accelerate graph traversal and iterative computation, [Ligra] provides parallel vertex and edge mapping primitives and adapts traversal strategies to the density of the active vertex set. Another line of work optimizes graph storage and access under dynamic updates. [STINGER] organizes adjacency lists as linked edge blocks and supports parallel batch updates. [Terrace] uses degree-dependent storage, combining in-place arrays, a shared packed memory array, and per-vertex B-trees to balance update and adjacency-scan efficiency. For concurrent updates and analytics, [GraphOne] combines an edge log with adjacency storage and uses dual versioning to decouple ingestion from computation, while [LiveGraph] employs a multiversion Transactional Edge Log to support transactional updates with sequential adjacency scans.
+
+Several studies have explored how to reuse previously computed results when a streaming graph changes. Recomputing from scratch on $G_{t+1}$ repeats work for vertices whose results remain unchanged. Incremental computation exploits the regionality of graph updates by retaining valid results and recomputing the affected region. The following systems track dependencies between vertex values to determine which results are affected and propagate corrections through these dependencies.
+
+[KickStarter] exploits this principle for a class of monotonic graph algorithms: it tracks value dependencies and trims intermediate values invalidated by edge deletions, enabling computation to resume from a valid approximation. To support algorithms requiring Bulk Synchronous Parallel (BSP) semantics, [GraphBolt] extends dependency tracking across iterations and incrementally refines intermediate values while preserving synchronized execution semantics. However, this refinement can continue propagating changes even when vertex computations become sparse. [DZiG] addresses this limitation through a recursive formulation of incremental computation that identifies and prunes unnecessary updates while retaining BSP semantics.
+
+## 2.3 Out-of-Memory GPU Graph Processing
+
+GPUs offer massive parallelism and high memory bandwidth for processing vertices and edges. Dynamic GPU structures also support changing adjacency lists: [Hornet] allocates adjacency storage in blocks with power-of-two capacities, while [faimGraph] uses linked pages and GPU-managed memory recycling to support both vertex and edge updates. These designs improve updates within device memory, but large real-world graphs frequently exceed the memory capacity of a single GPU [EMOGI].
+
+Out-of-memory (OOM) GPU processing addresses this capacity limit by retaining graph data in host memory and making the required portions accessible to the GPU. In a common arrangement, vertex states and adjacency indices reside on the GPU, while the larger edge arrays reside in host memory. This heterogeneous memory organization need not imply that both processors execute graph algorithms. Accessing host data across the interconnect is much slower than accessing GPU memory, making data movement a central concern.
+
+For static graphs, [Subway] constructs subgraphs containing only active edges and processes them asynchronously to reduce repeated generation and transfer. [EMOGI] instead uses zero-copy access, allowing GPU threads to read host-resident edges directly through coalesced, aligned cache-line requests. Zero-copy avoids explicit bulk copying, but data still crosses the interconnect. [HyTGraph] uses cost estimates to choose between explicit transfers and zero-copy access for graph partitions, and combines these choices with asynchronous scheduling. [CGgraph] retains a reusable subgraph in GPU memory across iterations and allocates tasks on demand between the CPU and GPU to support cooperative computation.
+
+[Grapin] brings incremental computation to OOM streaming graphs. It maintains dynamic topology in host memory and executes dependency-based incremental analysis on the GPU, separating result and dependency updates into GPU-native atomic operations. It also uses zero-copy to provide fine-grained access to graph data that are not resident in GPU memory. However, its topology maintenance and incremental execution do not fully exploit the regionality of streaming graph updates and their effects on computation.
+
+## 2.4 Research Challenges
+
+**Exploiting regionality in topology maintenance.** A batch may modify only a small set of adjacency lists, yet maintaining the graph can require changes to data outside this region. Grapin's packed memory array uses segments and reserved gaps to limit the scope of rebalancing [Grapin]. When nearby space is insufficient, however, an insertion can still move neighboring adjacency lists, redistribute data across a larger range, or require storage expansion. The cost extends beyond moving data on the CPU: changes in adjacency locations must also be reflected in the GPU indices before traversal can resume, adding synchronization and transfer overhead to the original update.
+
+**Exploiting regionality in result changes.** The vertices affected by an update are not limited to the endpoints of the modified edges. For example, deleting an edge on a shortest path can invalidate distances further along that path. Finding an alternative path may also require reading neighbors whose distances have not changed. Processing only the update endpoints can therefore miss necessary corrections, whereas restarting across the graph repeats unaffected work. Even within the affected region, a vertex may be processed several times as shorter paths are discovered. The challenge is to identify and repair all affected results while avoiding unnecessary processing and repeated propagation.
+
+The next chapter presents our system design for addressing these challenges in graph maintenance and incremental computation.
+
+[Ligra]: <CPU_stream_graph/Shun和Blelloch - Ligra A Lightweight Graph Processing Framework for Shared Memory.pdf>
+[STINGER]: <CPU_stream_graph/STINGER.pdf>
+[Terrace]: <CPU_stream_graph/Pandey 等 - 2021 - Terrace A Hierarchical Graph Container for Skewed Dynamic Graphs.pdf>
+[GraphOne]: <CPU_stream_graph/Graphone.pdf>
+[LiveGraph]: <CPU_stream_graph/LiveGraph.pdf>
+[KickStarter]: <incremental_compute/2017-ASPLOS KickStarter Fast and Accurate Computations on Streaming Graphs via Trimmed Approximations.pdf>
+[GraphBolt]: <incremental_compute/2019-EuroSys GraphBolt Dependency-Driven Synchronous Processing of Streaming Graphs.pdf>
+[DZiG]: <incremental_compute/2021 - DZiG sparsity-aware incremental processing of streaming graphs.pdf>
+[Hornet]: <GPU_stream_graph/hornet.pdf>
+[faimGraph]: <GPU_stream_graph/faimgraph.pdf>
+[Subway]: <GPU_stream_graph_out_of_memory/静态图2020-Euro Subway Minimizing Data Transfer during Out-of-GPU-Memory Graph Processing.pdf>
+[EMOGI]: <GPU_stream_graph_out_of_memory/静态图Min 等 - 2020 - EMOGI efficient memory-access for out-of-memory graph-traversal in GPUs.pdf>
+[HyTGraph]: <GPU_stream_graph_out_of_memory/Wang 等 - 2023 - HyTGraph GPU-Accelerated Graph Processing with Hybrid Transfer Management.pdf>
+[CGgraph]: <静态图+OOM异构Cui 等 - 2024 - CGgraph An Ultra-Fast Graph Processing System on Modern Commodity CPU-GPU Co-processor.pdf>
+[Grapin]: <OOM异构+增量计算-2025-VLDB Efficient Graph Data Access for Out-of-Memory GPU Streaming Graph Processing.pdf>

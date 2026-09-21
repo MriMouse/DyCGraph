@@ -58,6 +58,11 @@ struct ChunkStoreBatchMetrics {
     double allocation_ms = 0.0;
     double reverse_prepare_ms = 0.0;
     uint64_t effective_records = 0;
+    uint64_t source_plan_duplicate_bytes = 0;
+    uint64_t source_plan_index_bytes = 0;
+    uint64_t deletion_position_bytes = 0;
+    uint64_t deletion_match_reads = 0;
+    uint64_t mutation_edge_reads = 0;
 };
 
 struct ChunkArenaStats {
@@ -197,6 +202,8 @@ public:
         return ApplyMutationPhase(batch, phase, phase == UpdatePhase::Delete, observer);
     }
 
+    concurrency::FixedWorkerPool& MutationWorkers() { return *mutation_workers_; }
+
     const std::vector<index_t> &ChangedSources() const { return changed_sources_; }
 
 private:
@@ -214,11 +221,12 @@ private:
             throw std::overflow_error("topology source version exhausted");
         }
         metrics.worker_count = mutation_workers_->WorkerCount();
-        for (size_t source_index = 0; source_index < sources.size(); ++source_index) {
+        const size_t phase_size = batch.PhaseSize(phase);
+        for (size_t i = 0; i < phase_size; ++i) {
+            const size_t source_index = batch.SourceIndex(i, phase);
             const index_t source = sources[source_index];
             const auto mutations = batch.View(source_index, phase);
-            const uint64_t source_updates =
-                mutations.deletions.size() + mutations.additions.size();
+            const uint64_t source_updates = mutations.deletions.size() + mutations.additions.size();
             if (source_updates == 0) continue;
             ++metrics.touched_sources;
             metrics.update_count += source_updates;
@@ -235,11 +243,24 @@ private:
         metrics.group_ms = Milliseconds(group_begin, Clock::now());
 
         const auto mutation_begin = Clock::now();
-        std::vector<PreparedResult> results(sources.size());
-        mutation_workers_->Run(sources.size(), [&](size_t source_index) {
+        // One disjoint request-sized slice per source; no per-source allocation.
+        // Uninitialized slots are read only up to successful_deletes after planning.
+        std::unique_ptr<index_t[]> deletion_positions;
+        if (batch.ReuseDeletePositions() && phase != UpdatePhase::Add &&
+            batch.PhaseSize(UpdatePhase::Delete)) {
+            deletion_positions.reset(new index_t[batch.RequestCount()]);
+            metrics.deletion_position_bytes = batch.RequestCount() * sizeof(index_t);
+        }
+        const auto positions_for = [&](size_t source_index) -> index_t * {
+            return deletion_positions && batch.View(source_index, phase).deletions.size() > 1
+                ? deletion_positions.get() + batch.DestinationOffset(source_index) : nullptr;
+        };
+        std::vector<PreparedResult> results(phase_size);
+        mutation_workers_->Run(phase_size, [&](size_t phase_index) {
+            const size_t source_index = batch.SourceIndex(phase_index, phase);
             const index_t source = sources[source_index];
             const auto mutations = batch.View(source_index, phase);
-            PreparedResult &result = results[source_index];
+            PreparedResult &result = results[phase_index];
             if (source >= sources_.size() || !sources_[source].materialized) {
                 result.missing_deletes = mutations.deletions.size();
                 result.invalid_additions = mutations.additions.size();
@@ -248,7 +269,7 @@ private:
 
             result.update.source = source;
             result.update.group_index = source_index;
-            BuildDeletionPlan(source, mutations.deletions, result.update);
+            BuildDeletionPlan(source, mutations.deletions, result.update, positions_for(source_index));
             const uint64_t successful_deletes = result.update.successful_deletes;
             result.missing_deletes =
                 mutations.deletions.size() - successful_deletes;
@@ -266,10 +287,14 @@ private:
         });
 
         std::vector<PreparedSource> prepared;
-        prepared.reserve(sources.size());
+        const bool shared_plan = batch.LargeMaintenance();
+        std::vector<size_t> prepared_indices;
+        if (shared_plan) prepared_indices.reserve(phase_size);
+        else prepared.reserve(phase_size);
         std::vector<uint64_t> required_allocations;
         int64_t edge_delta = 0;
         for (auto &result : results) {
+            metrics.deletion_match_reads += result.update.match_reads;
             metrics.missing_deletes += result.missing_deletes;
             metrics.invalid_additions += result.invalid_additions;
             edge_delta += result.edge_delta;
@@ -279,8 +304,15 @@ private:
                 required_allocations.push_back(RequiredChunkCapacity(
                     result.update.final_degree, options_.minimum_chunk_edges));
             }
-            prepared.push_back(std::move(result.update));
+            if (shared_plan) prepared_indices.push_back(&result - results.data());
+            else prepared.push_back(std::move(result.update));
         }
+        const size_t prepared_count = shared_plan ? prepared_indices.size() : prepared.size();
+        const auto plan = [&](size_t i) -> PreparedSource & {
+            return shared_plan ? results[prepared_indices[i]].update : prepared[i];
+        };
+        metrics.source_plan_duplicate_bytes = prepared.size() * sizeof(PreparedSource);
+        metrics.source_plan_index_bytes = prepared_indices.size() * sizeof(size_t);
         const auto prepare_end = Clock::now();
         metrics.prepare_ms = Milliseconds(mutation_begin, prepare_end);
         const auto preflight_begin = Clock::now();
@@ -288,8 +320,9 @@ private:
         std::vector<EffectiveEdgeDelta> effective;
         effective.reserve(metrics.update_count);
         std::vector<index_t> changed;
-        changed.reserve(prepared.size());
-        for (const auto &update : prepared) {
+        changed.reserve(prepared_count);
+        for (size_t i = 0; i < prepared_count; ++i) {
+            const auto &update = plan(i);
             changed.push_back(update.source);
             if (update.has_deletions) {
                 const auto emit = [&](const DeletionRun &run) {
@@ -305,12 +338,14 @@ private:
         // Reverse allocations/merges must succeed before forward mutation starts.
         metrics.effective_records = effective.size();
         const auto reverse_begin = Clock::now();
-        observer.Prepare(effective);
+        if (shared_plan) observer.Prepare(std::move(effective));
+        else observer.Prepare(effective);
         metrics.reverse_prepare_ms = Milliseconds(reverse_begin, Clock::now());
-        std::vector<ChunkStoreBatchMetrics> apply_metrics(prepared.size());
+        std::vector<ChunkStoreBatchMetrics> apply_metrics(prepared_count);
         retired_.reserve(retired_.size() + required_allocations.size());
         metrics.preflight_ms = Milliseconds(preflight_begin, Clock::now());
-        for (auto &update : prepared) {
+        for (size_t i = 0; i < prepared_count; ++i) {
+            auto &update = plan(i);
             if (!update.expansion) continue;
             const auto allocation_begin = Clock::now();
             update.allocation = Allocate(RequiredChunkCapacity(
@@ -328,14 +363,16 @@ private:
             static_cast<int64_t>(logical_edge_count_) + edge_delta);
         metrics.commit_ms = Milliseconds(commit_begin, Clock::now());
         const auto apply_begin = Clock::now();
-        mutation_workers_->Run(prepared.size(), [&](size_t update_index) {
-            auto &update = prepared[update_index];
+        mutation_workers_->Run(prepared_count, [&](size_t update_index) {
+            auto &update = plan(update_index);
             if (update.expansion) {
                 RewriteSourceToNewBlock(
-                    update, batch.View(update.group_index, phase), apply_metrics[update_index]);
+                    update, batch.View(update.group_index, phase), apply_metrics[update_index],
+                    positions_for(update.group_index));
             } else {
                 CompactSourceInPlace(
-                    update, batch.View(update.group_index, phase), apply_metrics[update_index]);
+                    update, batch.View(update.group_index, phase), apply_metrics[update_index],
+                    positions_for(update.group_index));
             }
         });
         observer.Commit();
@@ -343,12 +380,13 @@ private:
         const auto apply_end = Clock::now();
         metrics.apply_ms = Milliseconds(apply_begin, apply_end);
         const auto retire_begin = Clock::now();
-        for (size_t index = 0; index < prepared.size(); ++index) {
+        for (size_t index = 0; index < prepared_count; ++index) {
             const auto &local = apply_metrics[index];
+            metrics.mutation_edge_reads += local.mutation_edge_reads;
             metrics.mutation_written_bytes += local.mutation_written_bytes;
             metrics.relocation_copied_bytes += local.relocation_copied_bytes;
-            if (prepared[index].retired_block.capacity != 0) {
-                Retire(prepared[index].retired_block, pending_epoch_);
+            if (plan(index).retired_block.capacity != 0) {
+                Retire(plan(index).retired_block, pending_epoch_);
                 ++metrics.retired_blocks;
             }
         }
@@ -477,6 +515,7 @@ private:
         bool expansion = false;
         bool has_deletions = false;
         uint64_t successful_deletes = 0;
+        uint64_t match_reads = 0;
         uint64_t final_degree = 0;
         DeletionRun first_deletion;
         std::vector<DeletionRun> remaining_deletions;
@@ -636,7 +675,7 @@ private:
 
     void BuildDeletionPlan(index_t source,
                            DestinationRange deletions,
-                           PreparedSource &update) const {
+                           PreparedSource &update, index_t *positions) const {
         if (deletions.empty()) return;
         update.has_deletions = true;
         const SourceState &state = Source(source);
@@ -649,6 +688,7 @@ private:
                 const index_t *found = std::find(
                     edges, edges + state.descriptor.degree,
                     deletions.front());
+                update.match_reads = (found - edges) + (found != edges + state.descriptor.degree);
                 if (found != edges + state.descriptor.degree) {
                     update.first_deletion.matched = 1;
                     update.first_deletion.first_match_offset = found - edges;
@@ -677,10 +717,12 @@ private:
         }
 
         for (uint64_t offset = 0; offset < state.descriptor.degree; ++offset) {
+            ++update.match_reads;
             DeletionRun *run = FindDeletionRun(update, edges[offset]);
             if (run != nullptr && run->matched < run->requested) {
                 if (run->matched == 0) run->first_match_offset = offset;
                 ++run->matched;
+                if (positions) positions[update.successful_deletes] = static_cast<index_t>(offset);
                 ++update.successful_deletes;
                 if (update.successful_deletes == deletions.size()) break;
             }
@@ -695,9 +737,29 @@ private:
         return true;
     }
 
+    // Positions are increasing adjacency offsets found by the authoritative
+    // matching pass. Preserve occurrence order while copying only live spans.
+    static uint64_t CopySurvivorSpans(const PreparedSource &update,
+                                     const index_t *old_edges, index_t *new_edges,
+                                     uint64_t old_degree, const index_t *positions,
+                                     uint64_t &copied) {
+        uint64_t read = 0, write = 0;
+        for (uint64_t i = 0; i <= update.successful_deletes; ++i) {
+            const uint64_t end = i == update.successful_deletes ? old_degree : positions[i];
+            const uint64_t count = end - read;
+            if (count && (old_edges != new_edges || read != write)) {
+                std::memmove(new_edges + write, old_edges + read, count * sizeof(index_t));
+                copied += count;
+            }
+            write += count;
+            read = end + 1;
+        }
+        return write;
+    }
+
     void CompactSourceInPlace(PreparedSource &update,
                               const SourceMutationView &mutations,
-                              ChunkStoreBatchMetrics &metrics) {
+                              ChunkStoreBatchMetrics &metrics, const index_t *positions) {
         SourceState &state = Source(update.source);
         index_t *edges = state.block.capacity == 0 ? nullptr : BlockData(state.block);
         const uint64_t old_degree = state.descriptor.degree;
@@ -711,14 +773,21 @@ private:
             if (trailing != 0) {
                 std::memmove(edges + deleted_offset, edges + deleted_offset + 1,
                              trailing * sizeof(index_t));
+                metrics.mutation_edge_reads += trailing;
                 metrics.mutation_written_bytes += trailing * sizeof(index_t);
             }
             write_offset = old_degree - 1;
             update.first_deletion.removed = 1;
+        } else if (update.successful_deletes != 0 && positions) {
+            uint64_t copied = 0;
+            write_offset = CopySurvivorSpans(update, edges, edges, old_degree, positions, copied);
+            metrics.mutation_edge_reads += copied;
+            metrics.mutation_written_bytes += copied * sizeof(index_t);
         } else if (update.successful_deletes != 0) {
             write_offset = 0;
             for (uint64_t read_offset = 0; read_offset < old_degree;
                  ++read_offset) {
+                ++metrics.mutation_edge_reads;
                 const index_t destination = edges[read_offset];
                 if (ShouldDelete(update, destination)) continue;
                 if (write_offset != read_offset) {
@@ -744,7 +813,7 @@ private:
 
     void RewriteSourceToNewBlock(PreparedSource &update,
                                  const SourceMutationView &mutations,
-                                 ChunkStoreBatchMetrics &metrics) {
+                                 ChunkStoreBatchMetrics &metrics, const index_t *positions) {
         SourceState &state = Source(update.source);
         const Allocation &allocation = update.allocation;
 
@@ -776,6 +845,10 @@ private:
             }
             --write_offset;
             update.first_deletion.removed = 1;
+        } else if (positions) {
+            uint64_t copied = 0;
+            write_offset = CopySurvivorSpans(update, old_edges, new_edges,
+                state.descriptor.degree, positions, copied);
         } else {
             write_offset = 0;
             for (uint64_t read_offset = 0;
@@ -785,6 +858,9 @@ private:
                 new_edges[write_offset++] = destination;
             }
         }
+        metrics.mutation_edge_reads += !positions && update.successful_deletes != 0 &&
+            !(update.successful_deletes == 1 && update.first_deletion.requested == 1 &&
+              update.remaining_deletions.empty()) ? state.descriptor.degree : write_offset;
         metrics.relocation_copied_bytes += write_offset * sizeof(index_t);
         metrics.mutation_written_bytes += write_offset * sizeof(index_t);
         if (!mutations.additions.empty()) {

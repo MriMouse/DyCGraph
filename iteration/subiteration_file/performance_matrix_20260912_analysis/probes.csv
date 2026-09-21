@@ -1,0 +1,9 @@
+dataset,size_k,mode,status,baseline_ms,probe_ms,paired_speedup,checksum_matched,log
+fs,10,ordered,failed,1545.917,,,False,/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/performance_matrix_20260912/runs/probe_road.fs.10k.current.c2.h0.w20.r0.attempt0.log
+fs,10,reverse64,passed,1545.917,1475.956,1.0474004645124924,True,/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/performance_matrix_20260912/runs/probe_large.fs.10k.current.c2.h0.w20.r0.attempt0.log
+fs,100,ordered,failed,3871.212,,,False,/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/performance_matrix_20260912/runs/probe_road.fs.100k.current.c2.h0.w20.r0.attempt0.log
+fs,100,reverse64,passed,3871.212,2767.876,1.398621903582386,True,/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/performance_matrix_20260912/runs/probe_large.fs.100k.current.c2.h0.w20.r0.attempt0.log
+tw,10,ordered,passed,405.439,1047.296,0.38712933115375214,True,/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/performance_matrix_20260912/runs/probe_road.tw.10k.current.c2.h0.w20.r0.attempt0.log
+tw,10,reverse64,passed,405.439,426.155,0.9513885792728,True,/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/performance_matrix_20260912/runs/probe_large.tw.10k.current.c2.h0.w20.r0.attempt0.log
+tw,100,ordered,passed,2812.668,2577.354,1.091300612954216,True,/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/performance_matrix_20260912/runs/probe_road.tw.100k.current.c2.h0.w20.r0.attempt0.log
+tw,100,reverse64,passed,2812.668,2571.362,1.093843651730095,True,/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/logs/performance_matrix_20260912/runs/probe_large.tw.100k.current.c2.h0.w20.r0.attempt0.log

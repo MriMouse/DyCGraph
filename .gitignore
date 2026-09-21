@@ -1,5 +1,9 @@
 build/
-scripts/
+scripts/*
+!scripts/run_i17a_sparse.py
+!scripts/run_stage_pre_i17c.py
+!scripts/prepare_stage_twitter.py
+!scripts/start_stage_pre_i17c.py
 tools/
 docs/
 logs/
@@ -8,3 +12,15 @@ run/
 data/
 3-party-project/
 scripts/temp_scripts/
+!scripts/run_i17b_reverse_probe.py
+!scripts/run_i17_eu_background.py
+!scripts/prepare_i17_scaling.py
+!scripts/run_i17_scaling.py
+!scripts/run_i17_scaling_supplement.py
+!scripts/run_i17_target_check.py
+!scripts/analyze_i17_target_pair.py
+!scripts/analyze_i17_communication.py
+!scripts/prepare_i19_ratios.py
+!scripts/run_i19.py
+!scripts/analyze_i19.py
+!scripts/run_i19_cpu.py
