@@ -29,10 +29,10 @@
 #include <set>
 #include <functional>
 
-#include "hybrid_sssp_common.h"
+#include "hybrid_bfs_common.h"
 
 std::vector<distance_t>
-SSSPHostNaive(const groute::graphs::host::CSRGraph &graph, index_t source_node) {
+BFSHostNaive(const groute::graphs::host::CSRGraph &graph, index_t source_node) {
     std::vector<distance_t> distances(graph.nnodes, IDENTITY_ELEMENT);
     // std::vector<distance_t> parents(graph.nnodes, IDENTITY_ELEMENT);
     std::queue<index_t> work;
@@ -49,7 +49,7 @@ SSSPHostNaive(const groute::graphs::host::CSRGraph &graph, index_t source_node) 
         for (index_t edge = graph.begin_edge(node), end_edge = graph.end_edge(node); edge < end_edge; ++edge) {
             index_t dest = graph.edge_dest(edge);
             // distance_t edge_weight = edge_weights[edge];
-            distance_t edge_weight = (node + dest) %128;
+            distance_t edge_weight = 1;
             if (distances[dest] > distance + edge_weight) // if can be relaxed
             {
                 // parents[dest] = node;
@@ -63,7 +63,7 @@ SSSPHostNaive(const groute::graphs::host::CSRGraph &graph, index_t source_node) 
 }
 
 std::vector<distance_t>
-SSSPHostNaive_p(const groute::graphs::host::CSRGraph &graph, index_t source_node) {
+BFSHostNaive_p(const groute::graphs::host::CSRGraph &graph, index_t source_node) {
     std::vector<distance_t> distances(graph.nnodes, IDENTITY_ELEMENT);
     std::vector<distance_t> parents(graph.nnodes, IDENTITY_ELEMENT);
     std::queue<index_t> work;
@@ -79,7 +79,7 @@ SSSPHostNaive_p(const groute::graphs::host::CSRGraph &graph, index_t source_node
         distance_t distance = distances[node];
         for (index_t edge = graph.begin_edge(node), end_edge = graph.end_edge(node); edge < end_edge; ++edge) {
             index_t dest = graph.edge_dest(edge);
-            distance_t edge_weight = (node + dest) %128;
+            distance_t edge_weight = 1;
             if (distances[dest] > distance + edge_weight) // if can be relaxed
             {
                 parents[dest] = node;
@@ -92,7 +92,7 @@ SSSPHostNaive_p(const groute::graphs::host::CSRGraph &graph, index_t source_node
     return parents;
 }
 
-int SSSPCheckErrors(const std::vector<distance_t> &distances, const std::vector<distance_t> &regression) {
+int BFSCheckErrors(const std::vector<distance_t> &distances, const std::vector<distance_t> &regression) {
     if (distances.size() != regression.size()) {
         return std::abs((long long) distances.size() - (long long) regression.size());
     }
@@ -129,7 +129,7 @@ int SSSPCheckErrors(const std::vector<distance_t> &distances, const std::vector<
     return (miss_errors + over_errors);
 }
 
-int SSSPCheckErrors_p(const std::vector<distance_t> &distances, const std::vector<distance_t> &regression) {
+int BFSCheckErrors_p(const std::vector<distance_t> &distances, const std::vector<distance_t> &regression) {
     if (distances.size() != regression.size()) {
         return std::abs((long long) distances.size() - (long long) regression.size());
     }
@@ -166,7 +166,7 @@ int SSSPCheckErrors_p(const std::vector<distance_t> &distances, const std::vecto
     return (miss_errors + over_errors);
 }
 
-int SSSPOutput(const char *file, const std::vector<distance_t> &distances) {
+int BFSOutput(const char *file, const std::vector<distance_t> &distances) {
     FILE *f;
     f = fopen(file, "w");
 

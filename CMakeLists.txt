@@ -72,13 +72,16 @@ cuda_add_executable(hybrid_pr src/utils/parser.cpp src/utils/utils.cpp src/utils
        samples/hybrid_pr/main.cu)
 target_link_libraries(hybrid_pr ${EXTRA_LIBS} pthread)
 
-set_source_files_properties(samples/hybrid_bfs/hybrid_bfs_host.cpp PROPERTIES LANGUAGE CUDA)
 
 cuda_add_executable(hybrid_bfs src/utils/parser.cpp src/utils/utils.cpp src/utils/to_json.cpp #src/groute/graphs/csr_graph.cpp
         samples/hybrid_bfs/hybrid_bfs.cu
-        samples/hybrid_bfs/hybrid_bfs_host.cpp
-        samples/hybrid_bfs/main.cpp)
+        samples/hybrid_bfs/hybrid_bfs_host.cu
+        samples/hybrid_bfs/main.cu)
 target_link_libraries(hybrid_bfs ${EXTRA_LIBS} pthread)
+target_sources(hybrid_bfs PRIVATE src/utils/communication_meter.cpp)
+target_include_directories(hybrid_bfs PRIVATE ${CUDA_INCLUDE_DIRS})
+set_property(TARGET hybrid_bfs APPEND_STRING PROPERTY LINK_FLAGS
+    " -Wl,--wrap=cudaMemcpy -Wl,--wrap=cudaMemcpyAsync")
 #$target_compile_definitions(hybrid_bfs PUBLIC ARRAY_BITMAP)
 
 cuda_add_executable(hybrid_sssp src/utils/parser.cpp src/utils/utils.cpp src/utils/to_json.cpp #src/groute/graphs/csr_graph.cpp
@@ -99,8 +102,13 @@ add_test(NAME grouped_update_batch_test COMMAND grouped_update_batch_test)
 
 cuda_add_executable(hybrid_cc src/utils/parser.cpp src/utils/utils.cpp src/utils/to_json.cpp #src/groute/graphs/csr_graph.cpp
         samples/hybrid_cc/hybrid_cc.cu
+        samples/hybrid_cc/hybrid_cc_host.cu
         samples/hybrid_cc/main.cu)
 target_link_libraries(hybrid_cc ${EXTRA_LIBS} pthread)
+target_sources(hybrid_cc PRIVATE src/utils/communication_meter.cpp)
+target_include_directories(hybrid_cc PRIVATE ${CUDA_INCLUDE_DIRS})
+set_property(TARGET hybrid_cc APPEND_STRING PROPERTY LINK_FLAGS
+    " -Wl,--wrap=cudaMemcpy -Wl,--wrap=cudaMemcpyAsync")
 
 add_executable(gtools src/utils/parser.cpp src/utils/utils.cpp
         samples/tools/gtools.cpp)
@@ -270,3 +278,7 @@ add_test(NAME publication_sources_test COMMAND publication_sources_test)
 
 add_executable(i23_group_replay src/i23_group_replay.cpp)
 target_link_libraries(i23_group_replay pthread)
+
+cuda_add_executable(cc_sampled_repair_test tests/cc_sampled_repair_test.cu)
+target_link_libraries(cc_sampled_repair_test ${CUDA_LIBRARIES})
+add_test(NAME cc_sampled_repair_test COMMAND cc_sampled_repair_test)

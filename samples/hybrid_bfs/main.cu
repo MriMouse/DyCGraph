@@ -34,18 +34,18 @@
 #include <utils/interactor.h>
 #include <utils/app_skeleton.h>
 
-bool HybridSSSP();
+bool HybridBFS();
 void CleanupGraphs();
 
 
-namespace hybrid_sssp {
+namespace hybrid_bfs {
     struct App {
-        static const char *Name() { return "sssp"; }
+        static const char *Name() { return "bfs"; }
 
-        static const char *NameUpper() { return "SSSP"; }
+        static const char *NameUpper() { return "BFS"; }
 
         static bool Single() {
-            return HybridSSSP();
+            return HybridBFS();
         }
 
         static void Cleanup() { CleanupGraphs(); }
@@ -54,7 +54,7 @@ namespace hybrid_sssp {
 
 //here is the main function of OOM GPU graph processing
 int main(int argc, char **argv) {
-    Skeleton<hybrid_sssp::App> app;
+    Skeleton<hybrid_bfs::App> app;
     int exit = app(argc, argv);
 
     // cudaDeviceReset must be called before exiting in order for profiling and

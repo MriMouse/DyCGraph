@@ -77,6 +77,15 @@ struct ChunkArenaStats {
     bool pinned = false;
 };
 
+// Per-source mutation only produces these counters. Allocating the complete
+// batch report per source unnecessarily zeroed and traversed 30 fields for
+// every touched row in both phases (including timers never written here).
+struct ChunkSourceMutationMetrics {
+    uint64_t mutation_edge_reads = 0;
+    uint64_t mutation_written_bytes = 0;
+    uint64_t relocation_copied_bytes = 0;
+};
+
 class SourceLocalChunkStore {
 public:
     static constexpr uint32_t kInvalidSlab = std::numeric_limits<uint32_t>::max();
@@ -341,7 +350,7 @@ private:
         if (shared_plan) observer.Prepare(std::move(effective));
         else observer.Prepare(effective);
         metrics.reverse_prepare_ms = Milliseconds(reverse_begin, Clock::now());
-        std::vector<ChunkStoreBatchMetrics> apply_metrics(prepared_count);
+        std::vector<ChunkSourceMutationMetrics> apply_metrics(prepared_count);
         retired_.reserve(retired_.size() + required_allocations.size());
         metrics.preflight_ms = Milliseconds(preflight_begin, Clock::now());
         for (size_t i = 0; i < prepared_count; ++i) {
@@ -759,7 +768,7 @@ private:
 
     void CompactSourceInPlace(PreparedSource &update,
                               const SourceMutationView &mutations,
-                              ChunkStoreBatchMetrics &metrics, const index_t *positions) {
+                              ChunkSourceMutationMetrics &metrics, const index_t *positions) {
         SourceState &state = Source(update.source);
         index_t *edges = state.block.capacity == 0 ? nullptr : BlockData(state.block);
         const uint64_t old_degree = state.descriptor.degree;
@@ -813,7 +822,7 @@ private:
 
     void RewriteSourceToNewBlock(PreparedSource &update,
                                  const SourceMutationView &mutations,
-                                 ChunkStoreBatchMetrics &metrics, const index_t *positions) {
+                                 ChunkSourceMutationMetrics &metrics, const index_t *positions) {
         SourceState &state = Source(update.source);
         const Allocation &allocation = update.allocation;
 

@@ -22,7 +22,14 @@ namespace sepgraph
         template<typename TValue, typename TBuffer, typename TWeight>
         struct AppBase
         {
+            // Compile-time propagation policy; preserve the historical default.
+            __host__ __device__ static TWeight TraversalEdgeWeight(index_t src, index_t dst) {
+                return static_cast<TWeight>((src + dst) % 128 + 1);
+            }
+
             static constexpr bool kSupportsGpuDeletionRepair = false;
+            static constexpr bool kComponentLabels = false;
+            static bool NormalizeUndirectedInput() { return false; }
 
             __host__ __device__ static TWeight DeletionEdgeWeight(index_t, index_t) {
                 return TWeight(1);

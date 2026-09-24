@@ -24,3 +24,5 @@ scripts/temp_scripts/
 !scripts/run_i19.py
 !scripts/analyze_i19.py
 !scripts/run_i19_cpu.py
+
+!scripts/run_bfs_mode_screen.py

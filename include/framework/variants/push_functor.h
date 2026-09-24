@@ -251,7 +251,7 @@ namespace sepgraph
             __device__ __forceinline__ bool operator()(uint64_t edge, Payload<TBuffer> meta_data)
             {
                 index_t dst = m_vcsr_graph.edge_dest(edge);
-                index_t weight = (meta_data.m_src + dst)%128 + 1;
+                index_t weight = m_app_inst.TraversalEdgeWeight(meta_data.m_src, dst);
                 // if(m_vcsr_graph.vertices_[meta_data.m_src].cache){
                     uint64_t offset = edge - m_vcsr_graph.begin_edge(meta_data.m_src);
 
@@ -384,7 +384,7 @@ namespace sepgraph
                     return true;
                 }
                 index_t dst = m_vcsr_graph.edge_dest(edge);
-                index_t weight = (meta_data.m_src + dst)%128 + 1;
+                index_t weight = m_app_inst.TraversalEdgeWeight(meta_data.m_src, dst);
 
                 TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 if ((dst!=-1))
@@ -635,7 +635,7 @@ namespace sepgraph
             {
                 index_t dst = m_vcsr_graph.edge_dest(edge);
                 // printf("all 1 src %d dst %d\n",meta_data.m_src,dst);
-                index_t weight = (meta_data.m_src + dst)%128+1;
+                index_t weight = m_app_inst.TraversalEdgeWeight(meta_data.m_src, dst);
                 TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 // TBuffer buffer_to_push = m_buffer_datum[meta_data.m_src];
                 if (dst!=UINT32_MAX)
@@ -782,7 +782,7 @@ namespace sepgraph
                 index_t dst = (uint32_t)m_cache_g[edge];
                 TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 // printf("all 2 src %d dst %d\n",meta_data.m_src,dst);
-                index_t weight = (meta_data.m_src + dst) % 128 +1;
+                index_t weight = m_app_inst.TraversalEdgeWeight(meta_data.m_src, dst);
                 if (dst!=UINT32_MAX)
                 {
                         // m_weight_array[edge] = (meta_data.m_src + dst) % 128;
@@ -877,7 +877,7 @@ namespace sepgraph
 
                 // index_t dst = m_vcsr_graph.edge_dest(edge);
                 index_t dst = (uint32_t)m_cache_g[edge];
-                index_t weight = (meta_data.m_src + dst) % 128 + 1;
+                index_t weight = m_app_inst.TraversalEdgeWeight(meta_data.m_src, dst);
                 TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 // if (m_weighted)
                 // {
@@ -1015,7 +1015,7 @@ namespace sepgraph
                 }
                 index_t dst = m_cache_g[edge];
                 // printf("have cache %d %d\n",meta_data.m_src,dst);
-                index_t weight = (meta_data.m_src + dst) % 128 + 1;
+                index_t weight = m_app_inst.TraversalEdgeWeight(meta_data.m_src, dst);
                 TBuffer buffer_to_push = meta_data.m_buffer_to_push;
                 if (dst!=-1)
                 {

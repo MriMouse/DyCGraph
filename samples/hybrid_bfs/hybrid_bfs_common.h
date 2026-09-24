@@ -26,8 +26,8 @@
 // CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
-#ifndef __SSSP_COMMON_H
-#define __SSSP_COMMON_H
+#ifndef __BFS_COMMON_H
+#define __BFS_COMMON_H
 
 #include <climits>
 #include <queue>
@@ -38,12 +38,12 @@ typedef uint32_t distance_t;
 #define IDENTITY_ELEMENT UINT32_MAX
 
 std::vector<distance_t>
-SSSPHostNaive(const groute::graphs::host::CSRGraph &graph, index_t source_node);
+BFSHostNaive(const groute::graphs::host::CSRGraph &graph, index_t source_node);
 std::vector<distance_t>
-SSSPHostNaive_p(const groute::graphs::host::CSRGraph &graph, index_t source_node);
-int SSSPCheckErrors(const std::vector<distance_t> &distances, const std::vector<distance_t> &regression);
-int SSSPCheckErrors_p(const std::vector<distance_t> &distances, const std::vector<distance_t> &regression);
+BFSHostNaive_p(const groute::graphs::host::CSRGraph &graph, index_t source_node);
+int BFSCheckErrors(const std::vector<distance_t> &distances, const std::vector<distance_t> &regression);
+int BFSCheckErrors_p(const std::vector<distance_t> &distances, const std::vector<distance_t> &regression);
 
-int SSSPOutput(const char *file, const std::vector<distance_t> &distances);
+int BFSOutput(const char *file, const std::vector<distance_t> &distances);
 
-#endif // __SSSP_COMMON_H
+#endif // __BFS_COMMON_H

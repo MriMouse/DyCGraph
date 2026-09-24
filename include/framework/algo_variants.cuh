@@ -88,6 +88,7 @@ namespace sepgraph
             dim3 grid_dims, block_dims;
 
             graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
+            if (seg_nnodes == 0) { stream.Sync(); return; }
             KernelSizing(grid_dims, block_dims, seg_nnodes);
             kernel::RebuildWorklist
                     << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,
@@ -137,6 +138,7 @@ namespace sepgraph
             dim3 grid_dims, block_dims;
 
             graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
+            if (seg_nnodes == 0) { stream.Sync(); return; }
             KernelSizing(grid_dims, block_dims, seg_nnodes);
             kernel::RebuildWorklistAllVertices
                     << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,
@@ -160,6 +162,7 @@ namespace sepgraph
             dim3 grid_dims, block_dims;
 
             graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
+            if (seg_nnodes == 0) { stream.Sync(); return; }
             KernelSizing(grid_dims, block_dims, seg_nnodes);
             kernel::RebuildWorklist_evition
                     << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,
@@ -181,6 +184,7 @@ namespace sepgraph
             dim3 grid_dims, block_dims;
 
             graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
+            if (seg_nnodes == 0) { stream.Sync(); return; }
             KernelSizing(grid_dims, block_dims, seg_nnodes);
             kernel::RebuildWorklist_evition_v2
                     << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,
@@ -202,6 +206,7 @@ namespace sepgraph
             dim3 grid_dims, block_dims;
 
             graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
+            if (seg_nnodes == 0) { stream.Sync(); return; }
             KernelSizing(grid_dims, block_dims, seg_nnodes);
             kernel::RebuildWorklist_Identify
                     << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,
@@ -224,6 +229,7 @@ namespace sepgraph
             dim3 grid_dims, block_dims;
 
             graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
+            if (seg_nnodes == 0) { stream.Sync(); return; }
             KernelSizing(grid_dims, block_dims, seg_nnodes);
             kernel::RebuildWorklist_delta
                     << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,
@@ -244,6 +250,7 @@ namespace sepgraph
 
             dim3 grid_dims, block_dims;
             graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
+            if (seg_nnodes == 0) { stream.Sync(); return; }
             KernelSizing(grid_dims, block_dims, seg_nnodes);
             kernel::RebuildWorklist_INC
                     << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,
@@ -269,6 +276,7 @@ namespace sepgraph
             dim3 grid_dims, block_dims;
 
             graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
+            if (seg_nnodes == 0) { stream.Sync(); return; }
             KernelSizing(grid_dims, block_dims, seg_nnodes);
             kernel::RebuildWorklist_rd
                     << < grid_dims, block_dims, 0, stream.cuda_stream >> > (app_inst,vcsr_graph,
@@ -293,6 +301,7 @@ namespace sepgraph
 
             //graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
         //     LOG("Rebuild Array Work list for ZC\n");
+            if (seg_nnodes == 0) { stream.Sync(); return; }
             KernelSizing(grid_dims, block_dims, seg_nnodes);
 
             kernel::RebuildWorklist
@@ -318,6 +327,7 @@ namespace sepgraph
 
             //graph_datum.m_wl_array_in_seg[seg_idx].ResetAsync(stream.cuda_stream);
 
+            if (seg_nnodes == 0) { stream.Sync(); return; }
             KernelSizing(grid_dims, block_dims, seg_nnodes);
 
             kernel::RebuildWorklist_compaction
@@ -482,6 +492,7 @@ namespace sepgraph
             dim3 grid_dims, block_dims;
             KernelSizing(grid_dims, block_dims, seg_enode-seg_snode);
             uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
+            if (zcflag && work_size == 0) return;
 
             if(zcflag)
                 KernelSizing(grid_dims, block_dims, work_size);
@@ -577,6 +588,7 @@ namespace sepgraph
         {
             dim3 grid_dims, block_dims;
             uint32_t work_size = graph_datum.m_wl_array_in_seg[seg_idx].GetCount(stream);
+            if (work_size == 0) return;
                  KernelSizing(grid_dims, block_dims, work_size);
                 // LOG("INFO BUG 4\n");
             switch (engine_options.GetLoadBalancing(common::MsgPassing::PUSH))

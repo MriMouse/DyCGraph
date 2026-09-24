@@ -2010,6 +2010,33 @@ namespace groute
                         reserve_audit ? 1U : 0U);
                 }
 
+                // CC deletion-only executor reads chunks directly before the
+                // merged delete/add epoch is published. All earlier readers
+                // have fenced; this view must only be consumed by an executor
+                // that bypasses cache for every changed source. Do not advance
+                // epoch or update cache:
+                // insertion still publishes the merged source set normally.
+                const sepgraph::topology::TopologyPatchRecord *
+                StageDeletionDescriptors(const std::vector<index_t> &sources,
+                                               cudaStream_t stream) {
+                    cgcomm::Scope comm_scope(cgcomm::Category::Topology);
+                    if (m_publication_pending || sources.size() > m_patch_capacity ||
+                        m_chunk_store == nullptr || m_chunk_store->IsPublished())
+                        throw std::runtime_error("Invalid CC deletion descriptor staging");
+                    for (size_t i = 0; i < sources.size(); ++i) {
+                        const auto source = sources[i];
+                        const auto &d = m_chunk_store->Descriptor(source);
+                        m_patch_host[i] = {source, d.slab_id, d.index, d.degree, d.version};
+                    }
+                    if (!sources.empty()) {
+                        GROUTE_CUDA_CHECK(cudaMemcpyAsync(m_patch_device, m_patch_host,
+                            sources.size() * sizeof(*m_patch_host), cudaMemcpyHostToDevice, stream));
+                        ScatterTopologyPatch<<<(sources.size() + 255) / 256, 256, 0, stream>>>(
+                            m_patch_device, sources.size(), m_dev_mirror.sync_vertices_);
+                    }
+                    return m_patch_device;
+                }
+
                 void PublishSparse(const std::vector<index_t> &sources,
                                    cudaStream_t stream,
                                    bool audit,

@@ -455,7 +455,8 @@ namespace sepgraph {
             const uint32_t nthreads = TOTAL_THREADS_1D;
             for (uint32_t i = tid; i < affected_count; i += nthreads) {
                 const index_t node = affected_vertices[i];
-                node_value_datum[node] = app_inst.GetInitValue(node);
+                node_value_datum[node] = decltype(app_inst)::kComponentLabels ?
+                    static_cast<TValue>(node) : app_inst.GetInitValue(node);
                 node_buffer_datum[node] = app_inst.GetInitBuffer(node);
             }
         }

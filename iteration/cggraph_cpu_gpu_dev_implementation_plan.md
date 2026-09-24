@@ -8,6 +8,14 @@
 
 > **文档阅读顺序（2026-09-14 整理）：** 本节“当前权威状态”和“迭代论文索引”是接手与写作入口；后文动态工作区、执行计划和时间线保留各阶段的详细问题、方法、实验与负结果，但其中的旧“下一步”不再构成当前任务。逐次试跑和完整 profiler 数据仍以子报告、脚本和 `logs/` 为准。
 
+## BFS 迁移状态（2026-09-21）
+
+**BFS 语义再次复核（2026-09-21）：** 已逐项追踪初始计算、增量种子/传播、普通/有序删除修复和实际 output，均为单位边权最少跳数。新增可区分算法的测试：文件权重 SSSP=3、原权重规则 SSSP=8，而 BFS 初始实际输出=2；普通/large/路网+large 的 30 个阶段与独立 BFS 一致，初始-only 和最终所有输出逐点及父边检查通过。发现并修正父边错误未计入 check 失败、第四列 buffer 误称 delta、写文件失败未报错三处校验/输出细节。详见 [BFS 语义复核](subiteration_file/bfs_semantics_audit_20260921.md)。
+
+**BFS 模式短测已完成（2026-09-21）：** 用户新授权下，GPU 2 / NUMA 1 / 2 workers 隔离完成六次、每次两批的合成小图性能筛查。百万有效更新 regular/large/auto 的 `paper_algorithm_ms` 分别 414.183/397.353/393.989 ms，large 比 regular 下降 4.06%，auto 实际走 large；长直径图普通/路网/路网+large 为 199.136/164.699/164.924 ms，路网下降 17.29%。日志确认两模式和组合真正生效，六次最终 checksum 与独立 BFS 一致。单次合成图结果不外推真实大图或稳定性能，未追加矩阵；后台 SSSP GPU 0 仍运行。大 batch 入口是 `CG_BATCH_MAINTENANCE`，不是旧 `--large_batch`。详见 [BFS 模式短测](subiteration_file/bfs_mode_screen_20260921.md)。
+
+已将 `samples/hybrid_bfs` 从 SSSP 副本迁移为动态无权 BFS，修复构建入口，统一初始遍历、增删边传播、CPU owner 和删除修复的单位边权；保留已有拓扑、缓存及调度机制。GPU 2 / NUMA 1 隔离小图验证：三种调度共 18 个阶段及最终逐点距离/父边检查通过；共享策略修改后的 SSSP 六阶段独立 Dijkstra 回归通过。未修改后台 SSSP 的构建目录或冻结二进制，未跑大图性能矩阵，**不宣称大图性能无回退或正式优于旧 BFS**。实现、资源约束、失败修正与验证边界见 [BFS 迁移记录](subiteration_file/bfs_migration_20260921.md)，运行参数见 [BFS README](../samples/hybrid_bfs/README.md)。下方 SSSP 历史状态保持独立。
+
 ## 当前权威状态（2026-09-17）
 
 **I25完成，最后尝试未达到明显领先目标：** TW10M reverse并行排序off/on两批完整均值10762.8765→10847.8605ms，回退0.7896%；两对-1.7593%/+0.1723%，checksum和已核对工作计数一致。排序虽减少360.048ms，但后续group/slots/merge成本上升，完整收益被抵消；两次候选均慢于历史原版，未达到10.180058s（历史线快5%）目标。否决该候选作为推荐优化，保持默认关闭；当前没有足够净收益证据启动reverse结构重写或CPU owner。保留I24 publication显式合并，承认目前只有接近历史原版的证据，未证明明显胜出。本轮收口，后台已结束，无新实验。详见[I25完整结果](subiteration_file/i25_reverse_radix_20260917.md)。本条覆盖下方“已启动/性能待结果”状态。
@@ -1562,3 +1570,14 @@ I21 A+B在1M完整Gate未通过后，按用户允许证据驱动改进方法的�
 **运行。** 同冻结binary、同既有TW10M输入，两批×off/on/on/off四次；仅切换CG_MERGE_PUBLICATION_SOURCES。固定20 workers、NUMA0、large、reverse64、cache2、SEGMENT512、block传播，其余失败候选关闭。输入/结果指纹、GPU锁和外部占用检测、阶段及内存记录齐全；后台健康后不持续轮询。无需因旧1M组合失败而停止这一独立候选，也不自动启动FS/100M。
 
 **裁决。** 两对完整P0均改善、均值约>=5%为开发收益；两次on均低于历史目标只记为历史线通过，随后才条件性做最小同语义原版新配对。共同checksum历史差异必须核实，不以省略reverse、减少有效更新或改cache预算求胜。若不能低于历史线，报告真实剩余预算；没有足够可消除成本则止损。默认策略不自动切换。
+
+
+### CC 真实图删除修复审计（2026-09-23）
+
+OK/TW 原迁移版删除占批耗时约 87%/98%，FS 在 hybrid=2 初始化 OOM；原版 OK/FS 最小标签 oracle 分别有 4/308 个差异；进一步分区核对显示 OK 仅代表编号不同，FS 存在错误合并，后者不能作为正确加速比基准。保留共享 chunk、分组维护、合并 publication、cache、exact insertion 和 ownership 基础设施，新增 CC affected-set GPU union/path-splitting 修复，省去全 incoming 物化与上传；changed-row descriptor 阶段可见性及旧 cache 隔离显式维护。此改造仍扫描受影响旧分量，不等同于维护动态生成森林。设计、证明、复现和实测裁决见 [CC 修复审计](subiteration_file/cc_repair_audit_20260923.md)。
+
+### CC 采样连通证据与维护开销修复（2026-09-24）
+
+已实现并验证：union repair 在删除后的当前邻接上每点采样至多两条边，冻结采样分量后跳过已确认大分量的 source 行，从另一端处理全部割边，最终恢复精确最小标签。复用现有数组，无新增 device allocation；保留 `CG_CC_SAMPLED_REPAIR=0` 全扫描对照。共享 source mutation 统计由每点 240 字节缩至实际使用的 24 字节，SSSP/BFS 回归通过。
+
+同配置单轮完整十批 P0：OK 1552.280→956.441 ms，TW 2400.663→1688.035 ms；FS 同 GPU2/NUMA1/hybrid0 相对上一轮日志 27688.257→4948.038 ms（5.60×），三图最终独立 oracle 全部零错误。OK 再显式启用已有 large 维护 + publication source merge 为 718.508 ms。用户给定 0.8/5.8/10.2 暂作目标数值，不作为已核实原系统同口径基准。18 个 CC 场景/326 阶段、101 图 kernel oracle、memcheck 零错误及共享算法回归完成。配置差异、证明、原始证据、残余 O(V)/最坏 O(E) 边界见 [本轮报告](subiteration_file/cc_sampled_repair_20260924.md)。
