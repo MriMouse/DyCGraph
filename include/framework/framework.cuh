@@ -31,6 +31,7 @@
 #include <framework/cache_refresh_gate.h>
 #include <framework/affected_component_trace.h>
 #include <framework/cc_union_repair.cuh>
+#include <framework/pr_residual.cuh>
 #include <framework/i16_repair_snapshot.h>
 #include <framework/ordered_gpu_repair.cuh>
 #include <framework/algo_variants.cuh>
@@ -1144,7 +1145,8 @@ namespace sepgraph {
 
                 GROUTE_CUDA_CHECK(cudaGetDeviceProperties(&m_dev_props, dev_id));
                 m_groute_context = std::unique_ptr<utils::traversal::Context<Algo>>
-                (new utils::traversal::Context<Algo>(1, AppImplDeviceObject::kComponentLabels,
+                (new utils::traversal::Context<Algo>(1, AppImplDeviceObject::kComponentLabels ||
+                    AppImplDeviceObject::kSignedResidual,
                     AppImplDeviceObject::NormalizeUndirectedInput()));
 
                 //create stream /*CODE by ax range 118 to 121*/
@@ -1244,41 +1246,10 @@ namespace sepgraph {
     index_t GetNodeNum(){
       return m_groute_context->host_graph.nnodes;
     }
-            void compute_hot_vertices_pr(){
-                GraphDatum &graph_datum = *m_graph_datum;
-                auto &app_inst = *m_app_inst;
-                groute::Stream &stream_s = *m_stream;
-                const auto &work_source = groute::dev::WorkSourceRange<index_t>(0, graph_datum.nnodes);
-                const auto &vcsr_graph = m_vcsr_dev_graph_allocator->DeviceObject();
-                const auto &hvcsr = m_vcsr_dev_graph_allocator->HostObject();
-                dim3 grid_dims, block_dims;
-                KernelSizing(grid_dims, block_dims, work_source.get_size());
-                Stopwatch sw_ch(true);
-                kernel::comp_hotness_pr<< < grid_dims, block_dims, 0, stream_s.cuda_stream >> > (app_inst,
-                    vcsr_graph,
-                    work_source,
-                    graph_datum.m_node_buffer_datum,
-                    graph_datum.d_hotness);
-                stream_s.Sync();
-                sw_ch.stop();
-                LOG("comp_hotness time: %f ms (excluded)\n", sw_ch.ms());
-                graph_datum.sort_vtx_by_hotness();
-                // graph_datum.CompareDeviceResult();
-                Stopwatch extrac(true);
-                kernel::extract_vtx_degree<< < grid_dims, block_dims, 0, stream_s.cuda_stream >> > (app_inst,
-                    vcsr_graph,
-                    work_source,
-                    graph_datum.d_id,
-                    graph_datum.d_v);
-                stream_s.Sync();
-                extrac.stop();
-                kernel::reset_hotness<< < grid_dims, block_dims, 0, stream_s.cuda_stream >> > (app_inst,
-                    vcsr_graph,
-                    work_source,
-                    graph_datum.d_hotness);
-                    stream_s.Sync();
-                LOG("extract degree time: %f ms (excluded)\n", extrac.ms());
-                cudaDeviceSynchronize();
+            void compute_hot_vertices_pr() {
+                // Use the production activity window, ID/score pairing and
+                // candidate gate; PR has no shortest-path infinity mask.
+                compute_hot_vertices_sssp();
             }
 
             void compute_hot_vertices_sssp(bool audit_hotness = false, int batch = -1){
@@ -2694,6 +2665,63 @@ namespace sepgraph {
                 }
                 // Touched cached sources are invalidated by PublishSparse.
                 // LOG("DEBUG pr 1.2.5 \n");
+            }
+
+            // PR keeps signed residuals: shortest-path parent/owner/minimum
+            // repair is not a valid propagation policy for additive rank updates.
+            void StartPageRank(pr::Runtime &runtime, float epsilon, unsigned max_rounds) {
+                auto &datum = *m_graph_datum;
+                auto &stream = *m_stream;
+                runtime.Init(datum.m_node_value_datum, datum.m_node_buffer_datum, stream.cuda_stream);
+                const auto rounds = runtime.Converge(m_vcsr_dev_graph_allocator->DeviceObject(),
+                    datum.cache_edges_l1, datum.m_node_value_datum,
+                    datum.m_node_buffer_datum, epsilon, max_rounds, stream.cuda_stream);
+                LOG("[PR-CONVERGE] stage=initial rounds=%u signed_residual=1\n", rounds);
+            }
+
+            void UpdatePageRank(pr::Runtime &runtime,
+                                std::pair<index_t,index_t> &offset, index_t batch,
+                                float epsilon, unsigned max_rounds) {
+                cgcomm::Scope comm_scope(cgcomm::Category::Topology);
+                auto &datum = *m_graph_datum;
+                auto &stream = *m_stream;
+                auto &graph = m_vcsr_dev_graph_allocator->DeviceObject();
+                GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+                m_chunk_store->ReclaimThrough(m_chunk_store->PublishedEpoch());
+                PrepareGroupedUpdates(offset, batch);
+                std::vector<index_t> sources;
+                sources.reserve(m_grouped_updates.sources.size());
+                for (auto src : m_grouped_updates.sources)
+                    if (src < datum.nnodes) sources.push_back(src);
+                runtime.BeginBatch(sources, stream.cuda_stream);
+                // r' = r + alpha * (P_new^T - P_old^T) * x.
+                // Consume old rows before any in-place CPU mutation or reclaim.
+                runtime.Amend(graph, datum.cache_edges_l1, sources.size(),
+                    datum.m_node_value_datum, datum.m_node_buffer_datum,
+                    -1, epsilon, stream.cuda_stream);
+                stream.Sync();
+                del_edge_pr(offset, batch);
+                add_edge_pr(offset, batch);
+                offset.first += m_load_update->m_batch_size[batch].first;
+                offset.second += m_load_update->m_batch_size[batch].second;
+                FinalizePublicationSources(batch);
+                m_vcsr_dev_graph_allocator->PublishSparse(m_topology_patch_sources,
+                    stream.cuda_stream, FLAGS_check, datum.cache_edges_l1, datum.num_of_cache);
+                // Same stream orders descriptor visibility and cache patching
+                // before new-degree contribution seeding and propagation.
+                runtime.Amend(graph, datum.cache_edges_l1, sources.size(),
+                    datum.m_node_value_datum, datum.m_node_buffer_datum,
+                    1, epsilon, stream.cuda_stream);
+                runtime.EndBatch(stream.cuda_stream);
+                const auto publication = m_vcsr_dev_graph_allocator->CompleteSparsePublication();
+                if (publication.stale_rejects || publication.hash_mismatches)
+                    throw std::runtime_error("PR topology publication failed");
+                const auto rounds = runtime.Converge(graph, datum.cache_edges_l1,
+                    datum.m_node_value_datum, datum.m_node_buffer_datum,
+                    epsilon, max_rounds, stream.cuda_stream);
+                LOG("[PR-BATCH] batch=%u touched_sources=%zu published_sources=%zu rounds=%u publication_ms=%.3f cache_invalidations=%llu\n",
+                    batch, sources.size(), m_topology_patch_sources.size(), rounds,
+                    publication.publication_ms, publication.cache_invalidations);
             }
 
             void Cancelation(std::pair<index_t,index_t>& local_begin,index_t& NumOfSnapShots){

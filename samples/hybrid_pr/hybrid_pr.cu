@@ -9,21 +9,29 @@
 #include <framework/clion_cuda.cuh>
 #include <framework/variants/api.cuh>
 #include "hybrid_pr_common.h"
+#include <utils/communication_meter.h>
+#include <utils/communication_window.h>
+#include <fstream>
+#include <iomanip>
+#include <cmath>
 #include <functional>
 #include <map>
 
 // Priority
-DEFINE_double(cut_threshold, 0, "Cut threshold for index calculation");
-DEFINE_bool(sparse, false, "disable load-balancing for sparse graph");
+DEFINE_int32(pr_max_batches, 10, "Maximum PR update batches (0 for static PR)");
+DEFINE_int32(pr_max_rounds, 10000, "Fail if a PR fixed point exceeds this limit");
+DEFINE_double(error, 0.000001, "Absolute signed PR residual threshold");
+DEFINE_bool(sparse, false, "Compatibility flag; PR always uses sparse residual frontiers");
 DEFINE_int32(sssp_cpu_partition_capacity, 0, "Compatibility flag; SSSP insertion only");
 DEFINE_string(sssp_cpu_domain_map, "", "Compatibility flag; SSSP insertion only");
 DEFINE_string(e0b_trace_file, "", "Compatibility flag; SSSP insertion only");
 DEFINE_string(f1_cache_trace_file, "", "Compatibility flag; SSSP only");
 DEFINE_string(f1_component_trace_file, "", "Compatibility flag; SSSP only");
-DECLARE_double(error);
-DECLARE_int32(top_ranks);
-DECLARE_bool(print_ranks);
+DECLARE_bool(check);
+DECLARE_string(updatefile);
+DECLARE_string(update_size);
 DECLARE_string(output);
+DECLARE_string(graphfile);
 
 namespace hybrid_pr
 {
@@ -36,6 +44,7 @@ namespace hybrid_pr
          *
          * Error: Internal Compiler Error (codegen): "there was an error in verifying the lgenfe output!"
          */
+        static constexpr bool kSignedResidual = true;
         double m_error;
         using sepgraph::api::AppBase<TValue, TBuffer, TWeight>::AccumulateBuffer;
         PageRank(double error) : m_error(error)
@@ -67,140 +76,138 @@ namespace hybrid_pr
         }
 
         __forceinline__ __device__
-
         utils::pair<TBuffer, bool> CombineValueBuffer(index_t node,
-                                                      TValue *p_value,
-                                                      TBuffer *p_buffer) override
-        {
-            TBuffer buffer = atomicExch(p_buffer, IDENTITY_ELEMENT);
-            // TValue *outv;
-            bool schedule = false;
-            // if (buffer > 0.01)
-            // if (buffer > m_error)
-            if (buffer != 0)
-            {
-                schedule = true;
-                *p_value += buffer;
-                int out_degree = this->m_vcsr_graph.sync_vertices_[node].degree;
-                
-                buffer = ALPHA * buffer / out_degree;
-                // if (node == 1 || node==2 || node==3 || node ==4)LOG("#node %d, degree %d, value %f, buffer %f\n", node, out_degree, *p_value, buffer);
-            }
-            return utils::pair<TBuffer, bool>(buffer, schedule);
+                TValue *value, TBuffer *residual) override {
+            const TBuffer r = atomicExch(residual, TBuffer(0));
+            *value += r;
+            const auto degree = this->m_vcsr_graph.degree(node);
+            return {degree ? TBuffer(ALPHA * r / degree) : TBuffer(0), degree && r != 0};
+        }
+        __forceinline__ __device__
+        utils::pair<TBuffer, bool> CombineValueBufferAmend(index_t node, int *sign,
+                TValue *value, TBuffer *) override {
+            const auto degree = this->m_vcsr_graph.degree(node);
+            return {degree ? TBuffer(ALPHA * *value * sign[0] / degree) : TBuffer(0),
+                    degree && *value != 0};
         }
 
         __forceinline__ __device__
-        utils::pair<TBuffer, bool> CombineValueBufferAmend(index_t node,int *type_device,
-                                                      TValue *p_value,
-                                                      TBuffer *p_buffer) override
-        {
-            // TBuffer buffer = atomicExch(p_buffer, IDENTITY_ELEMENT);
-            // TBuffer buffer = atomicExch(p_buffer, *p_buffer);
-            TBuffer buffer =  (*p_value) * (type_device[0]);
-            //  TBuffer buffer =  (*p_value);
-            bool schedule = false;
-
-            if (buffer != 0)
-            {
-                schedule = true;
-                // schedule = false;
-                int out_degree = this->m_vcsr_graph.sync_vertices_[node].degree;
-                buffer = ALPHA * buffer / out_degree;
-            }
-            return utils::pair<TBuffer, bool>(buffer, schedule);
-        }
-
-        __forceinline__ __device__
-        int AccumulateBuffer(index_t src,
-                             index_t dst,
-                            //  TValue level, //src_level
-                            //  TValue *p_level, //dst_level
-                             TWeight weight,
-                             TValue *p_parent,
-                             TBuffer *p_buffer,    //dst_buffer
-                             TBuffer buffer) override   //src_buffer
-        {
-            //p_buffer is dst delta ,buffer is src delta
-            // if(dst ==5 )printf("acc src %d -> dst %d delta %f\n",src,dst,buffer);
-            atomicAdd(p_buffer, buffer);
-            return 0;
+        int AccumulateBuffer(index_t, index_t, TWeight, TValue *,
+                             TBuffer *residual, TBuffer delta) override {
+            atomicAdd(residual, delta);
+            return delta != 0;
         }
 
         __forceinline__ __device__
 
         bool IsActiveNode(index_t node, TBuffer buffer, TValue value) const override
         {
-            return buffer > m_error;
+            return fabsf(buffer) > m_error;
         }
 
         __forceinline__ __device__
 
         bool IsActiveNode_INC(index_t node, TBuffer buffer, TValue value) const override
         {
-            return buffer < (-m_error) ;
+            return fabsf(buffer) > m_error;
         }
         
         __forceinline__ __device__
 
         TValue sum_value(index_t node, TValue value, TBuffer buffer) const override
         {
-            return buffer;
+            return fabsf(buffer);
         }
 
         __forceinline__ __device__
 
         bool IsHighPriority(TBuffer current_priority, TBuffer buffer) const override
         {
-            return current_priority <= buffer;
+            return fabsf(buffer) >= current_priority;
         }
     };
 }
 
-bool HybridPageRank()
-{
-    LOG("HybridPageRank\n");
-    typedef sepgraph::engine::Engine<rank_t, rank_t, rank_t, hybrid_pr::PageRank, double> HybridEngine;
-    HybridEngine engine(sepgraph::policy::AlgoType::ITERATIVE_SCHEME);
-    sepgraph::engine::EngineOptions engine_opt;
-
-    LOG("error %f\n", (float) FLAGS_error);
-    engine.SetOptions(engine_opt);
-    engine.LoadGraph();
-    engine.InitGraph(FLAGS_error);
-    engine.Start();
-    engine.compute_hot_vertices_pr();
-    engine.confirm_candidate_batch();
-    engine.LoadCache();
-    engine.get_update_file();
-    std::pair<index_t,index_t> local_begin;
-    local_begin.first = 0; //first is add
-    local_begin.second = 0; // second is del
-    index_t NumOfSnapShots = 0;
-    while(true){
-        if(NumOfSnapShots==10) break;
-        std::cout<<"batch number "<<NumOfSnapShots<<std::endl;
-        engine.Cancelation(local_begin,NumOfSnapShots);
-        engine.Compensate(local_begin,NumOfSnapShots);
+bool HybridPageRank() {
+    try {
+        if (FLAGS_graphfile.empty()) throw std::invalid_argument("PR requires graphfile");
+        if (!std::isfinite(FLAGS_error) || FLAGS_error <= 0 ||
+            !std::isfinite(static_cast<float>(FLAGS_error)) || static_cast<float>(FLAGS_error) == 0 ||
+            FLAGS_pr_max_batches < 0 || FLAGS_pr_max_rounds <= 0)
+            throw std::invalid_argument("PR requires finite error > 0, pr_max_batches >= 0 and pr_max_rounds > 0");
+        if (FLAGS_sssp_cpu_partition_capacity || !FLAGS_sssp_cpu_domain_map.empty())
+            throw std::invalid_argument("PR signed residuals require GPU propagation; SSSP min/parent CPU ownership is incompatible");
+        if (FLAGS_updatefile.empty() != FLAGS_update_size.empty())
+            throw std::invalid_argument("PR requires both updatefile and update_size, or neither");
+        if (cgcomm::WindowEnabled() && FLAGS_check)
+            throw std::invalid_argument("CG_COMM_WINDOW requires --check=false; validate separately");
+        using Engine = sepgraph::engine::Engine<rank_t, rank_t, rank_t, hybrid_pr::PageRank, double>;
+        Engine engine(sepgraph::policy::AlgoType::ITERATIVE_SCHEME);
+        engine.LoadGraph();
+        sepgraph::common::EngineOptions options;
+        options.SetLoadBalancing(sepgraph::common::MsgPassing::PUSH,
+                                 sepgraph::common::LoadBalancing::COARSE_GRAINED);
+        engine.SetOptions(options);
+        engine.InitGraph(FLAGS_error);
+        sepgraph::pr::Runtime runtime(engine.GetGraphDatum().nnodes);
+        Stopwatch initial(true);
+        engine.StartPageRank(runtime, FLAGS_error, FLAGS_pr_max_rounds);
+        initial.stop();
+        LOG("[PR-INITIAL] compute_ms=%.3f alpha=0.85 base=0.15 dangling=drop\n", initial.ms());
+        auto check = [&](const char *stage, int batch) {
+            engine.GatherValue();
+            engine.GatherBuffer();
+            return PageRankCheck(engine.ChunkStore(), engine.GetGraphDatum().host_value,
+                engine.GetGraphDatum().host_buffer, FLAGS_error, stage, batch);
+        };
+        if (FLAGS_check && !check("initial", -1)) return false;
+        auto cache = [&]() {
+            engine.compute_hot_vertices_pr();
+            engine.confirm_candidate_batch();
+            if (engine.CacheRefreshRequired()) {
+                engine.evication_cache();
+                engine.compact_cache();
+                engine.LoadCache();
+                engine.MarkCachePublished();
+            }
+        };
+        // Initial cache load has no old cache to evict/compact.
         engine.compute_hot_vertices_pr();
         engine.confirm_candidate_batch();
-        engine.evication_cache();
-        engine.compact_cache();
         engine.LoadCache();
-        NumOfSnapShots+=1;
+        engine.MarkCachePublished();
+        unsigned batches = 0;
+        if (FLAGS_pr_max_batches && !FLAGS_updatefile.empty()) {
+            engine.get_update_file();
+            batches = std::min<size_t>(FLAGS_pr_max_batches, engine.GetUpdateBatchCount());
+        }
+        std::pair<index_t,index_t> offset{0, 0};
+        cgcomm::Flush(-1, "initialization");
+        if (cgcomm::WindowEnabled()) cgcomm::Window("begin");
+        for (index_t batch = 0; batch < batches; ++batch) {
+            Stopwatch timer(true);
+            engine.UpdatePageRank(runtime, offset, batch, FLAGS_error, FLAGS_pr_max_rounds);
+            cache();
+            GROUTE_CUDA_CHECK(cudaDeviceSynchronize());
+            timer.stop();
+            LOG("[P0-TIMER][PR][batch %u] paper_algorithm_ms=%.3f\n", batch, timer.ms());
+            cgcomm::Flush(batch, "pr_update_and_cache");
+            if (FLAGS_check && !check("batch", batch)) return false;
+            cgcomm::Flush(batch, "batch_check");
+        }
+        if (cgcomm::WindowEnabled()) cgcomm::Window("end");
+        engine.GatherValue();
+        engine.GatherBuffer();
+        const auto &ranks = engine.GetGraphDatum().host_value;
+        const auto &residual = engine.GetGraphDatum().host_buffer;
+        if (FLAGS_check && !PageRankCheck(engine.ChunkStore(), ranks, residual,
+                                         FLAGS_error, "final", batches)) return false;
+        if (!FLAGS_output.empty() && !PageRankOutput(FLAGS_output.c_str(), ranks, residual)) return false;
+        LOG("[PR-FINAL] vertices=%zu batches=%u\n", ranks.size(), batches);
+        cgcomm::Flush(-1, "final_output_and_check");
+        return true;
+    } catch (const std::exception &error) {
+        std::fprintf(stderr, "[PR-ERROR] %s\n", error.what());
+        return false;
     }
-    engine.GatherValue();
-    engine.GatherBuffer();
-    const auto &distances = engine.GetGraphDatum().host_value;
-    const auto &deltas = engine.GetGraphDatum().host_buffer;
-    cudaDeviceSynchronize();
-    for(index_t i = 0; i<20; i++){
-        printf("v %d data %f delta %f\n",i,distances[i],deltas[i]);
-        
-    } 
-
-    bool success = true;
-
-        printf("Warning: Result not checked\n");
-
-    return success;
 }

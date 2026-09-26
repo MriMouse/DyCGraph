@@ -26,54 +26,21 @@
 // CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
-#include <cstdio>
-#include <cuda_runtime.h>
+#ifndef __HYBRID_PR_COMMON_H
+#define __HYBRID_PR_COMMON_H
+
+#include <climits>
 #include <gflags/gflags.h>
-#include <iostream>
-#include <utils/utils.h>
-#include <utils/interactor.h>
-#include <utils/app_skeleton.h>
+#include <groute/graphs/csr_graph.cuh>
 
-bool HybridPageRank();
-void CleanupGraphs();
+typedef float rank_t;
 
+#define IDENTITY_ELEMENT 0.0
+#define ALPHA 0.85
+#define ERROR_THRESHOLD 0.2
 
-namespace hybrid_pr {
-    struct App {
-        static const char *Name() { return "pr"; }
+std::vector<rank_t> PageRankHost(const groute::graphs::host::CSRGraph& graph);
+int PageRankCheckErrors(std::vector<rank_t>& ranks, std::vector<rank_t>& regression);
+int PageRankOutput(const char *file, const std::vector<rank_t>& ranks);
 
-        static const char *NameUpper() { return "PR"; }
-
-        inline static bool success = true;
-        static bool Single() {
-            const bool result = HybridPageRank();
-            success = success && result;
-            return result;
-        }
-
-        static void Cleanup() { CleanupGraphs(); }
-    };
-}
-
-//here is the main function of OOM GPU graph processing
-int main(int argc, char **argv) {
-    Skeleton<hybrid_pr::App> app;
-    int exit = 0;
-    try {
-        exit = app(argc, argv);
-        if (!hybrid_pr::App::success) exit = 1;
-    } catch (const std::exception &error) {
-        fprintf(stderr, "PR: %s\n", error.what());
-        exit = 1;
-    }
-
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaError_t cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
-
-    return exit;
-}
+#endif // __HYBRID_PR_COMMON_H

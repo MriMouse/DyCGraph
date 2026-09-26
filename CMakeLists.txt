@@ -71,6 +71,10 @@ cuda_add_executable(hybrid_pr src/utils/parser.cpp src/utils/utils.cpp src/utils
        samples/hybrid_pr/hybrid_pr_host.cu
        samples/hybrid_pr/main.cu)
 target_link_libraries(hybrid_pr ${EXTRA_LIBS} pthread)
+target_sources(hybrid_pr PRIVATE src/utils/communication_meter.cpp)
+target_include_directories(hybrid_pr PRIVATE ${CUDA_INCLUDE_DIRS})
+set_property(TARGET hybrid_pr APPEND_STRING PROPERTY LINK_FLAGS
+    " -Wl,--wrap=cudaMemcpy -Wl,--wrap=cudaMemcpyAsync")
 
 
 cuda_add_executable(hybrid_bfs src/utils/parser.cpp src/utils/utils.cpp src/utils/to_json.cpp #src/groute/graphs/csr_graph.cpp

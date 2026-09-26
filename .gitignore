@@ -1,5 +1,9 @@
 build/
 scripts/*
+!scripts/prepare_paper_data.py
+!scripts/paper_data_stream.cpp
+!scripts/PaperUkEdges.java
+!scripts/start_paper_data.sh
 !scripts/run_i17a_sparse.py
 !scripts/run_stage_pre_i17c.py
 !scripts/prepare_stage_twitter.py

@@ -34,43 +34,41 @@
 #include <utils/interactor.h>
 #include <utils/app_skeleton.h>
 
+DEFINE_double(error, 0.000001, "PR error tolerance");
 bool HybridPageRank();
 void CleanupGraphs();
 
 
-namespace hybrid_pr {
-    struct App {
-        static const char *Name() { return "pr"; }
+namespace pr
+{
+    struct App
+    {
+        static const char *Name()
+        { return "page rank"; }
 
-        static const char *NameUpper() { return "PR"; }
+        static const char *NameUpper()
+        { return "Page Rank"; }
 
-        inline static bool success = true;
-        static bool Single() {
-            const bool result = HybridPageRank();
-            success = success && result;
-            return result;
+        static bool Single()
+        {
+            return HybridPageRank();
         }
 
-        static void Cleanup() { CleanupGraphs(); }
+        static void Cleanup()
+        { CleanupGraphs(); }
     };
 }
 
-//here is the main function of OOM GPU graph processing
-int main(int argc, char **argv) {
-    Skeleton<hybrid_pr::App> app;
-    int exit = 0;
-    try {
-        exit = app(argc, argv);
-        if (!hybrid_pr::App::success) exit = 1;
-    } catch (const std::exception &error) {
-        fprintf(stderr, "PR: %s\n", error.what());
-        exit = 1;
-    }
-
+int main(int argc, char **argv)
+{
+    Skeleton<pr::App> app;
+    int exit = app(argc, argv);
+																																
     // cudaDeviceReset must be called before exiting in order for profiling and
     // tracing tools such as Nsight and Visual Profiler to show complete traces.
     cudaError_t cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
+    if (cudaStatus != cudaSuccess)
+    {
         fprintf(stderr, "cudaDeviceReset failed!");
         return 1;
     }

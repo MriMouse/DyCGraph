@@ -502,7 +502,7 @@ namespace sepgraph {
                 // Scores are regenerated in vertex order, not previous rank
                 // order. CUB's stable sort then breaks ties by ascending ID.
                 ids[node] = node;
-                if(buffer_datum[node]==UINT32_MAX){
+                if(!TAppInst::kSignedResidual && buffer_datum[node]==UINT32_MAX){
                     d_hotness.d_buffers[d_hotness.selector][node] = 0;
                 }else{
                     d_hotness.d_buffers[d_hotness.selector][node] = ((vcsr_graph.vertices_[node].hotness[0]+vcsr_graph.vertices_[node].hotness[1]+vcsr_graph.vertices_[node].hotness[2]+vcsr_graph.vertices_[node].hotness[3]));

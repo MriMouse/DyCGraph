@@ -8,6 +8,12 @@
 
 > **文档阅读顺序（2026-09-14 整理）：** 本节“当前权威状态”和“迭代论文索引”是接手与写作入口；后文动态工作区、执行计划和时间线保留各阶段的详细问题、方法、实验与负结果，但其中的旧“下一步”不再构成当前任务。逐次试跑和完整 profiler 数据仍以子报告、脚本和 `logs/` 为准。
 
+## PR 迁移状态（2026-09-24）
+
+`samples/hybrid_pr` 已改为双向残差增量 PageRank：按 touched source 的旧、新归一化邻接修正贡献，使用去重稀疏 frontier 收敛；保留 CPU source-local chunk / worker 分组维护、regular/large 模式、publication merge、CTA/warp 调度、GPU cache / zero-copy、hotness ID 配对和 cache refresh gate。采用旧 PR 的非归一化语义（base=0.15、alpha=0.85，零出度不外发），不套用 SSSP parent/min/ordered distance 判断。
+
+12 项 PR 场景通过，正常运行 47 次阶段/最终检查及独立 Python 最终重算通过，十批 CUDA memcheck 零错误，SSSP/BFS/CC 各三批共享回归通过；未做真实大图性能对照，不宣称实测加速或无回退。实现、接入故障修正、显存增量和验证边界见 [PR 迁移报告](subiteration_file/pr_migration_20260924.md)，使用见 [PR README](../samples/hybrid_pr/README.md)。SSSP 历史性能结论保持独立。
+
 ## BFS 迁移状态（2026-09-21）
 
 **BFS 语义再次复核（2026-09-21）：** 已逐项追踪初始计算、增量种子/传播、普通/有序删除修复和实际 output，均为单位边权最少跳数。新增可区分算法的测试：文件权重 SSSP=3、原权重规则 SSSP=8，而 BFS 初始实际输出=2；普通/large/路网+large 的 30 个阶段与独立 BFS 一致，初始-only 和最终所有输出逐点及父边检查通过。发现并修正父边错误未计入 check 失败、第四列 buffer 误称 delta、写文件失败未报错三处校验/输出细节。详见 [BFS 语义复核](subiteration_file/bfs_semantics_audit_20260921.md)。

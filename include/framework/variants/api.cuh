@@ -29,6 +29,7 @@ namespace sepgraph
 
             static constexpr bool kSupportsGpuDeletionRepair = false;
             static constexpr bool kComponentLabels = false;
+            static constexpr bool kSignedResidual = false;
             static bool NormalizeUndirectedInput() { return false; }
 
             __host__ __device__ static TWeight DeletionEdgeWeight(index_t, index_t) {
