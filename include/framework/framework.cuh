@@ -2676,7 +2676,8 @@ namespace sepgraph {
                 const auto rounds = runtime.Converge(m_vcsr_dev_graph_allocator->DeviceObject(),
                     datum.cache_edges_l1, datum.m_node_value_datum,
                     datum.m_node_buffer_datum, epsilon, max_rounds, stream.cuda_stream);
-                LOG("[PR-CONVERGE] stage=initial rounds=%u signed_residual=1\n", rounds);
+                LOG("[PR-CONVERGE] stage=initial rounds=%u signed_residual=1 stop=%s active=%u limit=%u\n",
+                    rounds, runtime.Converged() ? "converged" : "iteration_limit", runtime.ActiveCount(), max_rounds);
             }
 
             void UpdatePageRank(pr::Runtime &runtime,
@@ -2719,9 +2720,10 @@ namespace sepgraph {
                 const auto rounds = runtime.Converge(graph, datum.cache_edges_l1,
                     datum.m_node_value_datum, datum.m_node_buffer_datum,
                     epsilon, max_rounds, stream.cuda_stream);
-                LOG("[PR-BATCH] batch=%u touched_sources=%zu published_sources=%zu rounds=%u publication_ms=%.3f cache_invalidations=%llu\n",
+                LOG("[PR-BATCH] batch=%u touched_sources=%zu published_sources=%zu rounds=%u publication_ms=%.3f cache_invalidations=%llu stop=%s active=%u limit=%u\n",
                     batch, sources.size(), m_topology_patch_sources.size(), rounds,
-                    publication.publication_ms, publication.cache_invalidations);
+                    publication.publication_ms, publication.cache_invalidations,
+                    runtime.Converged() ? "converged" : "iteration_limit", runtime.ActiveCount(), max_rounds);
             }
 
             void Cancelation(std::pair<index_t,index_t>& local_begin,index_t& NumOfSnapShots){

@@ -44,17 +44,18 @@ def main():
             (10, 10), (n-1, n-1)]
     base += [(20, v) for v in range(21, 1800)]  # CTA high-degree scheduler
     base += [(v, 20) for v in range(21, 1800)]
-    # An acyclic path, disconnected components, sinks and isolated vertices.
-    base += [(v, v+1) for v in range(2000, 2100)]
+    # A short acyclic path (fits the 100-round contract), disconnected components,
+    # sinks and isolated vertices. The capped-continuation case tests truncation.
+    base += [(v, v+1) for v in range(2000, 2020)]
     original = Counter(base)
     (out/'graph').write_text(''.join(f'{u} {v} 777\n' for u, v in sorted(base)))
     batches = [([], []), ([(2, 0)], []), ([], [(2, 3)]),
                ([(3, 4)], [(3, 4)]), ([(8, 9)], []),
                ([(8, 9), (10, 10)], [(9, 8)]),
-               ([(20, v) for v in range(21, 1800, 3)], [(20, 2000), (2100, 20)]),
+               ([(20, v) for v in range(21, 1800, 3)], [(20, 2000), (2020, 20)]),
                ([(2000, 2001), (4000, 4001)], [(0, 8), (3, 10)]),
                ([], [(10, 10), (10, 3), (8, 9), (8, 9)]),
-               ([(20, 2000), (2100, 20)], [(2000, 2001)])]
+               ([(20, 2000), (2020, 20)], [(2000, 2001)])]
     edges, updates, sizes = original.copy(), [], []
     for deleted, added in batches:
         for u, v in deleted:
@@ -128,8 +129,27 @@ def main():
     values = [float(line.split()[1]) for line in output.read_text().splitlines()]
     assert sum(abs(a-b) for a,b in zip(values, initial))/n < 1e-5
     results.append(dict(name='static', state='passed'))
+    # Capped solves must preserve pending residual/frontier across updates.
+    output = out/'capped.ranks'
+    text = run('capped', ['--pr_max_rounds=1', '--check=false', '--cache=2',
+                        f'--updatefile={out / "updates"}',
+                        f'--update_size={out / "sizes"}', '--pr_max_batches=99',
+                        f'--output={output}'])
+    assert len(re.findall(r'\[PR-BATCH\].*rounds=[01] ', text)) == len(batches)
+    assert 'stop=iteration_limit' in text
+    rows = [line.split() for line in output.read_text().splitlines()]
+    x = [float(row[1]) for row in rows]
+    r = [float(row[2]) for row in rows]
+    degree = [0] * n
+    for (u, v), count in edges.items(): degree[u] += count
+    next_x = [0.15] * n
+    for (u, v), count in edges.items():
+        if count: next_x[v] += 0.85 * x[u] * count / degree[u]
+    assert sum(abs(a-b-c) for a,b,c in zip(next_x, x, r)) <= 64 * 2**-23 * max(1, sum(map(abs, x)))
+    results.append(dict(name='capped_continuation', state='passed'))
     for name, extra, message in [
-            ('limit', ['--pr_max_rounds=1'], 'iteration limit'),
+            ('limit', ['--pr_max_rounds=1'], 'iteration_limit'),
+            ('excess_limit', ['--pr_max_rounds=101'], 'pr_max_rounds'),
             ('negative_error', ['--error=-1'], 'finite error'),
             ('ownership', ['--sssp_cpu_partition_capacity=1'], 'incompatible'),
             ('bad_output', [f'--output={out / "missing" / "output"}'], 'Cannot write')]:

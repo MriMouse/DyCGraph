@@ -1,0 +1,254 @@
+
+Testing single GPU Page Rank
+--------------------
+
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/samples/hybrid_pr/hybrid_pr.cu:158 HOST: HybridPageRank
+
+Loading graph /tmp/pr-aligned-smoke4/graph (market_big)
+ look edge_dst[nedges-1] : 4095 look edge_dst[nedges-2] : 4095 nedges-1: 3586 nedges-2: 3585
+ edge_[nedges-1] : 4095 look edge_dst[nedges-2] : 4095 nedges-1: 3586 nedges-2: 3585
+
+----- Running Hybrid Graph Engine -----
+
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/samples/hybrid_pr/hybrid_pr.cu:163 HOST: error 0.000001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:369 HOST: seg_nedges_csr_max = 14348
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:164 HOST: 内存分配的边数量 0
+缓存大小： 0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:192 HOST: Allocate node for GraphDatum weighted ? 1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:378 HOST: Load graph time: 3.615000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:438 HOST: InitGraph: 0.071000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:577 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:585 HOST: [PR-CONVERGE] stage=initial rounds=1 stop=iteration_limit active=1808 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:590 HOST: Iterate all time: 0.156000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.023000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.031000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.049000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.016000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.049000 ms 
+batch number 0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1119 HOST: ====this is 0 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1154 HOST: 取消时间: 0.125000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1069 HOST: del start 0 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1070 HOST: del size 0 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1306 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1309 HOST: [PR-BATCH] batch=0 rounds=1 stop=iteration_limit active=1806 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1314 HOST: 迭代时间: 0.138000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1315 HOST: round num : 1  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.011000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.010000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.015000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1403 HOST: 缓存逐出时间 0.018000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1379 HOST: 合并缓存时间 cache(compact time): 0.105000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.022000 ms 
+batch number 1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1119 HOST: ====this is 1 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1154 HOST: 取消时间: 0.085000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1069 HOST: del start 0 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1306 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1309 HOST: [PR-BATCH] batch=1 rounds=1 stop=iteration_limit active=1804 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1314 HOST: 迭代时间: 0.109000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1315 HOST: round num : 1  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.011000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1403 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1379 HOST: 合并缓存时间 cache(compact time): 0.052000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.020000 ms 
+batch number 2
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1119 HOST: ====this is 2 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1154 HOST: 取消时间: 0.079000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1069 HOST: del start 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1070 HOST: del size 0 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1306 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1309 HOST: [PR-BATCH] batch=2 rounds=1 stop=iteration_limit active=1802 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1314 HOST: 迭代时间: 0.110000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1315 HOST: round num : 1  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1403 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1379 HOST: 合并缓存时间 cache(compact time): 0.056000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.020000 ms 
+batch number 3
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1119 HOST: ====this is 3 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1154 HOST: 取消时间: 0.080000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1069 HOST: del start 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1306 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1309 HOST: [PR-BATCH] batch=3 rounds=1 stop=iteration_limit active=1800 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1314 HOST: 迭代时间: 0.110000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1315 HOST: round num : 1  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.014000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1403 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1379 HOST: 合并缓存时间 cache(compact time): 0.051000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.020000 ms 
+batch number 4
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1119 HOST: ====this is 4 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1154 HOST: 取消时间: 0.079000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1069 HOST: del start 2 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1306 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1309 HOST: [PR-BATCH] batch=4 rounds=1 stop=iteration_limit active=1799 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1314 HOST: 迭代时间: 0.111000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1315 HOST: round num : 1  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.007000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1403 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1379 HOST: 合并缓存时间 cache(compact time): 0.051000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.020000 ms 
+batch number 5
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1119 HOST: ====this is 5 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1154 HOST: 取消时间: 0.085000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1069 HOST: del start 3 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1070 HOST: del size 2 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1306 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1309 HOST: [PR-BATCH] batch=5 rounds=1 stop=iteration_limit active=1798 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1314 HOST: 迭代时间: 0.108000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1315 HOST: round num : 1  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1403 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1379 HOST: 合并缓存时间 cache(compact time): 0.050000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.022000 ms 
+batch number 6
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1119 HOST: ====this is 6 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1154 HOST: 取消时间: 0.079000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1069 HOST: del start 5 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1070 HOST: del size 593 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1306 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1309 HOST: [PR-BATCH] batch=6 rounds=1 stop=iteration_limit active=1205 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1314 HOST: 迭代时间: 0.107000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1315 HOST: round num : 1  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.011000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1403 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1379 HOST: 合并缓存时间 cache(compact time): 0.051000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.020000 ms 
+batch number 7
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1119 HOST: ====this is 7 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1154 HOST: 取消时间: 0.078000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1069 HOST: del start 598 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1070 HOST: del size 2 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1306 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1309 HOST: [PR-BATCH] batch=7 rounds=1 stop=iteration_limit active=1206 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1314 HOST: 迭代时间: 0.115000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1315 HOST: round num : 1  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1403 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1379 HOST: 合并缓存时间 cache(compact time): 0.052000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.020000 ms 
+batch number 8
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1119 HOST: ====this is 8 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1154 HOST: 取消时间: 0.078000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1069 HOST: del start 600 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1070 HOST: del size 0 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1306 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1309 HOST: [PR-BATCH] batch=8 rounds=1 stop=iteration_limit active=1205 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1314 HOST: 迭代时间: 0.119000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1315 HOST: round num : 1  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1403 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1379 HOST: 合并缓存时间 cache(compact time): 0.053000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.021000 ms 
+batch number 9
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1119 HOST: ====this is 9 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1154 HOST: 取消时间: 0.083000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1069 HOST: del start 600 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1070 HOST: del size 2 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1306 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1309 HOST: [PR-BATCH] batch=9 rounds=1 stop=iteration_limit active=1205 limit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1314 HOST: 迭代时间: 0.115000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1315 HOST: round num : 1  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.010000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:182 HOST: extract degree time: 0.010000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:232 HOST: candidate v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1403 HOST: 缓存逐出时间 0.009000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:1379 HOST: 合并缓存时间 cache(compact time): 0.058000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-pr-aligned/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.021000 ms 
+v 0 data 0.150000 delta 0.000000
+v 1 data 0.213750 delta 0.000000
+v 2 data 0.331687 delta 0.000000
+v 3 data 1.600075 delta 0.020537
+v 4 data 0.771513 delta 0.058519
+v 5 data 0.150000 delta 0.000000
+v 6 data 0.150000 delta 0.000000
+v 7 data 0.150000 delta 0.000000
+v 8 data 0.587803 delta 0.000000
+v 9 data 0.440063 delta 0.209570
+v 10 data 1.253863 delta 0.109061
+v 11 data 0.150000 delta 0.000000
+v 12 data 0.150000 delta 0.000000
+v 13 data 0.150000 delta 0.000000
+v 14 data 0.150000 delta 0.000000
+v 15 data 0.150000 delta 0.000000
+v 16 data 0.150000 delta 0.000000
+v 17 data 0.150000 delta 0.000000
+v 18 data 0.150000 delta 0.000000
+v 19 data 0.150000 delta 0.000000
+Warning: Result not checked
+
+Context status:
+	Endpoint map (virtual endpoint, physical device):  (-1, -1) (0, 0)
+	Event pools (device, events):  (0, 0)
+Overall: Test passed

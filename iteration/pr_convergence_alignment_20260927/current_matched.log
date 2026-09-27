@@ -1,0 +1,287 @@
+
+Testing single GPU PR
+--------------------
+
+
+Loading graph /tmp/pr-aligned-smoke4/graph (market_big)
+ look edge_dst[nedges-1] : 4095 look edge_dst[nedges-2] : 4095 nedges-1: 3586 nedges-2: 3585
+ edge_[nedges-1] : 4095 look edge_dst[nedges-2] : 4095 nedges-1: 3586 nedges-2: 3585
+
+----- Running Hybrid Graph Engine -----
+
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1687 HOST: seg_nedges_csr_max = 14348
+[D1-TOPOLOGY-MEMORY] full_extended_descriptor_bytes=0 recovered_bytes=98304 legacy_descriptor_bytes=65552
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1718 HOST: [C3-CHUNK-LOAD] edges=3587 capacity_edges=1057852 slabs=1 metadata_bytes=229376 pinned_edge_bytes=4231408 pinned_total_bytes=4460784
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:178 HOST: 内存分配的边数量 0
+缓存大小： 0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:208 HOST: Allocate node for GraphDatum weighted ? 1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1823 HOST: Load graph time: 7.118000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1883 HOST: InitGraph: 0.047000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2719 HOST: [PR-CONVERGE] stage=initial rounds=74 signed_residual=1 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:156 HOST: [PR-INITIAL] compute_ms=4.934 alpha=0.85 base=0.15 dangling=drop
+[PR-CHECK] stage=initial batch=-1 passed l1_error=0.013956344 bound=0.136450116 max_error=0.00832718591 invariant_l1=0.00369776309 max_residual=8.98123005e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.026000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.018000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.043000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=1 refresh_required=1 candidate_ms=0.132
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1568 HOST: 加载缓存数据时间  : 0.039000 ms 
+[D2-PUBLICATION-RESERVE] patch_capacity_records=595 pinned_patch_bytes=14280 device_patch_bytes=14280 device_digest_bytes=9520 audit=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2512 HOST: [I21-RADIX][batch 0] parallel=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2514 HOST: [I23-GROUP][batch 0] bulk=0 record_ms=0.000 sort_ms=0.000 materialize_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2517 HOST: [I20-MODE][batch 0] maintenance=regular requests=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2524 HOST: [I14-BATCH][batch 0] sources=0 updates=0 group_ms=0.006
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 0 phase=delete] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 0 phase=delete] source_plan_duplicate_bytes=0 source_plan_index_bytes=0 reverse_input_copy_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 0 phase=delete] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 0 phase=delete] records=0 changed_sources=0 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2605 HOST: [C3-CPU-MUTATION][batch 0 phase=delete] epoch=1 workers=20 touched=0 changed=0 updates=0 max_source_updates=0 source_work=0 max_source_work=0 missing_deletes=0 written_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3587 group_ms=0.000 prepare_ms=0.000 preflight_ms=0.001 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.000 retire_ms=0.000 mutation_ms=0.002
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 0 phase=add] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 0 phase=add] source_plan_duplicate_bytes=0 source_plan_index_bytes=0 reverse_input_copy_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 0 phase=add] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 0 phase=add] records=0 changed_sources=0 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2582 HOST: [C3-CPU-MUTATION][batch 0 phase=add] epoch=1 workers=20 touched=0 changed=0 updates=0 max_source_updates=0 source_work=0 max_source_work=0 written_bytes=0 relocation_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3587 group_ms=0.000 prepare_ms=0.000 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.000 retire_ms=0.000 mutation_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2490 HOST: [I21-PUBLICATION][batch 0] merge=0 input_sources=0 output_sources=0 source_order_ms=0.000
+[D1-SPARSE-STAGING] patch_capacity_records=595 patch_bytes=14280 digest_bytes=9520 total_bytes=23800
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2763 HOST: [PR-BATCH] batch=0 touched_sources=0 published_sources=0 rounds=0 publication_ms=0.004 cache_invalidations=0 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.013000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.007000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=0 refresh_required=0 candidate_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:193 HOST: [P0-TIMER][PR][batch 0] paper_algorithm_ms=0.199
+[PR-CHECK] stage=batch batch=0 passed l1_error=0.013956344 bound=0.136450116 max_error=0.00832718591 invariant_l1=0.00369776309 max_residual=8.98123005e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2512 HOST: [I21-RADIX][batch 1] parallel=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2514 HOST: [I23-GROUP][batch 1] bulk=0 record_ms=0.000 sort_ms=0.001 materialize_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2517 HOST: [I20-MODE][batch 1] maintenance=regular requests=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2524 HOST: [I14-BATCH][batch 1] sources=1 updates=1 group_ms=0.006
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 1 phase=delete] deletion_match_reads=1 mutation_edge_reads=0 effective_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 1 phase=delete] source_plan_duplicate_bytes=168 source_plan_index_bytes=0 reverse_input_copy_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 1 phase=delete] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 1 phase=delete] records=1 changed_sources=1 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2605 HOST: [C3-CPU-MUTATION][batch 1 phase=delete] epoch=2 workers=20 touched=1 changed=1 updates=1 max_source_updates=1 source_work=2 max_source_work=2 missing_deletes=0 written_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3586 group_ms=0.000 prepare_ms=1.158 preflight_ms=0.001 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.073 retire_ms=0.000 mutation_ms=1.232
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 1 phase=add] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 1 phase=add] source_plan_duplicate_bytes=0 source_plan_index_bytes=0 reverse_input_copy_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 1 phase=add] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 1 phase=add] records=0 changed_sources=0 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2582 HOST: [C3-CPU-MUTATION][batch 1 phase=add] epoch=2 workers=20 touched=0 changed=0 updates=0 max_source_updates=0 source_work=0 max_source_work=0 written_bytes=0 relocation_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3586 group_ms=0.000 prepare_ms=0.000 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.000 retire_ms=0.000 mutation_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2490 HOST: [I21-PUBLICATION][batch 1] merge=0 input_sources=1 output_sources=1 source_order_ms=0.000
+[D1-SPARSE-STAGING] patch_capacity_records=595 patch_bytes=14280 digest_bytes=9520 total_bytes=23800
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2763 HOST: [PR-BATCH] batch=1 touched_sources=1 published_sources=1 rounds=3 publication_ms=0.060 cache_invalidations=0 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.010000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.010000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.018000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=0 refresh_required=0 candidate_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:193 HOST: [P0-TIMER][PR][batch 1] paper_algorithm_ms=1.576
+[PR-CHECK] stage=batch batch=1 passed l1_error=0.0139401278 bound=0.136338898 max_error=0.00832718591 invariant_l1=0.00369766303 max_residual=8.98123005e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2512 HOST: [I21-RADIX][batch 2] parallel=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2514 HOST: [I23-GROUP][batch 2] bulk=0 record_ms=0.000 sort_ms=0.000 materialize_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2517 HOST: [I20-MODE][batch 2] maintenance=regular requests=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2524 HOST: [I14-BATCH][batch 2] sources=1 updates=1 group_ms=0.007
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 2 phase=delete] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 2 phase=delete] source_plan_duplicate_bytes=0 source_plan_index_bytes=0 reverse_input_copy_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 2 phase=delete] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 2 phase=delete] records=0 changed_sources=0 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2605 HOST: [C3-CPU-MUTATION][batch 2 phase=delete] epoch=3 workers=20 touched=0 changed=0 updates=0 max_source_updates=0 source_work=0 max_source_work=0 missing_deletes=0 written_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3586 group_ms=0.000 prepare_ms=0.000 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.000 retire_ms=0.000 mutation_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 2 phase=add] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 2 phase=add] source_plan_duplicate_bytes=168 source_plan_index_bytes=0 reverse_input_copy_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 2 phase=add] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 2 phase=add] records=1 changed_sources=1 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2582 HOST: [C3-CPU-MUTATION][batch 2 phase=add] epoch=3 workers=20 touched=1 changed=1 updates=1 max_source_updates=1 source_work=1 max_source_work=1 written_bytes=4 relocation_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3587 group_ms=0.000 prepare_ms=0.070 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.060 retire_ms=0.000 mutation_ms=0.130
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2490 HOST: [I21-PUBLICATION][batch 2] merge=0 input_sources=1 output_sources=1 source_order_ms=0.000
+[D1-SPARSE-STAGING] patch_capacity_records=595 patch_bytes=14280 digest_bytes=9520 total_bytes=23800
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2763 HOST: [PR-BATCH] batch=2 touched_sources=1 published_sources=1 rounds=79 publication_ms=0.028 cache_invalidations=0 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=0 refresh_required=0 candidate_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:193 HOST: [P0-TIMER][PR][batch 2] paper_algorithm_ms=2.306
+[PR-CHECK] stage=batch batch=2 passed l1_error=0.0139334482 bound=0.136450116 max_error=0.00832718591 invariant_l1=0.00369873544 max_residual=8.98123005e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2512 HOST: [I21-RADIX][batch 3] parallel=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2514 HOST: [I23-GROUP][batch 3] bulk=0 record_ms=0.000 sort_ms=0.000 materialize_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2517 HOST: [I20-MODE][batch 3] maintenance=regular requests=2
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2524 HOST: [I14-BATCH][batch 3] sources=1 updates=2 group_ms=0.018
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 3 phase=delete] deletion_match_reads=1 mutation_edge_reads=0 effective_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 3 phase=delete] source_plan_duplicate_bytes=168 source_plan_index_bytes=0 reverse_input_copy_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 3 phase=delete] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 3 phase=delete] records=1 changed_sources=1 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2605 HOST: [C3-CPU-MUTATION][batch 3 phase=delete] epoch=4 workers=20 touched=1 changed=1 updates=1 max_source_updates=1 source_work=2 max_source_work=2 missing_deletes=0 written_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3586 group_ms=0.000 prepare_ms=0.056 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.060 retire_ms=0.000 mutation_ms=0.117
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 3 phase=add] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 3 phase=add] source_plan_duplicate_bytes=168 source_plan_index_bytes=0 reverse_input_copy_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 3 phase=add] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 3 phase=add] records=1 changed_sources=1 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2582 HOST: [C3-CPU-MUTATION][batch 3 phase=add] epoch=4 workers=20 touched=1 changed=1 updates=1 max_source_updates=1 source_work=1 max_source_work=1 written_bytes=4 relocation_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3587 group_ms=0.000 prepare_ms=0.067 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.063 retire_ms=0.000 mutation_ms=0.131
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2490 HOST: [I21-PUBLICATION][batch 3] merge=0 input_sources=2 output_sources=1 source_order_ms=0.000
+[D1-SPARSE-STAGING] patch_capacity_records=595 patch_bytes=14280 digest_bytes=9520 total_bytes=23800
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2763 HOST: [PR-BATCH] batch=3 touched_sources=1 published_sources=1 rounds=1 publication_ms=0.022 cache_invalidations=0 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.010000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.007000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=0 refresh_required=0 candidate_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:193 HOST: [P0-TIMER][PR][batch 3] paper_algorithm_ms=0.493
+[PR-CHECK] stage=batch batch=3 passed l1_error=0.0139334482 bound=0.136450116 max_error=0.00832718591 invariant_l1=0.00369869901 max_residual=8.98123005e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2512 HOST: [I21-RADIX][batch 4] parallel=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2514 HOST: [I23-GROUP][batch 4] bulk=0 record_ms=0.000 sort_ms=0.000 materialize_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2517 HOST: [I20-MODE][batch 4] maintenance=regular requests=1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2524 HOST: [I14-BATCH][batch 4] sources=1 updates=1 group_ms=0.005
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 4 phase=delete] deletion_match_reads=1 mutation_edge_reads=1 effective_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 4 phase=delete] source_plan_duplicate_bytes=168 source_plan_index_bytes=0 reverse_input_copy_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 4 phase=delete] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 4 phase=delete] records=1 changed_sources=1 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2605 HOST: [C3-CPU-MUTATION][batch 4 phase=delete] epoch=5 workers=20 touched=1 changed=1 updates=1 max_source_updates=1 source_work=3 max_source_work=3 missing_deletes=0 written_bytes=4 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3586 group_ms=0.000 prepare_ms=0.188 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.071 retire_ms=0.000 mutation_ms=0.260
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 4 phase=add] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 4 phase=add] source_plan_duplicate_bytes=0 source_plan_index_bytes=0 reverse_input_copy_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 4 phase=add] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 4 phase=add] records=0 changed_sources=0 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2582 HOST: [C3-CPU-MUTATION][batch 4 phase=add] epoch=5 workers=20 touched=0 changed=0 updates=0 max_source_updates=0 source_work=0 max_source_work=0 written_bytes=0 relocation_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3586 group_ms=0.000 prepare_ms=0.000 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.000 retire_ms=0.000 mutation_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2490 HOST: [I21-PUBLICATION][batch 4] merge=0 input_sources=1 output_sources=1 source_order_ms=0.000
+[D1-SPARSE-STAGING] patch_capacity_records=595 patch_bytes=14280 digest_bytes=9520 total_bytes=23800
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2763 HOST: [PR-BATCH] batch=4 touched_sources=1 published_sources=1 rounds=1 publication_ms=0.022 cache_invalidations=0 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=0 refresh_required=0 candidate_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:193 HOST: [P0-TIMER][PR][batch 4] paper_algorithm_ms=0.487
+[PR-CHECK] stage=batch batch=4 passed l1_error=0.0139334482 bound=0.136450116 max_error=0.00832718591 invariant_l1=0.00369869901 max_residual=8.98123005e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2512 HOST: [I21-RADIX][batch 5] parallel=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2514 HOST: [I23-GROUP][batch 5] bulk=0 record_ms=0.000 sort_ms=0.000 materialize_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2517 HOST: [I20-MODE][batch 5] maintenance=regular requests=3
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2524 HOST: [I14-BATCH][batch 5] sources=3 updates=3 group_ms=0.006
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 5 phase=delete] deletion_match_reads=2 mutation_edge_reads=0 effective_bytes=32
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 5 phase=delete] source_plan_duplicate_bytes=336 source_plan_index_bytes=0 reverse_input_copy_bytes=32
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 5 phase=delete] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 5 phase=delete] records=2 changed_sources=2 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2605 HOST: [C3-CPU-MUTATION][batch 5 phase=delete] epoch=6 workers=20 touched=2 changed=2 updates=2 max_source_updates=1 source_work=4 max_source_work=2 missing_deletes=0 written_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=3584 group_ms=0.000 prepare_ms=0.179 preflight_ms=0.001 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.066 retire_ms=0.000 mutation_ms=0.245
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 5 phase=add] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 5 phase=add] source_plan_duplicate_bytes=168 source_plan_index_bytes=0 reverse_input_copy_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 5 phase=add] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 5 phase=add] records=1 changed_sources=1 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2582 HOST: [C3-CPU-MUTATION][batch 5 phase=add] epoch=6 workers=20 touched=1 changed=1 updates=1 max_source_updates=1 source_work=1 max_source_work=1 written_bytes=4 relocation_bytes=0 allocations=1 reused_blocks=0 retired_blocks=0 logical_edges=3585 group_ms=0.000 prepare_ms=0.065 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.068 retire_ms=0.000 mutation_ms=0.134
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2490 HOST: [I21-PUBLICATION][batch 5] merge=0 input_sources=3 output_sources=3 source_order_ms=0.000
+[D1-SPARSE-STAGING] patch_capacity_records=595 patch_bytes=14280 digest_bytes=9520 total_bytes=23800
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2763 HOST: [PR-BATCH] batch=5 touched_sources=3 published_sources=3 rounds=2 publication_ms=0.023 cache_invalidations=0 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.007000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=0 refresh_required=0 candidate_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:193 HOST: [P0-TIMER][PR][batch 5] paper_algorithm_ms=0.650
+[PR-CHECK] stage=batch batch=5 passed l1_error=0.0139280153 bound=0.136406883 max_error=0.00832718591 invariant_l1=0.00369866193 max_residual=8.98123005e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2512 HOST: [I21-RADIX][batch 6] parallel=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2514 HOST: [I23-GROUP][batch 6] bulk=0 record_ms=0.003 sort_ms=0.008 materialize_ms=0.002
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2517 HOST: [I20-MODE][batch 6] maintenance=regular requests=595
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2524 HOST: [I14-BATCH][batch 6] sources=2 updates=595 group_ms=0.017
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 6 phase=delete] deletion_match_reads=1777 mutation_edge_reads=1779 effective_bytes=9488
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 6 phase=delete] source_plan_duplicate_bytes=168 source_plan_index_bytes=0 reverse_input_copy_bytes=9488
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 6 phase=delete] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 6 phase=delete] records=593 changed_sources=1 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2605 HOST: [C3-CPU-MUTATION][batch 6 phase=delete] epoch=7 workers=20 touched=1 changed=1 updates=593 max_source_updates=593 source_work=2372 max_source_work=2372 missing_deletes=0 written_bytes=4744 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=2992 group_ms=0.000 prepare_ms=0.200 preflight_ms=0.005 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.134 retire_ms=0.000 mutation_ms=0.339
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 6 phase=add] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=32
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 6 phase=add] source_plan_duplicate_bytes=336 source_plan_index_bytes=0 reverse_input_copy_bytes=32
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 6 phase=add] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 6 phase=add] records=2 changed_sources=2 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2582 HOST: [C3-CPU-MUTATION][batch 6 phase=add] epoch=7 workers=20 touched=2 changed=2 updates=2 max_source_updates=1 source_work=1188 max_source_work=1187 written_bytes=8 relocation_bytes=0 allocations=1 reused_blocks=0 retired_blocks=0 logical_edges=2994 group_ms=0.000 prepare_ms=0.082 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.069 retire_ms=0.000 mutation_ms=0.152
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2490 HOST: [I21-PUBLICATION][batch 6] merge=0 input_sources=3 output_sources=2 source_order_ms=0.000
+[D1-SPARSE-STAGING] patch_capacity_records=595 patch_bytes=14280 digest_bytes=9520 total_bytes=23800
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2763 HOST: [PR-BATCH] batch=6 touched_sources=2 published_sources=2 rounds=41 publication_ms=0.202 cache_invalidations=0 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.006000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=0 refresh_required=0 candidate_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:193 HOST: [P0-TIMER][PR][batch 6] paper_algorithm_ms=3.970
+[PR-CHECK] stage=batch batch=6 passed l1_error=0.0176424396 bound=0.136685609 max_error=0.010111836 invariant_l1=0.00391162322 max_residual=8.97620225e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2512 HOST: [I21-RADIX][batch 7] parallel=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2514 HOST: [I23-GROUP][batch 7] bulk=0 record_ms=0.000 sort_ms=0.000 materialize_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2517 HOST: [I20-MODE][batch 7] maintenance=regular requests=4
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2524 HOST: [I14-BATCH][batch 7] sources=4 updates=4 group_ms=0.005
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 7 phase=delete] deletion_match_reads=1 mutation_edge_reads=0 effective_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 7 phase=delete] source_plan_duplicate_bytes=168 source_plan_index_bytes=0 reverse_input_copy_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 7 phase=delete] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 7 phase=delete] records=1 changed_sources=1 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2605 HOST: [C3-CPU-MUTATION][batch 7 phase=delete] epoch=8 workers=20 touched=2 changed=1 updates=2 max_source_updates=1 source_work=3 max_source_work=2 missing_deletes=1 written_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=2993 group_ms=0.000 prepare_ms=0.210 preflight_ms=0.001 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.089 retire_ms=0.000 mutation_ms=0.300
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 7 phase=add] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=32
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 7 phase=add] source_plan_duplicate_bytes=336 source_plan_index_bytes=0 reverse_input_copy_bytes=32
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 7 phase=add] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 7 phase=add] records=2 changed_sources=2 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2582 HOST: [C3-CPU-MUTATION][batch 7 phase=add] epoch=8 workers=20 touched=2 changed=2 updates=2 max_source_updates=1 source_work=4 max_source_work=2 written_bytes=8 relocation_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=2995 group_ms=0.000 prepare_ms=0.080 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.073 retire_ms=0.000 mutation_ms=0.153
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2490 HOST: [I21-PUBLICATION][batch 7] merge=0 input_sources=3 output_sources=3 source_order_ms=0.000
+[D1-SPARSE-STAGING] patch_capacity_records=595 patch_bytes=14280 digest_bytes=9520 total_bytes=23800
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2763 HOST: [PR-BATCH] batch=7 touched_sources=4 published_sources=3 rounds=39 publication_ms=0.023 cache_invalidations=0 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.006000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=0 refresh_required=0 candidate_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:193 HOST: [P0-TIMER][PR][batch 7] paper_algorithm_ms=2.161
+[PR-CHECK] stage=batch batch=7 passed l1_error=0.0315260758 bound=0.136347668 max_error=0.0164377675 invariant_l1=0.00371044772 max_residual=8.97620225e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2512 HOST: [I21-RADIX][batch 8] parallel=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2514 HOST: [I23-GROUP][batch 8] bulk=0 record_ms=0.000 sort_ms=0.000 materialize_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2517 HOST: [I20-MODE][batch 8] maintenance=regular requests=4
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2524 HOST: [I14-BATCH][batch 8] sources=2 updates=4 group_ms=0.005
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 8 phase=delete] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 8 phase=delete] source_plan_duplicate_bytes=0 source_plan_index_bytes=0 reverse_input_copy_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 8 phase=delete] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 8 phase=delete] records=0 changed_sources=0 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2605 HOST: [C3-CPU-MUTATION][batch 8 phase=delete] epoch=9 workers=20 touched=0 changed=0 updates=0 max_source_updates=0 source_work=0 max_source_work=0 missing_deletes=0 written_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=2995 group_ms=0.000 prepare_ms=0.000 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.000 retire_ms=0.000 mutation_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 8 phase=add] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=64
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 8 phase=add] source_plan_duplicate_bytes=336 source_plan_index_bytes=0 reverse_input_copy_bytes=64
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 8 phase=add] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 8 phase=add] records=4 changed_sources=2 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2582 HOST: [C3-CPU-MUTATION][batch 8 phase=add] epoch=9 workers=20 touched=2 changed=2 updates=4 max_source_updates=2 source_work=4 max_source_work=2 written_bytes=16 relocation_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=2999 group_ms=0.000 prepare_ms=0.179 preflight_ms=0.001 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.087 retire_ms=0.000 mutation_ms=0.267
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2490 HOST: [I21-PUBLICATION][batch 8] merge=0 input_sources=2 output_sources=2 source_order_ms=0.000
+[D1-SPARSE-STAGING] patch_capacity_records=595 patch_bytes=14280 digest_bytes=9520 total_bytes=23800
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2763 HOST: [PR-BATCH] batch=8 touched_sources=2 published_sources=2 rounds=78 publication_ms=0.022 cache_invalidations=0 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.005000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=0 refresh_required=0 candidate_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:193 HOST: [P0-TIMER][PR][batch 8] paper_algorithm_ms=2.742
+[PR-CHECK] stage=batch batch=8 passed l1_error=0.0315388351 bound=0.13659654 max_error=0.0164377675 invariant_l1=0.00371127295 max_residual=9.06084949e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2512 HOST: [I21-RADIX][batch 9] parallel=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2514 HOST: [I23-GROUP][batch 9] bulk=0 record_ms=0.000 sort_ms=0.000 materialize_ms=0.001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2517 HOST: [I20-MODE][batch 9] maintenance=regular requests=3
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2524 HOST: [I14-BATCH][batch 9] sources=3 updates=3 group_ms=0.004
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 9 phase=delete] deletion_match_reads=1188 mutation_edge_reads=0 effective_bytes=32
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 9 phase=delete] source_plan_duplicate_bytes=336 source_plan_index_bytes=0 reverse_input_copy_bytes=32
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 9 phase=delete] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 9 phase=delete] records=2 changed_sources=2 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2605 HOST: [C3-CPU-MUTATION][batch 9 phase=delete] epoch=10 workers=20 touched=2 changed=2 updates=2 max_source_updates=1 source_work=1190 max_source_work=1188 missing_deletes=0 written_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=2997 group_ms=0.000 prepare_ms=0.196 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.087 retire_ms=0.000 mutation_ms=0.283
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2540 HOST: [I19-WORK][batch 9 phase=add] deletion_match_reads=0 mutation_edge_reads=0 effective_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2545 HOST: [I20-WORK][batch 9 phase=add] source_plan_duplicate_bytes=168 source_plan_index_bytes=0 reverse_input_copy_bytes=16
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2551 HOST: [I21-WORK][batch 9 phase=add] reuse_delete_positions=0 position_capacity_bytes=0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2559 HOST: [C3-EFFECTIVE][batch 9 phase=add] records=1 changed_sources=1 reverse_prepare_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2582 HOST: [C3-CPU-MUTATION][batch 9 phase=add] epoch=10 workers=20 touched=1 changed=1 updates=1 max_source_updates=1 source_work=1 max_source_work=1 written_bytes=4 relocation_bytes=0 allocations=0 reused_blocks=0 retired_blocks=0 logical_edges=2998 group_ms=0.000 prepare_ms=0.072 preflight_ms=0.000 allocation_ms=0.000 commit_ms=0.000 apply_ms=0.077 retire_ms=0.000 mutation_ms=0.150
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2490 HOST: [I21-PUBLICATION][batch 9] merge=0 input_sources=3 output_sources=3 source_order_ms=0.000
+[D1-SPARSE-STAGING] patch_capacity_records=595 patch_bytes=14280 digest_bytes=9520 total_bytes=23800
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:2763 HOST: [PR-BATCH] batch=9 touched_sources=3 published_sources=3 rounds=41 publication_ms=0.186 cache_invalidations=0 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1278 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/graph_datum.cuh:299 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1297 HOST: sort vtx ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1324 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1393 HOST: candidate v time: 0.006000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/include/framework/framework.cuh:1430 HOST: [F1-CACHE-GATE] desired_vertices=0 published_vertices=0 missing_desired=0 refresh_required=0 candidate_ms=0.000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:193 HOST: [P0-TIMER][PR][batch 9] paper_algorithm_ms=4.195
+[PR-CHECK] stage=batch batch=9 passed l1_error=0.0254291734 bound=0.136530097 max_error=0.013454139 invariant_l1=0.00366298854 max_residual=9.06084949e-07
+[PR-CHECK] stage=final batch=10 passed l1_error=0.0254291734 bound=0.136530097 max_error=0.013454139 invariant_l1=0.00366298854 max_residual=9.06084949e-07
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/samples/hybrid_pr/hybrid_pr.cu:206 HOST: [PR-FINAL] vertices=4096 batches=10
+
+Context status:
+	Endpoint map (virtual endpoint, physical device):  (-1, -1) (0, 0)
+	Event pools (device, events):  (0, 0)
+Overall: Test passed

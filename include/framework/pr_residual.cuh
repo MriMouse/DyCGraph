@@ -141,7 +141,9 @@ public:
     }
     void BeginBatch(const std::vector<index_t> &sources, cudaStream_t stream) {
         cgcomm::Scope scope(cgcomm::Category::Control);
-        if (count_) throw std::runtime_error("PR update before convergence");
+        // Carry unfinished work across a capped solve; Amend appends new work.
+        if (count_) GROUTE_CUDA_CHECK(cudaMemcpyAsync(out_, in_,
+            count_ * sizeof(index_t), cudaMemcpyDeviceToDevice, stream));
         if (sources.size() > source_capacity_) {
             GROUTE_CUDA_CHECK(cudaFree(sources_));
             GROUTE_CUDA_CHECK(cudaMalloc(&sources_, sources.size() * sizeof(index_t)));
@@ -149,8 +151,12 @@ public:
         }
         if (!sources.empty()) GROUTE_CUDA_CHECK(cudaMemcpyAsync(sources_, sources.data(),
             sources.size() * sizeof(index_t), cudaMemcpyHostToDevice, stream));
-        GROUTE_CUDA_CHECK(cudaMemsetAsync(counts_, 0, 2 * sizeof(unsigned), stream));
+        GROUTE_CUDA_CHECK(cudaMemcpyAsync(counts_, &count_, sizeof(count_), cudaMemcpyHostToDevice, stream));
+        GROUTE_CUDA_CHECK(cudaMemsetAsync(counts_ + 1, 0, sizeof(unsigned), stream));
+        GROUTE_CUDA_CHECK(cudaStreamSynchronize(stream));
     }
+    bool Converged() const { return count_ == 0; }
+    unsigned ActiveCount() const { return count_; }
     void Amend(groute::graphs::dev::PMAGraph graph, const index_t *cache,
                index_t source_count, const float *ranks, float *residual,
                float sign, float epsilon, cudaStream_t stream) {
@@ -166,8 +172,7 @@ public:
                       float *ranks, float *residual, float epsilon,
                       unsigned max_rounds, cudaStream_t stream) {
         unsigned rounds = 0;
-        while (count_) {
-            if (rounds == max_rounds) throw std::runtime_error("PR iteration limit reached before residual convergence");
+        while (count_ && rounds < max_rounds) {
             Consume<<<Blocks(count_), 256, 0, stream>>>(count_, in_, queued_, ranks,
                 residual, deltas_, epsilon, counts_ + 1);
             GROUTE_CUDA_CHECK(cudaMemsetAsync(counts_, 0, sizeof(unsigned), stream));

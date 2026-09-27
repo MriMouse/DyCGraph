@@ -1,0 +1,69 @@
+[
+  {
+    "name": "cached",
+    "checks": 12,
+    "mean_error": 6.208321785860719e-06,
+    "state": "passed"
+  },
+  {
+    "name": "large",
+    "checks": 12,
+    "mean_error": 6.208321785860719e-06,
+    "state": "passed"
+  },
+  {
+    "name": "uncached",
+    "checks": 12,
+    "mean_error": 6.208321785860719e-06,
+    "state": "passed"
+  },
+  {
+    "name": "unchecked",
+    "checks": 0,
+    "mean_error": 6.208321785860719e-06,
+    "state": "passed"
+  },
+  {
+    "name": "empty",
+    "state": "passed",
+    "checks": 3
+  },
+  {
+    "name": "delete_only",
+    "state": "passed",
+    "checks": 3
+  },
+  {
+    "name": "add_only",
+    "state": "passed",
+    "checks": 3
+  },
+  {
+    "name": "static",
+    "state": "passed"
+  },
+  {
+    "name": "capped_continuation",
+    "state": "passed"
+  },
+  {
+    "name": "limit",
+    "state": "passed"
+  },
+  {
+    "name": "excess_limit",
+    "state": "passed"
+  },
+  {
+    "name": "negative_error",
+    "state": "passed"
+  },
+  {
+    "name": "ownership",
+    "state": "passed"
+  },
+  {
+    "name": "bad_output",
+    "state": "passed"
+  }
+]

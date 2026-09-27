@@ -1,0 +1,5 @@
+{
+  "include/framework/framework.cuh": "d62695ff1d730e659bad9b3962f8c4776669ab845285b032b3c2fba2cbf6d7b7",
+  "samples/hybrid_pr/main.cu": "31c4744958df05782ec653096f86aff64ac5988f7d8e593f8b4f3f766acc1597",
+  "samples/hybrid_pr/hybrid_pr.cu": "c0b3839304c5838f33e9cf70e8e6f04f0f68dc64310bcddf31a145e0b2638c20"
+}

@@ -31,8 +31,13 @@ input; empty phases and empty batches are supported.
 
 `--error` is an absolute per-vertex residual threshold, **not** a relative rank
 error. Both signs are active when `abs(residual) > error`. Subthreshold residual
-is retained across rounds and batches. `--pr_max_rounds` (default 10000) is a
-failure limit, not a fixed iteration count; exhausting it returns failure.
+is retained across rounds and batches. `--pr_max_rounds` defaults to 100 (accepted range 1–100), for both initialization
+and every incremental batch. Stop when no active residual remains or this cap
+is reached. Logs distinguish `stop=converged` from `stop=iteration_limit` and
+include the remaining frontier size. Capped solves preserve residuals and pending
+work across batches. A limit stop is **not** proof of convergence.
+`--check=true` still requires residual convergence and fails on an inaccurate
+capped result; `--check=false` permits capped experiments to continue.
 `--check=true` independently recomputes the current graph in double precision
 at initialization, after each batch and at completion, checking both rank error
 and the residual invariant. This checking is outside batch timing.
@@ -82,3 +87,7 @@ GPU regression (multiple short cases; run in the background):
 python3 tests/pr_dynamic_smoke.py --binary build-bfs/hybrid_pr \
   --output logs/pr_smoke_new --gpu 2
 ```
+
+The aligned legacy system is now `../C-GpuStreamGraph` (modified with user authorization).
+See [alignment record and legacy patch](../../iteration/pr_convergence_alignment_20260927/README.md)
+for build commands, paired checks, and remaining comparability limits.

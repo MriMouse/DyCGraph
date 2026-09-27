@@ -19,7 +19,7 @@
 
 // Priority
 DEFINE_int32(pr_max_batches, 10, "Maximum PR update batches (0 for static PR)");
-DEFINE_int32(pr_max_rounds, 10000, "Fail if a PR fixed point exceeds this limit");
+DEFINE_int32(pr_max_rounds, 100, "Maximum PR rounds per initialization/batch (1..100), with early convergence");
 DEFINE_double(error, 0.000001, "Absolute signed PR residual threshold");
 DEFINE_bool(sparse, false, "Compatibility flag; PR always uses sparse residual frontiers");
 DEFINE_int32(sssp_cpu_partition_capacity, 0, "Compatibility flag; SSSP insertion only");
@@ -133,8 +133,8 @@ bool HybridPageRank() {
         if (FLAGS_graphfile.empty()) throw std::invalid_argument("PR requires graphfile");
         if (!std::isfinite(FLAGS_error) || FLAGS_error <= 0 ||
             !std::isfinite(static_cast<float>(FLAGS_error)) || static_cast<float>(FLAGS_error) == 0 ||
-            FLAGS_pr_max_batches < 0 || FLAGS_pr_max_rounds <= 0)
-            throw std::invalid_argument("PR requires finite error > 0, pr_max_batches >= 0 and pr_max_rounds > 0");
+            FLAGS_pr_max_batches < 0 || FLAGS_pr_max_rounds <= 0 || FLAGS_pr_max_rounds > 100)
+            throw std::invalid_argument("PR requires finite error > 0, pr_max_batches >= 0 and 1 <= pr_max_rounds <= 100");
         if (FLAGS_sssp_cpu_partition_capacity || !FLAGS_sssp_cpu_domain_map.empty())
             throw std::invalid_argument("PR signed residuals require GPU propagation; SSSP min/parent CPU ownership is incompatible");
         if (FLAGS_updatefile.empty() != FLAGS_update_size.empty())

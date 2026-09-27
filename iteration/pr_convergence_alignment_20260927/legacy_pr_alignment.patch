@@ -1,0 +1,132 @@
+diff --git a/include/framework/framework.cuh b/include/framework/framework.cuh
+index a2f5743..df01b34 100644
+--- a/include/framework/framework.cuh
++++ b/include/framework/framework.cuh
+@@ -546,7 +546,7 @@ namespace sepgraph {
+             }
+ 
+             //traditional graph processing
+-            void Start(index_t priority_detal = 0) {
++            void Start(index_t priority_detal = 0, unsigned max_rounds = 1000) {
+                 
+                 GraphDatum &graph_datum = *m_graph_datum;
+                 graph_datum.priority_detal = priority_detal;
+@@ -572,13 +572,20 @@ namespace sepgraph {
+                   if(convergence_check == FLAGS_SEGMENT){
+                         convergence = true;
+                   }
+-                  if (round == 1000 ) {//FLAGS_max_iteration
++                  if (round >= max_rounds) {
+                         convergence = true;
+                         LOG("Max iterations reached\n");
+                   }
+                     
+                 }
+                sw_total.stop();
++               if (m_running_info.m_algo_type == AlgoType::ITERATIVE_SCHEME) {
++                   uint64_t active = 0;
++                   for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg)
++                       active += m_running_info.input_active_count_seg[seg];
++                   LOG("[PR-CONVERGE] stage=initial rounds=%d stop=%s active=%llu limit=%u\n",
++                       round, active ? "iteration_limit" : "converged", (unsigned long long)active, max_rounds);
++               }
+                m_running_info.time_total = sw_total.ms();
+                LOG("Iterate all time: %f ms (excluded)\n", sw_total.ms());
+             }
+@@ -1221,7 +1228,7 @@ namespace sepgraph {
+                 printf("传输总量 %llu\n",transfer);
+                 Resettransfer();;
+             }
+-            void Compensate(std::pair<index_t,index_t>& local_begin,index_t& NumOfSnapShots){
++            void Compensate(std::pair<index_t,index_t>& local_begin,index_t& NumOfSnapShots, unsigned max_rounds = 100){
+                 auto &app_inst = *m_app_inst;
+                 GraphDatum &graph_datum = *m_graph_datum;
+                 Loader &load_update = *m_load_update;
+@@ -1274,7 +1281,16 @@ namespace sepgraph {
+                 for(index_t stream_idx = 0; stream_idx <  FLAGS_n_stream ; stream_idx++){
+                     stream[stream_idx].Sync();
+                 }
+-                bool convergence = false;
++                auto active_count = [&]() {
++                    uint64_t active = 0;
++                    for (index_t seg = 0; seg < FLAGS_SEGMENT; ++seg)
++                        // count() seeds these host counts before the loop;
++                        // PostComputationBW_Inc() refreshes them each round.
++                        active += m_running_info.input_active_count_seg[seg];
++                    return active;
++                };
++                uint64_t active = active_count();
++                bool convergence = active == 0;
+                 int current_rount =0 ;
+                 // m_running_info.current_round = 0;
+                 while(!convergence){
+@@ -1285,11 +1301,16 @@ namespace sepgraph {
+                   sw_execution_round.stop();
+                   time_total +=sw_execution_round.ms();	   
+                   PostComputationBW_Inc();
+-                  if (current_rount == 100 ) {//FLAGS_max_iteration
++                  active = active_count();
++                  convergence = active == 0;
++                  if (current_rount >= max_rounds) {
+                         convergence = true;
+                         LOG("Max iterations reached\n");
+                   } 
+                 }
++                LOG("[PR-BATCH] batch=%u rounds=%d stop=%s active=%llu limit=%u\n",
++                    NumOfSnapShots, current_rount, active ? "iteration_limit" : "converged",
++                    (unsigned long long)active, max_rounds);
+                 // sw_execution.stop();
+ 
+                 LOG("迭代时间: %f ms (excluded)\n", time_total);
+diff --git a/samples/hybrid_pr/hybrid_pr.cu b/samples/hybrid_pr/hybrid_pr.cu
+index af60567..40f750a 100644
+--- a/samples/hybrid_pr/hybrid_pr.cu
++++ b/samples/hybrid_pr/hybrid_pr.cu
+@@ -1,3 +1,4 @@
++#include <cmath>
+ // ----------------------------------------------------------------
+ // SEP-Graph: Finding Shortest Execution Paths for Graph Processing under a Hybrid Framework on GPU
+ // ----------------------------------------------------------------
+@@ -16,6 +17,7 @@
+ DEFINE_double(cut_threshold, 0, "Cut threshold for index calculation");
+ DEFINE_bool(sparse, false, "disable load-balancing for sparse graph");
+ DECLARE_double(error);
++DECLARE_int32(pr_max_rounds);
+ DECLARE_int32(top_ranks);
+ DECLARE_bool(print_ranks);
+ DECLARE_string(output);
+@@ -162,7 +164,12 @@ bool HybridPageRank()
+     engine.SetOptions(engine_opt);
+     engine.LoadGraph();
+     engine.InitGraph(FLAGS_error);
+-    engine.Start();
++    if (FLAGS_pr_max_rounds < 1 || FLAGS_pr_max_rounds > 100 ||
++        !std::isfinite(FLAGS_error) || FLAGS_error <= 0) {
++        fprintf(stderr, "PR requires finite error > 0 and 1 <= pr_max_rounds <= 100\n");
++        return false;
++    }
++    engine.Start(0, FLAGS_pr_max_rounds);
+     engine.compute_hot_vertices_pr();
+     engine.confirm_candidate_batch();
+     engine.LoadCache();
+@@ -175,7 +182,7 @@ bool HybridPageRank()
+         if(NumOfSnapShots==10) break;
+         std::cout<<"batch number "<<NumOfSnapShots<<std::endl;
+         engine.Cancelation(local_begin,NumOfSnapShots);
+-        engine.Compensate(local_begin,NumOfSnapShots);
++        engine.Compensate(local_begin,NumOfSnapShots,FLAGS_pr_max_rounds);
+         engine.compute_hot_vertices_pr();
+         engine.confirm_candidate_batch();
+         engine.evication_cache();
+diff --git a/samples/hybrid_pr/main.cu b/samples/hybrid_pr/main.cu
+index 66a5410..0422314 100644
+--- a/samples/hybrid_pr/main.cu
++++ b/samples/hybrid_pr/main.cu
+@@ -34,6 +34,7 @@
+ #include <utils/interactor.h>
+ #include <utils/app_skeleton.h>
+ 
++DEFINE_int32(pr_max_rounds, 100, "Maximum PR rounds per initialization/batch (1..100)");
+ DEFINE_double(error, 0.000001, "PR error tolerance");
+ bool HybridPageRank();
+ void CleanupGraphs();
