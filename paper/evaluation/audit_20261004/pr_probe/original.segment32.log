@@ -1,0 +1,18 @@
+
+Testing single GPU Page Rank
+--------------------
+
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:158 HOST: HybridPageRank
+
+Loading graph /home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/audit_20261004/pr_probe/graph (market_big)
+ look edge_dst[nedges-1] : 6 look edge_dst[nedges-2] : 6 nedges-1: 85 nedges-2: 84
+ edge_[nedges-1] : 6 look edge_dst[nedges-2] : 6 nedges-1: 85 nedges-2: 84
+
+----- Running Hybrid Graph Engine -----
+
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:163 HOST: error 0.000001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:369 HOST: seg_nedges_csr_max = 17
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:164 HOST: 内存分配的边数量 536870921
+缓存大小： 536870921
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:192 HOST: Allocate node for GraphDatum weighted ? 1
+ERROR in /home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/groute/device/queue.cuh:219: out of memory (2)

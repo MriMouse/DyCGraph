@@ -38,6 +38,19 @@ static void Check(const TestGraph &graph, const SourceLocalChunkStore &store,
         }
         reverse.ForEachIncoming(dst, [&](index_t src) { actual.push_back(src); });
         Require(actual == expected);
+        std::vector<index_t> prefix;
+        reverse.ForEachIncomingWhile(dst, [&](index_t src) {
+            prefix.push_back(src);
+            return false;
+        });
+        Require(prefix.size() == (expected.empty() ? 0 : 1));
+        if (!prefix.empty()) Require(prefix.front() == expected.front());
+        prefix.clear();
+        reverse.ForEachIncomingWhile(dst, [&](index_t src) {
+            prefix.push_back(src);
+            return true;
+        });
+        Require(prefix == expected);
         std::vector<uint64_t> offsets;
         const auto metrics = reverse.MaterializeIncoming({dst}, offsets, actual);
         Require(actual == expected);

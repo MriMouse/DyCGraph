@@ -1,0 +1,5 @@
+dataset,scale,before_mean_ms,original_reference_ms,fixed_ms,speedup_vs_original,speedup_vs_before,affected_mean,gpu,numa,check,fixed_repeats,original_repeats,original_reference
+TW,1k,179182.702,12278.1705,3235.654,3.7946487788867413,55.37758425344613,1.3,0,0,False,1,2,historical_same_gpu
+TW,10k,279560.743,12569.368,4264.223,2.947633836222918,65.5595973756532,13.0,0,0,False,1,2,historical_same_gpu
+TW,100k,739973.759,14535.4315,8662.055,1.6780580936048086,85.42704462162847,140.0,0,0,False,1,2,historical_same_gpu
+FS,100k,11330.93,14216.2,11080.608,1.282980139717965,1.0225909986166823,480.1,1,0,False,1,1,fresh_same_gpu

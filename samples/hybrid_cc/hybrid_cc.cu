@@ -18,9 +18,7 @@
 #include "../../include/groute/graphs/csr_graph.cuh"
 
 DEFINE_int32(source_node,
-             0, "Compatibility flag; CC initializes every vertex, source_node is ignored");
-DEFINE_bool(cc_input_symmetric, false,
-            "Input graph and each update phase already contain paired occurrences; skip normalization");
+             0, "Compatibility flag; CC seeds every vertex, source_node is ignored");
 DEFINE_bool(sparse,
             false, "use async/push/dd + fusion for high-diameter");
 DEFINE_bool(large_batch,
@@ -54,34 +52,22 @@ namespace hybrid_cc
     struct CC : sepgraph::api::AppBase<TValue, TBuffer, TWeight>
     {
         static constexpr bool kSupportsGpuDeletionRepair = true;
-        static constexpr bool kComponentLabels = true;
+        static constexpr bool kVertexSeeds = true;
+        static constexpr bool kRootedDeletionWitness = true;
 
-        __host__ __device__ static TWeight TraversalEdgeWeight(index_t, index_t) {
-            return TWeight(0);
-        }
-
-        static bool NormalizeUndirectedInput() { return !FLAGS_cc_input_symmetric; }
-
-        template<class Updates>
-        static void PrepareUpdates(Updates &updates, uint32_t nodes) {
-            if (!FLAGS_cc_input_symmetric) {
-                const auto input_add = updates.m_add_size, input_del = updates.m_del_size;
-                Stopwatch timer(true);
-                sepgraph::topology::NormalizeUndirectedUpdates(updates, nodes);
-                LOG("[CC-INPUT-UPDATES] input_add=%u input_del=%u adjacency_add=%u adjacency_del=%u normalize_ms=%.3f\n",
-                    input_add, input_del, updates.m_add_size, updates.m_del_size, timer.ms());
-                return;
-            }
-            size_t add = 0, del = 0;
-            for (const auto &batch : updates.m_batch_size) {
-                ValidateSymmetricUpdates(updates.added_edges_w, add, batch.first, nodes);
-                ValidateSymmetricUpdates(updates.deleted_edges_w, del, batch.second, nodes);
-                add += batch.first;
-                del += batch.second;
-            }
+        // Equal-label cycles remain dependencies even with another tight parent.
+        // A vertex's own seed survives every deletion.
+        __host__ __device__ static bool IsDeletionDependency(
+                index_t src, index_t dst, TValue source, TValue destination,
+                uint64_t, index_t, bool) {
+            return src != dst && source == destination && destination < dst;
         }
 
         __host__ __device__ static TWeight DeletionEdgeWeight(index_t src, index_t dst) {
+            return TWeight(0);
+        }
+
+        __host__ __device__ static TWeight TraversalEdgeWeight(index_t, index_t) {
             return TWeight(0);
         }
 
@@ -131,20 +117,62 @@ namespace hybrid_cc
             return utils::pair<TBuffer, bool>(buffer, schedule);
         }
 
-        // A successful strict decrease is the only insertion/frontier event.
-        // CC does not maintain a shortest-path parent witness.
+        // Forward the minimum label unchanged, including insertion updates.
         __forceinline__ __device__
-        int AccumulateBuffer(index_t, index_t, TWeight, TValue *,
-                             TBuffer *destination, TBuffer label) override {
-            return label < atomicMin(destination, label) ? 1 : 0;
+        int AccumulateBuffer(index_t src,
+                             index_t dst,
+                            //  TValue level, //src_level
+                            //  TValue *p_level, //dst_level
+                             TWeight weight,
+                             TValue *p_parent,
+                             TBuffer *p_buffer,    //dst_buffer
+                             TBuffer buffer) override   //src_buffer
+        {
+            // TBuffer old_buffer = *p_buffer;
+            if (buffer == IDENTITY_ELEMENT) return 0;
+            TBuffer new_buffer = buffer;
+            TBuffer old_buffer = atomicMin(p_buffer, new_buffer);
+            if (new_buffer < old_buffer) {
+                TValue old_parent = *p_parent;
+                while (new_buffer == *p_buffer && *p_parent != src) {
+                    old_parent = atomicCAS(p_parent, old_parent, src);
+                }
+            }
+            return new_buffer < old_buffer ? 1 : 0;
         }
 
         __forceinline__ __device__
-        int AccumulateBuffer_add(index_t, index_t, TWeight, TValue *,
-                                 TValue *destination, TValue *source) override {
-            const TValue label = *source;
-            return label < atomicMin(destination, label) ? 1 : 0;
+        int AccumulateBuffer_add(index_t src,
+                             index_t dst,
+                            //  TValue level, //src_level
+                            //  TValue *p_level, //dst_level
+                             TWeight weight,
+                             TValue *p_parent, //dst_parent
+                             TValue *p_buffer,    //dst_value
+                             TValue *buffer) override   //src_value
+        {
+            TValue incoming_value_curr = *buffer;
+            if(incoming_value_curr ==UINT32_MAX){
+                return 0;
+            }
+            TValue new_buffer = incoming_value_curr;
+            TValue new_parent = src;
+            // TValue new_level = level+1;
+            TValue old_value;
+            old_value = atomicMin(p_buffer, new_buffer);
+            TValue old_parent = *p_parent;
+        // TValue curr_buffer = *p_buffer;
+            // if(new_buffer == curr_buffer){
+            if (new_buffer < old_value) {
+                while (new_buffer == *p_buffer && *p_parent != src) {
+                    old_parent = atomicCAS(p_parent,old_parent,src);
+                }
+            }
+            return 1;
         }
+
+        // __forceinline__ __device__
+        // bool reduce()
 
         __forceinline__ __device__
 
@@ -188,30 +216,40 @@ static uint64_t LabelChecksum(const std::vector<label_t> &distances) {
 }
 
 
+// Directed minimum-label propagation, matching old_hybrid_cc.
+// Keep the shared traversal, incremental repair, scheduling and cache paths.
+
 bool HybridCC()
 {
+    if (FLAGS_cc_max_batches < 0) {
+        throw std::invalid_argument("cc_max_batches must be nonnegative");
+    }
+    if (!FLAGS_i16_repair_snapshot.empty()) {
+        throw std::invalid_argument("CC does not support the weighted I16 snapshot format");
+    }
     if (cgcomm::Enabled()) {
         LOG("[I17-B7-COMM-CONTRACT] version=1 payload=successful_cuda_api_requested_bytes async=accepted coverage=cudaMemcpy,cudaMemcpyAsync physical_bytes=unavailable zc_logical_accesses=unavailable zc_cache_classification=unavailable cpu_memcpy_bytes=unavailable kernel_d2d_bytes=unavailable\n");
     }
     assert(UINT32_MAX == UINT_MAX);
     typedef sepgraph::engine::Engine<label_t, label_t, label_t, hybrid_cc::CC, index_t> HybridEngine;
     HybridEngine engine(sepgraph::policy::AlgoType::TRAVERSAL_SCHEME);
-    if (FLAGS_cc_max_batches < 0) throw std::invalid_argument("cc_max_batches must be nonnegative");
-    if (!FLAGS_i16_repair_snapshot.empty())
-        throw std::invalid_argument("I16 weighted repair snapshots do not encode CC semantics");
     engine.LoadGraph();
-    if (FLAGS_cc_input_symmetric)
-        ValidateSymmetricGraph(engine.ChunkStore(), engine.GetGraphDatum().nnodes);
+    LOG("[CC-SEMANTICS] directed_min_label input_edges=as_is updates=as_is\n");
     if (FLAGS_large_batch) {
         LOG("[I17-B5] large_batch requested: PMA backend is not connected yet; using chunk/reverse path for safety\n");
     }
 
-    index_t source_node = 0; // constructor compatibility; all vertices are CC seeds
+    if (engine.GetGraphDatum().nnodes == 0) {
+        throw std::invalid_argument("CC requires a nonempty graph");
+    }
+    index_t source_node = 0; // constructor compatibility; every vertex is a seed
 
     sepgraph::common::EngineOptions engine_opt;
 
 
     const int init_prio = FLAGS_prio_delta > 0 ? FLAGS_prio_delta : 1;
+
+    printf("Priority delta: %u\n", init_prio);
 
     if (FLAGS_sparse)
     {
@@ -370,9 +408,6 @@ bool HybridCC()
         LOG("[CC-FINAL-CHECK] %s errors=%llu\n", errors == 0 ? "passed" : "failed",
             (unsigned long long)errors);
     }
-    uint64_t components = 0;
-    for (index_t v = 0; v < labels.size(); ++v) components += labels[v] == v;
-    LOG("[CC-RESULT] components=%llu\n", (unsigned long long)components);
     if (FLAGS_cc_print_checksum)
         LOG("[CC-FINAL-CHECK] label_checksum=%llu\n", (unsigned long long)LabelChecksum(labels));
     if (!FLAGS_output.empty()) success = CCOutput(FLAGS_output.c_str(), labels) && success;

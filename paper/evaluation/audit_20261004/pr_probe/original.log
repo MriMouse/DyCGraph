@@ -1,0 +1,254 @@
+
+Testing single GPU Page Rank
+--------------------
+
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:158 HOST: HybridPageRank
+
+Loading graph /home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/audit_20261004/pr_probe/graph (market_big)
+ look edge_dst[nedges-1] : 6 look edge_dst[nedges-2] : 6 nedges-1: 85 nedges-2: 84
+ edge_[nedges-1] : 6 look edge_dst[nedges-2] : 6 nedges-1: 85 nedges-2: 84
+
+----- Running Hybrid Graph Engine -----
+
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:163 HOST: error 0.000001
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:369 HOST: seg_nedges_csr_max = 344
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:164 HOST: 内存分配的边数量 536870921
+缓存大小： 536870921
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:192 HOST: Allocate node for GraphDatum weighted ? 1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:378 HOST: Load graph time: 3.976000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:438 HOST: InitGraph: 0.079000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:577 HOST: Max iterations reached
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:586 HOST: [PR-CONVERGE] stage=initial rounds=100 stop=iteration_limit active=2 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:590 HOST: Iterate all time: 8.965000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.024000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.027000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.052000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.021000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.099000 ms 
+batch number 0
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1119 HOST: ====this is 0 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1154 HOST: 取消时间: 0.099000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1069 HOST: del start 0 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1311 HOST: [PR-BATCH] batch=0 rounds=69 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1316 HOST: 迭代时间: 1.761000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1317 HOST: round num : 69  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.010000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.019000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1405 HOST: 缓存逐出时间 0.019000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1381 HOST: 合并缓存时间 cache(compact time): 8.304000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.039000 ms 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:195 HOST: [P0-TIMER][PR][batch 0] total_batch: 12.885 ms
+batch number 1
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1119 HOST: ====this is 1 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1154 HOST: 取消时间: 0.061000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1069 HOST: del start 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1311 HOST: [PR-BATCH] batch=1 rounds=59 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1316 HOST: 迭代时间: 1.441000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1317 HOST: round num : 59  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.018000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1405 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1381 HOST: 合并缓存时间 cache(compact time): 8.323000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.037000 ms 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:195 HOST: [P0-TIMER][PR][batch 1] total_batch: 12.099 ms
+batch number 2
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1119 HOST: ====this is 2 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1154 HOST: 取消时间: 0.059000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1069 HOST: del start 2 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1311 HOST: [PR-BATCH] batch=2 rounds=59 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1316 HOST: 迭代时间: 1.459000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1317 HOST: round num : 59  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.013000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1405 HOST: 缓存逐出时间 0.007000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1381 HOST: 合并缓存时间 cache(compact time): 8.245000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.037000 ms 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:195 HOST: [P0-TIMER][PR][batch 2] total_batch: 12.016 ms
+batch number 3
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1119 HOST: ====this is 3 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1154 HOST: 取消时间: 0.059000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1069 HOST: del start 3 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1311 HOST: [PR-BATCH] batch=3 rounds=64 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1316 HOST: 迭代时间: 1.619000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1317 HOST: round num : 64  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.012000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1405 HOST: 缓存逐出时间 0.007000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1381 HOST: 合并缓存时间 cache(compact time): 8.248000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.037000 ms 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:195 HOST: [P0-TIMER][PR][batch 3] total_batch: 12.392 ms
+batch number 4
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1119 HOST: ====this is 4 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1154 HOST: 取消时间: 0.073000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1069 HOST: del start 4 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1311 HOST: [PR-BATCH] batch=4 rounds=56 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1316 HOST: 迭代时间: 1.382000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1317 HOST: round num : 56  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.016000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1405 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1381 HOST: 合并缓存时间 cache(compact time): 8.244000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.037000 ms 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:195 HOST: [P0-TIMER][PR][batch 4] total_batch: 11.810 ms
+batch number 5
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1119 HOST: ====this is 5 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1154 HOST: 取消时间: 0.058000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1069 HOST: del start 5 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1311 HOST: [PR-BATCH] batch=5 rounds=59 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1316 HOST: 迭代时间: 1.438000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1317 HOST: round num : 59  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.012000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.007000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1405 HOST: 缓存逐出时间 0.007000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1381 HOST: 合并缓存时间 cache(compact time): 8.247000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.037000 ms 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:195 HOST: [P0-TIMER][PR][batch 5] total_batch: 11.970 ms
+batch number 6
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1119 HOST: ====this is 6 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1154 HOST: 取消时间: 0.056000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1069 HOST: del start 6 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1311 HOST: [PR-BATCH] batch=6 rounds=62 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1316 HOST: 迭代时间: 1.547000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1317 HOST: round num : 62  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.012000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1405 HOST: 缓存逐出时间 0.007000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1381 HOST: 合并缓存时间 cache(compact time): 8.249000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.036000 ms 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:195 HOST: [P0-TIMER][PR][batch 6] total_batch: 12.181 ms
+batch number 7
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1119 HOST: ====this is 7 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1154 HOST: 取消时间: 0.061000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1069 HOST: del start 7 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1311 HOST: [PR-BATCH] batch=7 rounds=65 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1316 HOST: 迭代时间: 1.644000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1317 HOST: round num : 65  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.013000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1405 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1381 HOST: 合并缓存时间 cache(compact time): 8.250000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.036000 ms 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:195 HOST: [P0-TIMER][PR][batch 7] total_batch: 12.384 ms
+batch number 8
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1119 HOST: ====this is 8 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1154 HOST: 取消时间: 0.058000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1069 HOST: del start 8 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1311 HOST: [PR-BATCH] batch=8 rounds=56 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1316 HOST: 迭代时间: 1.418000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1317 HOST: round num : 56  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.013000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.009000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1405 HOST: 缓存逐出时间 0.008000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1381 HOST: 合并缓存时间 cache(compact time): 8.247000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.036000 ms 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:195 HOST: [P0-TIMER][PR][batch 8] total_batch: 11.846 ms
+batch number 9
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1119 HOST: ====this is 9 batch====
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1154 HOST: 取消时间: 0.063000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1069 HOST: del start 9 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1070 HOST: del size 1 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:857 HOST: ------MF PUSH------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1279 HOST: ------------PR mf compensate-----------
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1311 HOST: [PR-BATCH] batch=9 rounds=55 stop=converged active=0 limit=100
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1316 HOST: 迭代时间: 1.334000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1317 HOST: round num : 55  (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:166 HOST: comp_hotness time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/graph_datum.cuh:259 HOST: sort vtx by hot
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:182 HOST: extract degree time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:232 HOST: candidate v time: 0.016000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:247 HOST: search_rebuild v time: 0.008000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1405 HOST: 缓存逐出时间 0.007000
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:1381 HOST: 合并缓存时间 cache(compact time): 8.246000 ms (excluded)
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/include/framework/framework.cuh:278 HOST: 加载缓存数据时间  : 0.036000 ms 
+/home/wangshaoyan/proJect/C-GpuStreamGraph-CG/paper/evaluation/raw/cc_pr_20260928/original_src/samples/hybrid_pr/hybrid_pr.cu:195 HOST: [P0-TIMER][PR][batch 9] total_batch: 11.703 ms
+v 0 data 1.030454 delta 0.000000
+v 1 data 0.150000 delta 0.000000
+v 2 data 0.150000 delta 0.000000
+v 3 data 0.589820 delta 0.000000
+v 4 data 0.150000 delta 0.000000
+v 5 data 0.150000 delta 0.000000
+v 6 data 0.587137 delta 0.000000
+v 7 data 0.587943 delta -0.000000
+v 8 data 0.149999 delta 0.000000
+v 9 data 0.150000 delta 0.000000
+v 10 data 0.400673 delta -0.000000
+v 11 data 0.490573 delta 0.000000
+v 12 data 0.566987 delta 0.000000
+v 13 data 0.640503 delta -0.000000
+v 14 data 0.694428 delta 0.000000
+v 15 data 0.740264 delta 0.000000
+v 16 data 0.528363 delta 0.000000
+v 17 data 1.037052 delta -0.000000
+v 18 data 1.158994 delta 0.000000
+v 19 data 1.011042 delta 0.000000
+Warning: Result not checked
+
+Context status:
+	Endpoint map (virtual endpoint, physical device):  (-1, -1) (0, 0)
+	Event pools (device, events):  (0, 0)
+Overall: Test passed

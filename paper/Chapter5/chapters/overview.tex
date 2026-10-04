@@ -1,0 +1,37 @@
+% Converted from markdown/overview.md
+
+\section{System Overview}
+
+
+We present an out-of-memory streaming graph system that exploits regionality in both topology changes and their computational effects. The system processes batches of edge insertions and deletions over a fixed vertex set, retaining graph topology in host memory and performing incremental computation on the GPU. Our design combines \textbf{update-friendly heterogeneous graph organization} (Section~4) with \textbf{impact-driven incremental graph computation} (Section~5). We use SSSP to illustrate the design.
+
+\subsection{Design Rationale}
+
+
+A batch of streaming graph updates often modifies only a small part of the topology, and its effects on algorithm results may also remain within a limited region. This regionality provides opportunities to reduce both graph maintenance and recomputation. The two regions need not coincide: deleting one edge can affect results several hops away, and recovery may require reading unchanged vertices. Our design uses the scope of topology changes to guide data maintenance and algorithm dependencies to guide incremental computation.
+
+\textbf{Update-friendly heterogeneous graph organization.} Local topology changes should remain local as they pass from host storage to GPU views. We organize outgoing adjacency lists in independently allocated blocks, so growing one list does not relocate unrelated lists. A unified change view records the updates that actually take effect and supplies consistent changes to the forward topology, reverse index, and GPU publication path. This organization allows the GPU adjacency descriptors to be updated only for sources whose adjacency lists have changed (Section~4).
+
+\textbf{Impact-driven incremental graph computation.} Prior work on incremental graph computation initializes worklists over all vertices, and its partition-based scheduling may scan edges unrelated to the affected computation. We use a compact queue of invalidated vertices to drive incoming-edge preparation and GPU recovery, avoiding full-graph state gathering and partition worklist reconstruction (Section~5.1). Recovery completes before insertions, leaving no pending distance improvements on existing edges; only added edges therefore need to seed insertion processing. Successful improvements directly enqueue vertices for adjacency expansion, while GPU-resident queues advance propagation to convergence without host coordination between waves (Section~5.2). Together, these mechanisms replace all-vertex startup and partition-wide scans with work on affected vertices and their dependencies. For long propagations, optional distance ordering reduces repeated edge scans; for large batches, shared plans and change records reduce repeated preparation (Section~5.3).
+
+\subsection{System Workflow}
+
+
+Fig.~\ref{fig:1} shows how graph organization (Section~4) supports incremental computation (Section~5). The CPU maintains topology, while the GPU retains vertex states and executes recovery and propagation. Each batch proceeds as follows.
+
+\textbf{1. Prepare updates.} The CPU groups the batch once by source, retaining separate deletion and insertion views. Our unified change view supplies the adjacency store, reverse index, and publication path with the same effective changes, avoiding independent interpretations of update requests.
+
+\textbf{2. Recover from deletions.} GPU dependency invalidation directly produces a compact affected-vertex queue. After applying deletions, the CPU prepares incoming edges only for queued vertices, and the GPU recovers their distances to convergence using unchanged boundary values. The same queue bounds preparation and recovery, avoiding full-graph state gathering and partition worklist reconstruction; completing recovery makes added-edge startup sufficient in step 4.
+
+\textbf{3. Insert and publish.} The CPU applies insertions and combines the sources changed in both phases. Our source-isolated layout keeps unrelated adjacency addresses stable, allowing the GPU to receive only changed-source descriptor patches instead of reloading all descriptors. Publication completes before dependent GPU reads.
+
+\textbf{4. Propagate improvements.} Successful relaxations of added edges directly populate the GPU work queue. Each queued vertex expands its own outgoing adjacency, avoiding scans of unrelated vertices and edges in its graph partition. The GPU forms subsequent frontiers and detects convergence without host intervention between waves. Per-wave deduplication prevents concurrent processing of the same vertex.
+
+
+\begin{figure*}[t]
+\centering
+\fbox{\parbox[c][0.85in][c]{0.9\textwidth}{\centering Figure artwork to be added}}
+\caption{Core mechanisms for graph organization (Section~4) and incremental computation (Section~5). The inset illustrates supporting data structures; CPU/GPU labels indicate execution placement.}
+\label{fig:1}
+\end{figure*}
+

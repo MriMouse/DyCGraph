@@ -1,0 +1,158 @@
+[
+  {
+    "dataset": "OK",
+    "scale": "1k",
+    "operations": {
+      "a": 5000,
+      "d": 5000
+    },
+    "descending": 10000,
+    "ascending": 0,
+    "self": 0,
+    "repeated_records": 0,
+    "sha256": "0b5c2c27b079fe9dbdc75b8fcd3e88342d6a22e9d6669175cc5af87deb5b7b7c"
+  },
+  {
+    "dataset": "OK",
+    "scale": "10k",
+    "operations": {
+      "a": 50000,
+      "d": 50000
+    },
+    "descending": 100000,
+    "ascending": 0,
+    "self": 0,
+    "repeated_records": 0,
+    "sha256": "f12e410a4363ad98214aad1d5f782da662bde3ad50cd180141e605d446e42347"
+  },
+  {
+    "dataset": "OK",
+    "scale": "100k",
+    "operations": {
+      "d": 500000,
+      "a": 500000
+    },
+    "descending": 1000000,
+    "ascending": 0,
+    "self": 0,
+    "repeated_records": 0,
+    "sha256": "ef2e508e642572af6e8b4ca25cfeda0ecf37da5ff70b763f6d41af0bf549e237"
+  },
+  {
+    "dataset": "WK",
+    "scale": "1k",
+    "operations": {
+      "a": 5000,
+      "d": 5000
+    },
+    "descending": 5091,
+    "ascending": 4906,
+    "self": 3,
+    "repeated_records": 0,
+    "sha256": "4182cba84efb9c261f36e148a6a22d4151ff7f85f557a747ca108a26473fdb66"
+  },
+  {
+    "dataset": "WK",
+    "scale": "10k",
+    "operations": {
+      "d": 50000,
+      "a": 50000
+    },
+    "descending": 50440,
+    "ascending": 49550,
+    "self": 10,
+    "repeated_records": 0,
+    "sha256": "04385b917c8e27651b03aa6a674cc96b68b4e27b92cb1988dad4b3211b66b50e"
+  },
+  {
+    "dataset": "WK",
+    "scale": "100k",
+    "operations": {
+      "d": 500000,
+      "a": 500000
+    },
+    "descending": 505078,
+    "ascending": 494814,
+    "self": 108,
+    "repeated_records": 0,
+    "sha256": "11503ff9414c27bf5acac2d2349eebe901307069ab45038dab27e5a913689cc0"
+  },
+  {
+    "dataset": "TW",
+    "scale": "1k",
+    "operations": {
+      "d": 5000,
+      "a": 5000
+    },
+    "descending": 5045,
+    "ascending": 4955,
+    "self": 0,
+    "repeated_records": 0,
+    "sha256": "e717a048a47a2ddae67ac64c2beab6275f84e44bcc2cf82bf98362e3f96e35ac"
+  },
+  {
+    "dataset": "TW",
+    "scale": "10k",
+    "operations": {
+      "a": 50000,
+      "d": 50000
+    },
+    "descending": 50330,
+    "ascending": 49670,
+    "self": 0,
+    "repeated_records": 0,
+    "sha256": "eb43fdcfa1649a90459830d5da26f9220a0f258408211eef2602d6664d78600b"
+  },
+  {
+    "dataset": "TW",
+    "scale": "100k",
+    "operations": {
+      "a": 500000,
+      "d": 500000
+    },
+    "descending": 501414,
+    "ascending": 498586,
+    "self": 0,
+    "repeated_records": 0,
+    "sha256": "c87a17e56265c6101c9da118995784def017ea8a240670fc4c4004c014902f7b"
+  },
+  {
+    "dataset": "FS",
+    "scale": "1k",
+    "operations": {
+      "a": 5000,
+      "d": 5000
+    },
+    "descending": 0,
+    "ascending": 10000,
+    "self": 0,
+    "repeated_records": 0,
+    "sha256": "9d815920b15687e5a3714c5106c29afddf5928ab9a5a4e25df1ee0f25522231b"
+  },
+  {
+    "dataset": "FS",
+    "scale": "10k",
+    "operations": {
+      "a": 50000,
+      "d": 50000
+    },
+    "descending": 0,
+    "ascending": 100000,
+    "self": 0,
+    "repeated_records": 0,
+    "sha256": "756c449babedff1490e2d488a9929ad053313410ea1d450a926bece3d8370f35"
+  },
+  {
+    "dataset": "FS",
+    "scale": "100k",
+    "operations": {
+      "a": 500000,
+      "d": 500000
+    },
+    "descending": 0,
+    "ascending": 1000000,
+    "self": 0,
+    "repeated_records": 0,
+    "sha256": "640347d0518befedefce5be5ba51b49eb861bc00cafcb9065583e37dc363a22d"
+  }
+]

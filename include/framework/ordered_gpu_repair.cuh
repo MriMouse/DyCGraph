@@ -1,5 +1,6 @@
 #pragma once
 #include <cuda_runtime.h>
+#include <framework/repair_topology_storage.cuh>
 #include <vector>
 #include <stdexcept>
 #include <algorithm>
@@ -115,7 +116,7 @@ struct Metrics { uint32_t iterations=0; uint64_t scans=0,queue_peak=0,device_byt
 template<class App,class Value,class Buffer>
 Metrics Run(uint32_t nodes,const std::vector<uint32_t>& ids,const std::vector<uint64_t>& incoming_offsets,
  const std::vector<uint32_t>& incoming,const uint32_t* d_ids,const uint64_t* d_in_offsets,
- const uint32_t* d_incoming,Value* values,Buffer* buffers,Value* parents) {
+ const uint32_t* d_incoming,Value* values,Buffer* buffers,Value* parents, size_t topology_budget) {
  using Clock=std::chrono::steady_clock;
  auto elapsed=[](Clock::time_point t){return std::chrono::duration<double,std::milli>(Clock::now()-t).count();};
  auto start=Clock::now(); Metrics m; const uint32_t n=ids.size();
@@ -128,21 +129,24 @@ Metrics Run(uint32_t nodes,const std::vector<uint32_t>& ids,const std::vector<ui
  for(uint32_t i=0;i<n;++i) for(uint64_t e=incoming_offsets[i];e<incoming_offsets[i+1];++e) {
   auto u=local[incoming[e]]; if(u!=UINT32_MAX) outgoing[cursor[u]++]=i;
  }
- Device<uint64_t> d_offsets(offsets.size()); Device<uint32_t> d_outgoing(outgoing.size()),distance(n),q1(n),q2(n),pending(n),control(2);
+ Device<uint32_t> distance(n),q1(n),q2(n),pending(n),control(2);
+ sepgraph::runtime::RepairTopologyStorage topology;
+ sepgraph::runtime::RepairTopologyStorage::Lease topology_lease{topology};
+ topology.Bind(offsets,outgoing,std::min(topology_budget,sepgraph::runtime::RepairTopologyStorage::Budget()));
  Device<Counters> counters(1);
- d_offsets.Copy(offsets); d_outgoing.Copy(outgoing);
+ topology.Upload(offsets,outgoing);
  Check(cudaMemset(counters.p,0,sizeof(Counters)));
  const uint32_t blocks=std::max(1u,std::min(256u,(n+255)/256));
  Seed<App><<<blocks,256>>>(n,d_ids,d_in_offsets,d_incoming,values,distance.p,pending.p,q1.p,counters.p);
  Counters stats{}; Check(cudaMemcpy(&stats,counters.p,sizeof(stats),cudaMemcpyDeviceToHost));
  uint32_t count=stats.count; m.queue_peak=count;
- m.device_bytes=8*offsets.size()+4*outgoing.size()+16*uint64_t(n)+8+sizeof(Counters);
+ m.device_bytes=topology.DeviceBytes()+16*uint64_t(n)+8+sizeof(Counters);
  m.prepare_ms=elapsed(start); start=Clock::now();
  while(count) {
   ResetControl<<<1,1>>>(counters.p,control.p);
   FindActiveBucket<<<blocks,256>>>(q1.p,count,distance.p,control.p);
   PartitionActive<<<blocks,256>>>(q1.p,count,distance.p,pending.p,0,q2.p,control.p+1,q2.p,counters.p,control.p,n);
-  Expand<App><<<blocks,256>>>(q2.p,0,d_offsets.p,d_outgoing.p,d_ids,distance.p,pending.p,0,q1.p,n,counters.p,control.p+1,q2.p,count);
+  Expand<App><<<blocks,256>>>(q2.p,0,topology.Offsets(),topology.Sources(),d_ids,distance.p,pending.p,0,q1.p,n,counters.p,control.p+1,q2.p,count);
   Check(cudaGetLastError()); Check(cudaMemcpy(&stats,counters.p,sizeof(stats),cudaMemcpyDeviceToHost));
   if(stats.overflow || stats.count>n) throw std::runtime_error("Ordered repair queue overflow");
   count=stats.count; m.queue_peak=std::max(m.queue_peak,uint64_t(count)); m.scans+=stats.edges;

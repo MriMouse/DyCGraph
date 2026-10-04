@@ -1195,10 +1195,9 @@ namespace sepgraph
                                 static_cast<uint64_t>(m_app_inst.DeletionEdgeWeight(
                                     parent, dst)) ==
                                 static_cast<uint64_t>(m_value_array[dst]);
-                        const bool invalid_dependency = parent == meta_data.m_src ||
-                            (src_value != static_cast<TValue>(UINT32_MAX) &&
-                             candidate == static_cast<uint64_t>(m_value_array[dst]) &&
-                             !parent_tight);
+                        const bool invalid_dependency = m_app_inst.IsDeletionDependency(
+                            meta_data.m_src, dst, src_value, m_value_array[dst],
+                            candidate, parent, parent_tight);
                         if (invalid_dependency &&
                             atomicExch(reinterpret_cast<unsigned int *>(
                                            &m_parent_array[dst]),
@@ -1293,10 +1292,9 @@ namespace sepgraph
                                 static_cast<uint64_t>(m_app_inst.DeletionEdgeWeight(
                                     parent, dst)) ==
                                 static_cast<uint64_t>(m_value_array[dst]);
-                        const bool invalid_dependency = parent == meta_data.m_src ||
-                            (src_value != static_cast<TValue>(UINT32_MAX) &&
-                             candidate == static_cast<uint64_t>(m_value_array[dst]) &&
-                             !parent_tight);
+                        const bool invalid_dependency = m_app_inst.IsDeletionDependency(
+                            meta_data.m_src, dst, src_value, m_value_array[dst],
+                            candidate, parent, parent_tight);
                         if (invalid_dependency &&
                             atomicExch(reinterpret_cast<unsigned int *>(
                                            &m_parent_array[dst]),

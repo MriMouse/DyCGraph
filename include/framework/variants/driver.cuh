@@ -406,13 +406,15 @@ namespace sepgraph {
                         TWEdge *del_edges_d,
                         uint32_t *work_size_d,
                         bool *reset_nodes,
-                        groute::dev::Queue<index_t> affected_vertices) {
+                        groute::dev::Queue<index_t> affected_vertices,
+                        const uint8_t *certified_seeds = nullptr) {
             uint32_t tid = TID_1D;
             uint32_t nthreads = TOTAL_THREADS_1D;
             uint32_t work_size = work_size_d[1];
             uint32_t loca_begin = work_size_d[0];
             for (uint32_t i = 0 + tid; i < work_size; i += nthreads)
             {
+                if (certified_seeds != nullptr && certified_seeds[i]) continue;
                 index_t src = del_edges_d[i+loca_begin].u;
                 index_t dst = del_edges_d[i+loca_begin].v;
                 const TValue src_value = node_value_datum[src];
@@ -424,10 +426,8 @@ namespace sepgraph {
                     static_cast<uint64_t>(node_value_datum[parent]) +
                         static_cast<uint64_t>(app_inst.DeletionEdgeWeight(parent, dst)) ==
                         static_cast<uint64_t>(node_value_datum[dst]);
-                const bool deleted_dependency = parent == src ||
-                    (src_value != static_cast<TValue>(UINT32_MAX) &&
-                     candidate == static_cast<uint64_t>(node_value_datum[dst]) &&
-                     !parent_tight);
+                const bool deleted_dependency = app_inst.IsDeletionDependency(
+                    src, dst, src_value, node_value_datum[dst], candidate, parent, parent_tight);
                 if (deleted_dependency &&
                     atomicExch(reinterpret_cast<unsigned int *>(
                                    &node_parent_datum[dst]),
@@ -455,7 +455,8 @@ namespace sepgraph {
             const uint32_t nthreads = TOTAL_THREADS_1D;
             for (uint32_t i = tid; i < affected_count; i += nthreads) {
                 const index_t node = affected_vertices[i];
-                node_value_datum[node] = decltype(app_inst)::kComponentLabels ?
+                node_value_datum[node] = (decltype(app_inst)::kComponentLabels ||
+                    decltype(app_inst)::kVertexSeeds) ?
                     static_cast<TValue>(node) : app_inst.GetInitValue(node);
                 node_buffer_datum[node] = app_inst.GetInitBuffer(node);
             }

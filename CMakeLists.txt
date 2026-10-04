@@ -208,6 +208,9 @@ add_executable(dynamic_reverse_index_test tests/dynamic_reverse_index_test.cpp)
 target_link_libraries(dynamic_reverse_index_test ${CUDA_LIBRARIES} pthread)
 add_test(NAME dynamic_reverse_index_test COMMAND dynamic_reverse_index_test)
 
+add_executable(directed_label_witness_test tests/directed_label_witness_test.cpp)
+add_test(NAME directed_label_witness_test COMMAND directed_label_witness_test)
+
 cuda_add_executable(hotness_pairing_test tests/hotness_pairing_test.cu)
 target_link_libraries(hotness_pairing_test ${CUDA_LIBRARIES} stdgpu gflags)
 add_test(NAME hotness_pairing_test COMMAND hotness_pairing_test)
@@ -286,3 +289,8 @@ target_link_libraries(i23_group_replay pthread)
 cuda_add_executable(cc_sampled_repair_test tests/cc_sampled_repair_test.cu)
 target_link_libraries(cc_sampled_repair_test ${CUDA_LIBRARIES})
 add_test(NAME cc_sampled_repair_test COMMAND cc_sampled_repair_test)
+
+# Shared bounded repair adjacency, including mapped-pointer reads on the GPU.
+cuda_add_executable(repair_topology_storage_test tests/repair_topology_storage_test.cu)
+target_link_libraries(repair_topology_storage_test ${CUDA_LIBRARIES})
+add_test(NAME repair_topology_storage_test COMMAND repair_topology_storage_test)

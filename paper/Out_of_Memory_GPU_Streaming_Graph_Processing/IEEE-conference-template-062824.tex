@@ -1,0 +1,42 @@
+\documentclass[conference]{IEEEtran}
+\usepackage{amsmath,amssymb}
+\usepackage{algorithm}
+\usepackage{graphicx}
+\usepackage{multirow}
+
+\usepackage[noend]{algpseudocode}
+\algrenewcommand{\algorithmicrequire}{\textbf{Input:}}
+\algrenewcommand{\algorithmicensure}{\textbf{Output:}}
+\renewcommand{\IEEEkeywordsname}{Keywords} % 似的摘要中关键词为对应关键词名称
+
+\begin{document}
+
+%\title{Out-of-Memory GPU Streaming Graph Processing}  % 这个题目，还需要一起讨论，具体叫什么？？？
+\title{CoIncGraph: CPU--GPU Cooperative Incremental Processing of Out-of-Memory Streaming Graphs} % 暂定这个吧，后面再看要不要优化一下
+\author{\IEEEauthorblockN{Anonymous Authors}}
+\maketitle
+
+% \section{Introduction}
+\input{chapters/abstract}
+\input{chapters/introduction}
+\input{chapters/background}
+\input{chapters/design}
+\input{chapters/evaluation}
+\input{chapters/conclusion}
+
+% 对应篇幅规划：
+% Abstract & Introduction  内容 1.5~2页
+% Background & Motivation 1.5~2页
+% 核心优化  3页
+% 实验部分 3页
+% Related work + 结论  0.5页
+% 参考文献 1页以内，30~40个引用
+
+%\section{Evaluation}
+
+% \section{Conclusion}
+
+\bibliographystyle{IEEEtran}
+\bibliography{reference}{}
+
+\end{document}

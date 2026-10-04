@@ -1,4 +1,4 @@
-"""Opt-in CC GPU regression against an independent component flood-fill oracle.
+"""Opt-in CC GPU regression against an independent directed reachability oracle.
 
 Includes bridge/cycle deletion, duplicate occurrences, isolated vertices, empty
 phases, mixed batches, non-unit weights, and all production insertion schedules.
@@ -19,7 +19,6 @@ def oracle(edges, nodes):
     for (u, v), count in edges.items():
         if count:
             adjacency[u].append(v)
-            adjacency[v].append(u)
     labels = list(range(nodes))
     seen = set()
     for start in range(nodes):
@@ -41,15 +40,12 @@ def oracle(edges, nodes):
     return labels, checksum
 
 
-def paired(edges):
-    return [(a, b) for u, v in edges for a, b in ([(u, v)] if u == v else [(u, v), (v, u)])]
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--gpu', type=int, required=True)
+    parser.add_argument('--repair-topology-mb', type=int, default=None)
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -58,14 +54,23 @@ def main():
     base += [(0, 1), (1, 2), (2, 0), (2, 3), (3, 4), (4, 5), (5, 3)]
     base += [(8, 9), (8, 9), (130, 140), (140, 150), (150, 130)]
     base += [(u, u+1) for u in range(160, 200)]
-    original = Counter(paired(base))
+    # These incoming-only edges distinguish directed labels from undirected CC.
+    base += [(31, 30), (32, 30), (40, 41), (41, 42), (42, 41)]
+    base += [(0, 220), (220, 210), (210, 211), (211, 210)]
+    # Redundant rooted routes, then loss of the last route into a cycle.
+    base += [(50, 51), (50, 52), (51, 53), (52, 53), (53, 54), (54, 53)]
+    # Both routes are cut in the same batch: a pre-delete proof would be stale.
+    base += [(60, 61), (60, 62), (61, 63), (62, 63), (63, 64), (64, 63)]
+    original = Counter(base)
     (out/'graph').write_text(''.join(f'{u} {v} 777\n' * count for (u, v), count in sorted(original.items())))
-    batches = [([], []), ([(2, 3)], []), ([(0, 1)], []),
+    batches = [([], []), ([(2, 3), (40, 41), (220, 210)], []), ([(0, 1)], []),
                ([(8, 9)], []), ([(8, 9)], [(5, 8)]),
                ([(3, 4), (3, 5)], [(2, 4), (9, 130)]),
                ([(180, 181)], [(150, 190)]),
                ([(210, 211), (11, 11)], [(10, 11)]),
                ([], [(5, 8)]), ([(5, 8)], [(2, 3)])]
+    batches += [([(51, 53)], []), ([(50, 52), (61, 63), (62, 63)], []),
+                ([], [(49, 53)]), ([(49, 53)], [])]
     rng = random.Random(20260923)
     for _ in range(6):
         batches.append(([(rng.randrange(nodes), rng.randrange(nodes)) for _ in range(8)],
@@ -73,7 +78,6 @@ def main():
     edges = original.copy()
     expected, updates, sizes = [], [], []
     for deleted, added in batches:
-        deleted, added = paired(deleted), paired(added)
         for u, v in deleted:
             edges[u, v] = max(0, edges[u, v]-1)
             updates.append(f'd {u} {v} 999\n')
@@ -88,25 +92,29 @@ def main():
     (out/'domains').write_bytes(struct.pack('<' + 'H'*nodes, *[u % 2 for u in range(nodes)]))
     configs = [('initial', 'block', 'regular', '0', 0, []),
                ('block', 'block', 'regular', '0', len(batches), []),
-               ('full_scan', 'block', 'regular', '0', len(batches), []),
                ('merged', 'block', 'large', '0', len(batches), []),
-               ('pull', 'block', 'regular', '0', len(batches), []),
                ('thread', 'thread', 'large', '0', len(batches), []),
                ('ordered', 'ordered', 'large', '1', len(batches), []),
                ('uncached', 'block', 'auto', '0', len(batches), ['--cache=0']),
                ('cpu', 'block', 'regular', '0', len(batches), ['--sssp_cpu_partition_capacity=1']),
                ('domains', 'block', 'regular', '0', len(batches), [f'--sssp_cpu_domain_map={out / "domains"}']),
                ('unchecked', 'block', 'large', '0', len(batches), ['--check=false']),
+               ('forward_off', 'block', 'regular', '0', len(batches), []),
+               ('witness_off', 'block', 'regular', '0', len(batches), []),
                ('sparse', 'block', 'regular', '0', len(batches), ['--sparse=true'])]
     results = []
     for name, schedule, maintenance, ordered, count, extra in configs:
         env = {k: v for k, v in os.environ.items() if not k.startswith('CG_')}
+        if args.repair_topology_mb is not None:
+            env['CG_REPAIR_TOPOLOGY_MB'] = str(args.repair_topology_mb)
         env.update(CUDA_VISIBLE_DEVICES=str(args.gpu), CG_INSERTION_SCHEDULE=schedule,
                    CG_BATCH_MAINTENANCE=maintenance, CG_ORDERED_REPAIR=ordered,
                    CG_MUTATION_WORKERS='2', CG_REVERSE_SHARDS='64', CG_COMM_METER='0')
-        env['CG_CC_REPAIR'] = 'pull' if name == 'pull' else 'union'
-        env['CG_CC_SAMPLED_REPAIR'] = '0' if name == 'full_scan' else '1'
         env['CG_MERGE_PUBLICATION_SOURCES'] = '1' if name == 'merged' else '0'
+        if name == 'witness_off':
+            env['CG_CC_ROOTED_WITNESS'] = '0'
+        if name == 'forward_off':
+            env['CG_CC_FORWARD_WITNESS'] = '0'
         output = out/f'{name}.labels'
         command = [str(args.binary.resolve()), f'--graphfile={out/"graph"}',
                    f'--updatefile={out/"updates"}', f'--update_size={out/"sizes"}',
@@ -118,10 +126,28 @@ def main():
             subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT,
                            check=True, timeout=180)
         text = (out/f'{name}.log').read_text()
-        if name in ('block', 'merged', 'thread', 'uncached', 'unchecked', 'sparse'):
-            assert '[CC-UNION-REPAIR]' in text, name
-            assert 'sampled=1' in text, name
-            assert not re.search(r'\[B2-GPU-REPAIR\].*affected=[1-9]', text), name
+        storage = re.findall(r'\[B2-REPAIR-STORAGE\][^\n]*budget_bytes=(\d+) device_bytes=(\d+) mapped_bytes=(\d+) h2d_bytes=(\d+)', text)
+        if count:
+            assert storage, "repair storage path was not exercised"
+        for budget, device, mapped, h2d in map(lambda row: tuple(map(int, row)), storage):
+            assert device <= budget
+            if args.repair_topology_mb == 0:
+                assert device == h2d == 0 and mapped > 0
+
+        if count and name != 'witness_off':
+            witnesses = re.findall(r'\[CC-ROOTED-WITNESS\][^\n]*certified=(\d+) fallback=(\d+)', text)
+            assert witnesses and any(int(proven) for proven, _ in witnesses), name
+            assert any(int(fallback) for _, fallback in witnesses), name
+        if name == 'witness_off':
+            assert '[CC-ROOTED-WITNESS]' not in text, name
+        if name == 'forward_off':
+            anchors = re.findall(r'\[CC-FORWARD-WITNESS\][^\n]*certified=(\d+)', text)
+            assert anchors and all(int(value) == 0 for value in anchors), name
+
+        assert '[CC-SEMANTICS] directed_min_label input_edges=as_is updates=as_is' in text, name
+        assert '[CC-INPUT-GRAPH]' not in text and '[CC-INPUT-UPDATES]' not in text, name
+        assert '[CC-UNION-REPAIR]' not in text and '[CC-REVERSE-VIEW]' not in text, name
+        assert f'[CPU-REVERSE-INDEX] base_edges={sum(original.values())} ' in text, name
         actual = [(tag, int(value)) for tag, value in re.findall(
             r'\[(CC-DELETE-STAGE-CHECK|CC-BATCH-CHECK)\][^\n]*label_checksum=(\d+)', text)]
         checked = '--check=false' not in extra
@@ -139,7 +165,7 @@ def main():
     # Entire streams can be empty, not just an individual phase of a mixed stream.
     for name, deleted, added in [('empty', [], []), ('add_only', [], [(2, 3)]),
                                  ('delete_only', [(2, 3)], [])]:
-        d, a = paired(deleted), paired(added)
+        d, a = deleted, added
         (out/f'{name}.updates').write_text(''.join(f'd {u} {v} 9\n' for u,v in d) +
                                            ''.join(f'a {u} {v} 7\n' for u,v in a))
         (out/f'{name}.sizes').write_text(f'{len(a)} {len(d)}\n')
@@ -166,15 +192,15 @@ def main():
     contract('static', [f'--output={out / "static.labels"}'], 0, '[CC-FINAL-CHECK] passed errors=0')
     assert (out/'static.labels').read_text() == (out/'initial.labels').read_text()
     (out/'asymmetric.graph').write_text('\n'.join(line for line in (out/'graph').read_text().splitlines()
-                                                if not line.startswith('1 0 ')) + '\n')
+                                                if not line.startswith('0 1 ')) + '\n')
     contract('asymmetric_graph', [f'--graphfile={out / "asymmetric.graph"}'], 0,
-             '[CC-INPUT-GRAPH]')
+             '[CC-SEMANTICS] directed_min_label')
     (out/'asymmetric.updates').write_text('d 2 3 1\n')
     (out/'asymmetric.sizes').write_text('0 1\n')
     contract('asymmetric_updates', [f'--updatefile={out / "asymmetric.updates"}',
-             f'--update_size={out / "asymmetric.sizes"}', '--cc_max_batches=1'], 0, '[CC-INPUT-UPDATES]')
+             f'--update_size={out / "asymmetric.sizes"}', '--cc_max_batches=1'], 0, '[CC-SEMANTICS] directed_min_label')
     (out/'result.json').write_text(json.dumps(results, indent=2)+'\n')
-    print('CC: all labels and per-phase checksums match independent flood-fill', flush=True)
+    print('CC: all labels and per-phase checksums match independent directed flood-fill', flush=True)
 
 
 if __name__ == '__main__':

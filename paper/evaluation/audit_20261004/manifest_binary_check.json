@@ -1,0 +1,46 @@
+{
+  "sssp_bfs_20260927": [
+    {
+      "key": "current/hybrid_sssp",
+      "matches_manifest": true,
+      "sha256": "eb25f6f04dd109838ea0a6c4c3d68f98bf19dda6a082d6f4ca4fed7b8a65f3ca"
+    },
+    {
+      "key": "current/hybrid_bfs",
+      "matches_manifest": true,
+      "sha256": "b311566e3fb916f1144c04bcf10107d2b9af78ce5baf04f223f6e15e216be58d"
+    },
+    {
+      "key": "original/hybrid_sssp",
+      "matches_manifest": true,
+      "sha256": "6d1e65a01e49a244e8f7df523a6188f067c51a283a0010824a2695ac438ec089"
+    },
+    {
+      "key": "original_bfs/hybrid_sssp",
+      "matches_manifest": true,
+      "sha256": "71d33fc530676e721b9dfcae76ab0962b7dd747ec2c335fb6f24c5e51bb23927"
+    }
+  ],
+  "cc_pr_20260928": [
+    {
+      "key": "current/cc",
+      "matches_manifest": true,
+      "sha256": "1252220f679383e17afbe50ad4da1b977950c4f49f11b962962d54d80614f2ff"
+    },
+    {
+      "key": "current/pr",
+      "matches_manifest": true,
+      "sha256": "065d87fa26461f613a4ddfb4dbf6ab3649ceef01308276d503201062ccc48b32"
+    },
+    {
+      "key": "original/cc",
+      "matches_manifest": true,
+      "sha256": "74956cbae98bc892d38c9ce5c56ab798bd04f1fc623667882448cbc9657a6732"
+    },
+    {
+      "key": "original/pr",
+      "matches_manifest": true,
+      "sha256": "b0cdd142455d95b04a2240b8087135632f90b8f736ef874eb4709215f67085b2"
+    }
+  ]
+}

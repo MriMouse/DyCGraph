@@ -1,0 +1,200 @@
+\section{design of CoIncGraph}
+\label{sec:design}
+
+\subsection{Update-Friendly Heterogeneous Graph Organization}
+\label{sec:graph-organization}
+
+
+Topological regionality offers an opportunity to limit adjacency movement and GPU index maintenance to the sources whose outgoing adjacency changes in a batch. However, insertion operations in the PMA structure may trigger rebalancing, causing the adjacency list to be migrated to a region other than that of the source vertex, thereby increasing the volume of data movement and the overhead of index maintenance at other locations. We organize maintenance around independently allocated source blocks. Section 4.1 explains how this layout prevents updates from relocating unrelated lists. Section 4.2 coordinates updates to outgoing and incoming adjacency through a common batch plan. Section 4.3 uses the resulting changed-source set to update only the required GPU adjacency indices while preserving consistent graph access.
+
+\subsubsection{Source-Isolated Graph Layout}
+\label{sec:source-layout}
+
+
+The graph resides in host memory. For each source, the GPU maintains an adjacency descriptor, an index record that identifies where its neighbor list is stored and how many neighbors it contains. Although graph updates are regional, modifying a few vertices can relocate the adjacency lists of many unchanged vertices, requiring corresponding updates to their GPU indices and thereby amplifying the data update overhead. To confine this maintenance to updated sources, we allocate and grow each source's adjacency independently.
+
+Each source $u$ stores its neighbors in an independently allocated, contiguous block of mapped host memory, with spare capacity for insertions. For insertions, the CPU appends new neighbors to $u$'s existing block if its capacity is sufficient. Otherwise, it allocates a larger block, copies $u$'s existing adjacency into it, and appends the new neighbors. Expansion uses a separately allocated block, leaving the locations of other adjacency lists unchanged. Figure~\ref{fig:2}(a) contrasts the proposed design with a shared PMA. In the PMA, even local data shifts before rebalancing may change the indices of other source vertices whose adjacency lists remain unchanged. In contrast, expanding the private memory block of $w$ in our design does not affect the memory blocks of other source vertices or invalidate their descriptors. For deletions, the CPU removes the specified edges that exist in the graph and compacts the remaining neighbors within the existing block. This preserves the contiguous neighbor access of the original layout while restricting relocation to the updated source.
+
+
+Independent block allocation eliminates cross-source redistribution, preserving the adjacency locations and descriptors of unchanged sources. This confines relocation costs to updated lists and enables sparse GPU publication (Section~4.3). Expansion and deletion may still copy or scan an entire updated list, while spare capacity and delayed block reclamation incur memory overhead.
+
+\subsubsection{Unified Change View}
+\label{sec:change-view}
+
+
+A topology view is a representation of graph in a particular data structure or on a particular device, organized for the access it supports. Our system maintains three such views. Outgoing adjacency stores each source's neighbors in host memory for traversing its outgoing edges. The reverse index stores the sources of incoming edges for each destination, allowing deletion recovery to find the remaining predecessors that may restore its distance. GPU adjacency descriptors store each source's neighbor-list location and degree, allowing GPU computation to locate and read its outgoing neighbors. Each topology update must be reflected in all three views. We coordinate their maintenance through a unified change view, consisting of effective edge-change records and changed-source lists produced during outgoing-adjacency preparation for each update phase.
+
+The CPU groups update requests by source so that adjacency maintenance operates on a group of edges at a time. For each source, it collects all deletion requests and records how many existing edges to each destination should be removed. It then removes these edges together by compacting the neighbor list once, avoiding repeated movement of the same entries when edges are deleted one at a time. It also determines the capacity required for the source's insertions as a group. If the current block is too small, the CPU allocates a larger block and copies the existing neighbors once before appending the new edges. Thus, grouping reduces repeated movement within an updated adjacency list, complementing the isolation of movement across sources in Section 4.1. Independent source blocks allow the compaction and append operations for different sources to proceed in parallel.
+
+Grouping updates by source also provides the information needed to maintain the other topology views. During preparation, the CPU records each source--destination pair and the number of edges actually removed or added, together with the sources whose adjacency changes. Unsuccessful deletion requests produce no change. The reverse index uses the edge records to update incoming adjacency, while GPU descriptor and cache updates use the source lists to locate the outgoing lists that have changed. These structures therefore reuse the results of adjacency preparation instead of independently determining the effects of the same requests.
+
+For example, suppose source $u$ has neighbors $[a,a,b]$ and receives three requests to delete $(u,a)$ and one to insert $(u,c)$. Only two copies of $(u,a)$ exist, so deletion compacts the list to $[b]$ and produces the record $(u,a,-2)$. The reverse index uses this record to remove the two incoming edges from $u$ at $a$. Insertion later produces $[b,c]$ and the record $(u,c,+1)$, which adds an incoming edge from $u$ at $c$. Both stages identify $u$ as changed. The system then updates its GPU descriptor and, if present, its cached adjacency, as illustrated in Fig.~\ref{fig:2}(b). The third deletion request causes no additional index update.
+
+
+\begin{figure*}[t]
+\centering
+\fbox{\parbox[c][0.85in][c]{0.9\textwidth}{\centering Figure artwork to be added}}
+\caption{Shared-array movement and source-isolated maintenance. (a) In the illustrative PMA, insertion first shifts an unchanged source's adjacency, a later leaf overflow rebalances the eight-slot range, and root overflow expands it to 16 slots. The corresponding source-local updates leave the unchanged source's address stable and expand only the updated source's block. (b) Effective deletion and insertion records update the reverse overlay; their changed-source union selects one final GPU descriptor and resident-cache repair after deletion recovery. The two panels use separate examples.}
+\label{fig:2}
+\end{figure*}
+
+
+\subsubsection{Maintaining Reverse and GPU Views}
+\label{sec:view-maintenance}
+
+
+\textbf{Reverse index maintenance.} Maintaining incoming adjacency directly from the input requests would cause other views to repeat checks already performed when processing outgoing adjacency. To avoid this work, the reverse index consumes the actual edge changes, groups them by destination, and combines changes for the same source--destination pair. Each destination stores a sorted base list of incoming sources and a separate list of delta records. A delta record contains a source vertex and the net number of edges added or removed relative to the base list: a positive value indicates additions, and a negative value indicates deletions. New changes are merged into these records, and records with a zero net change are removed. This avoids checking deletion requests again and modifying the base lists for every update.
+
+To retrieve the current incoming neighbors of a destination, the index counts the occurrences of each source in the base list and adds the value in its delta record, if one exists. A source is returned if the resulting count is positive. For example, a base list $[u,u,w]$ and delta records $[(u,-2),(v,+1)]$ yield incoming sources $[v,w]$: both edges from $u$ have been removed, the edge from $w$ remains, and an edge from $v$ has been added. The base list remains unchanged during updates, while the delta records provide the current incoming view at query time.
+
+
+\textbf{GPU descriptor and cache maintenance.} Reloading all GPU descriptors after a local update would transfer indices for many vertices whose adjacency remains unchanged. Source isolation makes these transfers unnecessary, while the source lists produced during adjacency maintenance identify the descriptors that need updating. Let $S^-$ and $S^+$ denote the sources changed during deletion and insertion. The system forms $S=S^-\cup S^+$ so that each source is included once, even if it changes in both stages. Sources with only unsuccessful deletion requests are excluded. After insertion, the CPU transfers one record per source in $S$, containing its final adjacency location, degree, and version, and the GPU writes these records into the corresponding descriptor entries. Sources outside $S$ retain valid descriptors because their adjacency has not moved or changed. Descriptor maintenance therefore follows the sources actually modified in the batch, including those updated in place or restored to their initial neighbors, without reloading the full array.
+
+Each descriptor update occupies 24 bytes, giving a transfer volume of $24|S|$ bytes per batch. Descriptor traffic therefore scales with the number of changed sources rather than the total vertex count. Incoming-neighbor transfers, cached-list copies, and accesses to host adjacency incur separate costs.
+
+The source list also limits the repair of cached adjacency. If a changed source has a valid GPU cache entry, the system copies its current neighbor list into the existing space when it fits. Otherwise, it attempts to place the list in unused space at the end of the cache and updates its cache index. If there is insufficient space, it invalidates the cached copy, allowing computation to read the current host adjacency. Each repair copies the changed source's entire neighbor list; cached lists of other sources are left in place during this step.
+
+To prevent GPU computation from reading stale indices or cached neighbors, descriptor and cache updates run in one CUDA stream, and subsequent computation waits for them to finish. Replaced host blocks are reused only after earlier GPU readers have completed, preventing access to reclaimed adjacency storage.
+
+Local repair can also avoid subsequent cache reorganization. After computation, the existing hotness-based policy selects the vertices to cache. If all selected vertices have valid cached adjacency and their number matches the previously published cache set, the system skips eviction, compaction, and loading. Otherwise, it performs the normal cache replacement procedure. This prevents a local topology change from unnecessarily triggering the full cache maintenance sequence, while still allowing replacement when the selected vertices change or local repair cannot retain a valid copy.
+
+Together, source isolation, shared change records, and selective GPU updates confine adjacency relocation and cache repair to changed sources, while avoiding repeated processing of the same updates across topology indices. They reduce both data movement and the additional index maintenance.
+
+\subsection{CPU--GPU Cooperative Incremental Graph Computation}
+\label{sec:incremental-computation}
+
+
+Updates to the streaming graph are localized, yet work list construction and incremental maintenance can still process unaffected vertices. We reduce this overhead through CPU--GPU cooperative incremental computation. Section 5.1 uses affected vertices identified by the GPU to retrieve only the predecessor lists needed for deletion repair from the CPU-maintained reverse index. Section 5.2 publishes changed topology and propagates insertion effects only from vertices whose results improve. Section 5.3 reduces repeated propagation and large-batch preparation costs.
+
+\subsubsection{Dependency Invalidation and Cooperative Repair}
+\label{sec:deletion-repair}
+
+
+We describe the process using SSSP with positive edge weights (BFS uses unit weights). A vertex result is its current distance estimate, denoted by $d(v)$, and a better result corresponds to a smaller estimate in this example. For a batch of effective deletions $D_t$ and insertions $I_t$, let $G_t=(V,E_t)$ be the previous graph. The graph after deletion is $G_{t+1}^{-E}=(V,E_t\setminus D_t)$, and the final graph is $G_{t+1}^{+E}=(V,(E_t\setminus D_t)\cup I_t)$. The system completes deletion repair before processing insertions. Algorithm~\ref{alg:process-batch} summarizes this CPU--GPU cooperative workflow, from dependency invalidation and deletion repair to topology publication and insertion propagation. Fig.~\ref{fig:3} follows this order: 1--3 perform dependency invalidation and deletion repair (Section~5.1), followed by topology publication and insertion propagation in 4--6 (Section~5.2).
+
+\textbf{1 Dependency invalidation.} When deletions invalidate a path supporting a vertex result, the GPU marks the vertices that depend on that path and resets their results for repair. The Grapin implementation records these marks in arrays indexed by vertex ID and scans all graph partitions to rebuild deletion work lists after each round. [Efficient Graph Data Access for Out-of-Memory GPU Streaming Graph Processing] Although the marks may cover only a small part of the graph, collecting them still examines unaffected vertices across the entire graph. We build a compact work list directly as vertices are marked.
+
+The GPU first initializes an empty work list $L_{\mathrm{del}}$ and examines the deleted edges. For each deleted edge $(u,v)$, it marks $v$ if its current result depends on the deleted edge. Only the thread that first marks $v$ atomically reserves the next slot and appends its ID to $L_{\mathrm{del}}$. The GPU then processes these initial vertices, scans their outgoing edges in $G_t$, and applies the same dependency check to each neighbor. Newly marked neighbors are appended to the same work list. Each subsequent round processes only the range appended in the preceding round, giving a breadth-first traversal of dependencies. When a round appends no new IDs, $L_{\mathrm{del}}$ contains all vertices marked for repair, which we denote by $A$. Its occupied slots are consecutive, each marked vertex appears once, and unaffected vertices occupy no slots. The GPU resets the stored and tentative results of these vertices to $\infty$ and transfers their IDs to the CPU. Reusing this work list directly avoids another graph-wide scan to collect $A$ and passes only $|A|$ IDs to CPU preparation.
+
+\textbf{2 Constructing the predecessor view.} A marked vertex may have an alternative path through an unaffected predecessor whose result has not changed. For example, after deleting $(u,v)$, a remaining edge $(x,v)$ may restore $v$ even though $x$ has no update to trigger further processing. Repair therefore requires the remaining incoming edges of the vertices in $A$:
+
+\begin{equation}
+I(A)=\{(u,v)\in E(G_{t+1}^{-E})\mid v\in A\}.
+\tag{5.1}
+\end{equation}
+
+The GPU supplies only the destination IDs in $A$. The CPU obtains their predecessors from the reverse index maintained in Section~4.2. The reverse index describes the incoming edges of vertices in $G_{t+1}^{-E}$ by combining base lists and signed delta records. For each $v\in A$, the CPU merges the two lists in source order and retains sources with positive remaining multiplicity. This constructs the current predecessor view without scanning the outgoing adjacency lists of all sources, confining predecessor discovery to the incoming records associated with $A$.
+
+For sufficiently large $A$, CPU workers partition the destinations in $A$ into disjoint groups and process these groups independently. Each worker first writes the merged predecessor lists to a private buffer for its group and records the number of retained predecessor IDs for each destination. A prefix sum over these list lengths determines destination offsets and assigns disjoint ranges in the final source array. Workers then copy their buffered predecessor IDs in parallel without synchronization on a shared append buffer. Buffering also avoids traversing the incoming base and delta records again after determining the list lengths: each destination's records are merged only once during construction.
+
+The resulting view stores each destination's predecessor IDs contiguously as an incoming list, with offsets delimiting the lists in the order of $A$. The CPU transfers these offsets and source IDs to the GPU, where a repair task can directly access all predecessors of its assigned destination. Vertex results remain on the GPU. If $M_A$ is the number of emitted predecessor entries, this representation occupies $O(|A|+M_A)$ space. Construction work is proportional to $|A|$ plus the base and delta records examined for these destinations. Thus, the affected set identified by GPU invalidation directly determines the predecessor data prepared by the CPU and transferred for repair.
+
+\textbf{3 Repairing vertex results.} Using the prepared incoming edges, the GPU repeatedly improves the result of each $v\in A$ with candidates derived from its predecessors. For SSSP, this update is:
+
+\begin{equation}
+d(v)\leftarrow\min\left\{d(v),
+\min_{(u,v)\in I(A)}[d(u)+w(u,v)]\right\}.
+\tag{5.2}
+\end{equation}
+
+The iteration continues until no result changes, with an empty predecessor set contributing $\infty$. A warp cooperatively scans each incoming list. Between rounds, the CPU checks whether the GPU recorded any result changes to determine whether repair has converged. Better results propagate through the incoming edges of $A$, updating affected vertices whenever a better valid candidate is found. After this process, the correct vertex results in $G_{t+1}^{-E}$ are restored, and vertices with no remaining path remain at $\infty$.
+
+The local Grapin implementation propagates deletion invalidation first, then restores vertex results after applying both deletions and insertions through a traversal initialized from all vertices. [Efficient Graph Data Access for Out-of-Memory GPU Streaming Graph Processing] By completing deletion repair over the incoming lists of $A$ before insertion processing begins, our system restores the correct vertex results in $G_{t+1}^{-E}$ at 3. Insertion repair can then start only from destinations whose results improve through inserted edges, avoiding the construction and initial processing of a work list covering all vertices.
+
+\subsubsection{Topology Publication and Insertion Propagation}
+\label{sec:insertion-propagation}
+
+
+\textbf{4 Publishing the updated graph.} Isolating updates to individual sources keeps descriptors for unchanged sources valid, enabling sparse publication. After deletion repair, the CPU applies insertions, updates the reverse index, and combines changed sources into $S=S^-\cup S^+$. Using Section~4.3's mechanism, it publishes final descriptors only for $S$ and repairs their cached lists where possible. Once publication completes, the GPU can traverse the final graph without a full descriptor reload.
+
+\textbf{5 Building the initial work list.} Even when inserted edges improve only a few destinations, collecting active vertices by scanning vertex marks across all partitions incurs work over unaffected vertices. As in 1, we construct a compact work list by appending vertex IDs when the corresponding state changes. After publication completes, GPU threads relax the inserted edges in parallel using atomic minimum updates. Each destination whose tentative result improves is appended at most once to the initial work list. Since 3 has already restored the results for the graph after deletion, these destinations suffice to initiate insertion repair. This avoids a graph-wide collection pass and confines initial adjacency traversal in 6 to vertices with improved results. Subsequent rounds use the same direct construction to keep the work localized throughout the iterations.
+
+\textbf{6 Propagating result improvements.} Algorithm~\ref{alg:insertion-propagation} details the propagation procedure invoked at the end of Algorithm~\ref{alg:process-batch}, taking the initial work list constructed in step~5 as input. For each vertex in the current work list, a GPU thread block checks whether its latest tentative result is better than its stored result. If so, it commits the improvement and examines the outgoing edges. We store adjacency chunks in pinned host memory mapped to the GPU. The block uses the published descriptor to read the vertex's contiguous adjacency list through zero-copy access. Whenever an edge improves its destination's tentative result, the destination is added to the next work list. An atomic minimum preserves the best concurrent update, and a per-vertex tag containing the batch and round admits each destination at most once per round. A later improvement may add it again in a subsequent round. Thus, successful result updates directly build the next work list, avoiding scans of unrelated vertices to reconstruct partition work lists.
+
+Compact work lists reduce traversal work, but coordinating their rounds can still impose overhead when only a few vertices remain active. In the local Grapin implementation, the CPU dispatches partition processing, rebuilds work lists, and checks partition activity to determine convergence. [Efficient Graph Data Access for Out-of-Memory GPU Streaming Graph Processing] We keep insertion propagation within a single cooperative GPU kernel. The GPU maintains the current and next work lists and uses grid-wide barriers to complete pending writes before exchanging the lists. It terminates when the next work list is empty. This combines scheduling driven by successful relaxations with GPU control of propagation rounds. It eliminates CPU work list orchestration, intermediate convergence checks, and repeated propagation launches between insertion rounds. The CPU waits for completion at the end of propagation.
+
+Let $X_k$ be the vertices whose results improve and whose outgoing edges are examined in round $k$. The edge work is
+
+\begin{equation}
+W_{\mathrm{expand}}=
+\sum_k\sum_{u\in X_k}\deg^+_{G_{t+1}^{+E}}(u).
+\tag{5.3}
+\end{equation}
+
+This excludes adjacency reads from vertices without improvements, reducing edge processing and requests to host memory. Repeated improvements can still cause repeated reads. Section 5.3 describes an optional distance ordering to reduce them.
+
+
+Algorithm~\ref{alg:process-batch} summarizes the batch workflow. Its final step invokes Algorithm~\ref{alg:insertion-propagation}, which executes all insertion propagation rounds within one cooperative GPU kernel.
+
+\begin{algorithm}[t]
+\caption{CPU--GPU cooperative batch processing.}
+\label{alg:process-batch}
+\small
+\begin{algorithmic}[1]
+\Require Graph $G_t$, vertex state, deletions $D_t$, insertions $I_t$
+\Ensure Updated graph $G_{t+1}^{+E}$ and repaired vertex results
+\State \textbf{CPU:} $P \gets \Call{GroupBySource}{D_t,I_t}$
+\Statex \textit{1. Dependency invalidation (GPU)}
+\State $L_{\mathrm{del}} \gets \Call{InvalidateAndAppend}{G_t,D_t}$
+\State $A \gets L_{\mathrm{del}}$ \Comment{Reuse discovered IDs}
+\State \Call{ResetAffectedResults}{$A$}
+\State Transfer affected vertex IDs $A$ to CPU
+\Statex \textit{2. Predecessor preparation (CPU)}
+\State \Call{ApplyDeletionsAndUpdateReverse}{$P$}
+\State $\mathcal{I}_A \gets \Call{MaterializeIncoming}{A}$
+\State Transfer incoming offsets and source IDs to GPU
+\Statex \textit{3. Deletion repair (GPU; CPU controls rounds)}
+\State \Call{RepairUntilUnchanged}{$A,\mathcal{I}_A$}
+\Statex \textit{4. Topology publication (CPU--GPU)}
+\State \textbf{CPU:} \Call{ApplyInsertionsAndUpdateReverse}{$P$}
+\State \textbf{CPU:} $S \gets S^- \cup S^+$ \Comment{Changed sources}
+\State Transfer final descriptor patches for $S$ to GPU
+\State \textbf{GPU:} \Call{PublishAndRepairCache}{$S$}
+\State Wait for publication to complete
+\Statex \textit{5--6. Insertion processing (GPU)}
+\State $L \gets \Call{RelaxInsertionsAndAppend}{I_t}$
+\State \Call{PropagateInsertions}{$G_{t+1}^{+E},L$}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[t]
+\caption{Insertion propagation in one cooperative GPU kernel.}
+\label{alg:insertion-propagation}
+\small
+\begin{algorithmic}[1]
+\Require Published graph $G_{t+1}^{+E}$, initial work list $L$, vertex state
+\Ensure Converged vertex results after insertion
+\While{$L \neq \emptyset$}
+    \State $L_{\mathrm{next}} \gets \emptyset$
+    \ForAll{$u \in L$ \textbf{in parallel}}
+        \If{\Call{CommitLatestImprovement}{$u$}}
+            \ForAll{outgoing edges $(u,v)$ in $G_{t+1}^{+E}$}
+                \If{\Call{AtomicRelax}{$u,v$} succeeds}
+                    \State \Call{AppendOnce}{$v,L_{\mathrm{next}}$}
+                \EndIf
+            \EndFor
+        \EndIf
+    \EndFor
+    \State \Call{GridSynchronize}{} \Comment{Complete pending writes}
+    \State \Call{Swap}{$L,L_{\mathrm{next}}$}
+\EndWhile
+\end{algorithmic}
+\end{algorithm}
+
+
+
+\begin{figure*}[t]
+\centering
+\fbox{\parbox[c][0.85in][c]{0.9\textwidth}{\centering Figure artwork to be added}}
+\caption{Processing an update batch in execution order: 1 dependency invalidation, 2 incoming-edge preparation, 3 result repair, 4 graph publication, 5 initial work list construction, and 6 insertion propagation. The CPU maintains topology and prepares incoming edges. Vertex results remain on the GPU. Deletion repair uses CPU-controlled rounds, while insertion propagation completes within one cooperative GPU kernel.}
+\label{fig:3}
+\end{figure*}
+
+
+
+\subsection{Adapting Cooperative Execution to Workload Cost}
+\label{sec:workload-cost}
+
+\textbf{Ordered propagation.} In large-diameter graphs such as road networks [EU, USA], an update may take many iterations to reach distant vertices. If every active vertex immediately propagates an improved result, it may trigger multiple redundant scans downstream. We therefore optionally prioritize better tentative results, allowing deferred vertices to receive further improvements before scanning their outgoing edges. During result propagation, the GPU assigns a pending vertex with tentative result $r$ to bucket $\lfloor r/\Delta\rfloor$ and processes the smallest nonempty bucket, where $\Delta$ is the bucket width. Under this scheme, the GPU scans outgoing edges only for selected vertices and retains the others for later rounds. This reduces the propagation of intermediate results that may later be superseded by better results, saving redundant downstream edge scans and memory accesses.
+
+\textbf{Shared batch preparation.} For large batches, e.g., million-scale edge updates, maintaining the graph structure can require substantial CPU work. Keeping separate copies of update information for adjacency modification and reverse-index maintenance, then sorting changed vertices again for GPU publication, adds overhead across the batch. We therefore summarize updates to edges sharing the same source vertex and reuse this information throughout maintenance. Within each phase, the CPU determines which edges change and the resulting adjacency size, then reuses these results to allocate space and modify the adjacency list. The effective edge changes are passed directly to reverse-index maintenance without making another copy. The source order established during preparation also allows the changed-vertex lists from both phases to be merged for publication without another sort. Reusing the update information and its existing order reduces repeated preparation, copying, and sorting as the batch grows.

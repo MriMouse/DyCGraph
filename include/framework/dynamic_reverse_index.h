@@ -9,6 +9,7 @@
 #include <limits>
 #include <memory>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -214,6 +215,13 @@ public:
         MergeIncoming(dst, visitor, nullptr);
     }
 
+    // Returning false stops the row immediately (including its delta merge).
+    // Useful for witness/existence queries on very high-indegree vertices.
+    template <typename Visitor>
+    void ForEachIncomingWhile(index_t dst, Visitor visitor) const {
+        MergeIncoming(dst, visitor, nullptr);
+    }
+
     MaterializeMetrics MaterializeIncoming(
                              const std::vector<index_t> &destinations,
                              std::vector<uint64_t> &offsets,
@@ -334,7 +342,13 @@ private:
             if (delta_pos < sorted_delta.size() && sorted_delta[delta_pos].source == src) {
                 count += sorted_delta[delta_pos++].count;
             }
-            if (count > 0) visitor(src);
+            if (count > 0) {
+                if constexpr (std::is_same<decltype(visitor(src)), bool>::value) {
+                    if (!visitor(src)) return;
+                } else {
+                    visitor(src);
+                }
+            }
         }
     }
 

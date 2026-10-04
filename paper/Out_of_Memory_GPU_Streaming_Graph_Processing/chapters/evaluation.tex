@@ -1,0 +1,115 @@
+\section{Evaluation}
+\subsection{Experiment Setup}
+% 实验环境
+\subsubsection{Experimental Environment} We implement our system in C++ and CUDA and evaluate it on a server with two Intel Xeon Gold 5218R processors (80 physical cores in total) and an NVIDIA V100 GPU. Each CPU has a base frequency of 2.10 GHz. The V100 has 80 streaming multiprocessors (5,120 CUDA cores) and 16 GB of global memory. The GPU connects to the host via PCIe 3.0 $\times$16, with a theoretical peak bandwidth of approximately 16 GB/s per direction. We compile the code with NVIDIA NVCC 13.0 and GCC 13.3.0 using the \texttt{-O3} optimization flag.  % 这块软硬件环境，后面需要和绍炎核对一下。
+% 数据集
+\subsubsection{Datasets} % 数据集都是从哪下载的，需要引用一下地址
+We evaluate CoIncGraph on six real-world graphs whose statistics are summarized in Table~\ref{tab:datasets}. OK~\cite{OKFS}, WK~\cite{WK}, TW~\cite{TW}, and FS~\cite{OKFS} are social networks with power-law degree distributions, whereas EU and USA are road networks with large diameters. Following Grapin and GraphBolt~\cite{2025-Grapin,2019-GraphBolt}, we uniformly sample edges without replacement and assign half to insertions and half to deletions. We remove the insertion edges from the original graph to form the initial graph $G_0$, then randomly interleave the updates and partition them into ten equal-sized batches, each containing equal numbers of insertions and deletions.
+% Table~\ref{tab:datasets} presents the six real-world graph datasets used in our study. OK, WK, TW, and FS are social networks—characterized by power-law distributions—while EU and USA are road networks, which possess larger diameters. Our streaming workload construction follows the approach used in [Grapin, Graphbolt]. First, we perform uniform sampling of edges from the original graph without replacement; half of the sampled edges are designated for insertion and the other half for deletion. The edges designated for insertion are excluded from the original graph to form the initial graph, $G_0$. The resulting update operations are randomly interleaved and partitioned into ten consecutive batches, with each batch containing an equal number of insertion and deletion operations. This method effectively preserves the edge distribution characteristics of the datasets.
+
+% 这块后面可以看看要不要加直径（Diameter） 对应平均度，针对有向和无向图有区别
+\begin{table}[t]
+\centering
+\caption{Dataset used for the experiment.}
+\label{tab:datasets}
+\footnotesize 
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{ccccc}
+\hline
+Graph & Vertices & Edges & $\overline{Degree}$ & Diameter \\
+\hline
+Orkut (OK)\ \cite{OKFS} & 3,072,441 & 117,185,083 & 76.28 & 9 \\
+Wikipedia (WK)\ \cite{WK} & 13,593,032 & 437,217,424 & 32.16 & 10  \\
+Twitter-2009 (TW)\ \cite{TW} & 52,579,682 & 1,963,263,821 & 37.34 & 18 \\
+Friendster (FS)\ \cite{OKFS} & 65,608,366 & 1,806,067,135 & 55.06  & 32 \\
+Europe OSM (EU)\ \cite{eu} & 50,912,018 & 54,054,660 & 2.12  & 30,102 \\
+USA Road (USA)\ \cite{usa} & 23,947,347 & 28,854,312 & 2.41 & 8,440 \\
+\hline
+\end{tabular}
+\end{table}
+
+% 对比基线
+\subsubsection{Baselines} We compare CoIncGraph with three state-of-the-art systems: Ingress, SHGraph, and Grapin. SHGraph~\cite{2020-SHGraph}, Gunrock's dynamic graph module, uses per-vertex Slab Hash tables to support parallel graph updates and queries in GPU memory. Ingress~\cite{2021-Ingress} performs CPU-based incremental graph processing and automatically selects a memoization policy (memoization-free, memoization-path, memoization-vertex, or memoization-edge) according to the algorithm properties, so that only the memoized states required by the algorithm are maintained and revised. Grapin~\cite{2025-Grapin} supports CPU--GPU cooperative out-of-memory (OOM) streaming graph processing by maintaining graph topology in host memory and executing incremental computation on the GPU. It combines GPU hot-subgraph caching with optimized zero-copy access to reduce CPU--GPU data movement.
+% 后面可以考虑，看要不要评估方法的简单说明，大概一段
+\subsubsection{Methodology} We evaluate all systems on [graph algorithms] using identical initial graphs and update sequences. We measure end-to-end processing time and update throughput (processed update edges per second), including graph updates, incremental computation, and CPU--GPU transfers where applicable, but excluding initial graph loading and preprocessing. Speedup is the ratio of baseline processing time to that of CoIncGraph. We report the arithmetic mean of five independent runs, each starting from the same initial graph. We also examine sensitivity to [batch size and other parameters] and quantify individual optimizations through ablation studies.
+% \subsubsection{Baselines} 
+% We compare our system with three state-of-the-art systems, covering GPU-based in-memory dynamic graph processing, CPU-based incremental processing, and CPU-GPU collaborative OOM streaming graph processing.
+
+% \noindent\textbf{Gunrock dynamic (SHGraph).}
+% Gunrock's dynamic graph module~\cite{2020-SHGraph}, referred to as SHGraph, represents GPU-resident dynamic graph processing. It uses per-vertex Slab Hash tables to support efficient parallel graph updates and queries within GPU memory.
+
+% \noindent\textbf{GraphBolt.}
+% GraphBolt~\cite{2019-GraphBolt} represents CPU-based incremental streaming graph processing. It tracks dependencies among intermediate values across iterations to propagate graph updates while reusing unaffected computation and preserving bulk synchronous parallel (BSP) semantics.
+
+% \noindent\textbf{Grapin.}
+% Grapin~\cite{2025-Grapin} represents CPU--GPU cooperative out-of-memory streaming graph processing, maintaining graph topology in host memory and performing incremental computation on the GPU. It combines GPU hot-subgraph caching with optimized zero-copy access to reduce host-to-device data transfers.
+
+\subsection{Overall Performance}
+\label{sec:overall}
+% 这部分撰写整体的实验性能
+% 数据来源：paper/evaluation/data/performmance.csv（每个配置2次重复取均值，10个batch累计时间）。
+% 加速比统计口径：几何平均（geometric mean）。
+% Ingress计时窗口为reset+compute，不含其全图拓扑重建（比current/Grapin窗口更窄，对Ingress有利，因此加速比偏保守）；TW/FS的Ingress为单次运行结果，需补齐第二次。
+% EU、USA两个路网图尚未纳入本表，后续补齐后需同步更新Table与文中的统计数字。
+
+\begin{table*}[t]
+\centering
+\caption{Execution time (in seconds) across ten batches of 1K, 10K, and 100K edge updates. OOM indicates running out of GPU memory; the best result in each column is in bold.}
+\label{tab:overall}
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{ll|cccc|cccc|cccc}
+\hline
+ & & \multicolumn{4}{c|}{Batch size = 1K} & \multicolumn{4}{c|}{Batch size = 10K} & \multicolumn{4}{c}{Batch size = 100K} \\
+Alg. & System & OK & WK & TW & FS & OK & WK & TW & FS & OK & WK & TW & FS \\
+\hline
+\multirow{4}{*}{BFS}
+& Ingress    & 9.60 & 170 & 750 & 1350 & 11.1 & 183 & 820 & 1361 & 12.7 & 186 & 866 & 1360 \\
+& SHGraph    & 0.62 & OOM & OOM & OOM & 0.58 & OOM & OOM & OOM & 0.67 & OOM & OOM & OOM \\
+& Grapin     & 1.07 & 2.78 & 13.2 & 14.4 & 1.37 & 3.21 & 13.8 & 14.5 & 2.44 & 4.58 & 16.2 & 16.0 \\
+& CoIncGraph & \textbf{0.034} & \textbf{0.10} & \textbf{1.05} & \textbf{1.13} & \textbf{0.079} & \textbf{0.15} & \textbf{1.73} & \textbf{1.33} & \textbf{0.63} & \textbf{1.08} & \textbf{4.25} & \textbf{2.78} \\
+\hline
+\multirow{4}{*}{SSSP}
+& Ingress    & 10.2 & 194 & 764 & 1382 & 11.7 & 208 & 803 & 1402 & 13.5 & 208 & 989 & 1445 \\
+& SHGraph    & 0.34 & OOM & OOM & OOM & 0.32 & OOM & OOM & OOM & \textbf{0.24} & OOM & OOM & OOM \\
+& Grapin     & 1.09 & 2.83 & 11.8 & 13.4 & 1.64 & 3.54 & 12.5 & 13.9 & 2.80 & 5.24 & 15.2 & 15.5 \\
+& CoIncGraph & \textbf{0.036} & \textbf{0.098} & \textbf{1.25} & \textbf{1.26} & \textbf{0.097} & \textbf{0.17} & \textbf{2.00} & \textbf{1.46} & 0.57 & \textbf{0.96} & \textbf{4.66} & \textbf{3.15} \\
+\hline
+\multirow{4}{*}{CC}
+& Ingress    & 12.8 & 113 & 591 & 1067 & 12.8 & 119 & 627 & 1105 & 13.1 & 140 & 754 & 1122 \\
+& SHGraph    & 0.78 & OOM & OOM & OOM & 0.77 & OOM & OOM & OOM & 0.71 & OOM & OOM & OOM \\
+& Grapin     & 1.24 & 2.77 & 12.3 & 12.8 & 1.53 & 3.22 & 12.6 & 13.1 & 1.95 & 5.08 & 14.5 & 14.0 \\
+& CoIncGraph & \textbf{0.036} & \textbf{0.78} & \textbf{3.16} & \textbf{3.55} & \textbf{0.079} & \textbf{1.31} & \textbf{4.21} & \textbf{4.65} & \textbf{0.53} & \textbf{3.38} & \textbf{8.57} & \textbf{10.8} \\
+\hline
+\multirow{4}{*}{PR}
+& Ingress    & 7.17 & 64.8 & 310 & 107 & 9.01 & 72.2 & 319 & 137 & 11.5 & 97.5 & 374 & 180 \\
+& SHGraph    & 4.51 & OOM & OOM & OOM & 4.49 & OOM & OOM & OOM & 4.51 & OOM & OOM & OOM \\
+& Grapin     & 4.64 & 21.2 & 78.9 & 27.9 & 5.24 & 22.6 & 83.7 & 32.0 & 6.41 & 25.5 & 99.6 & 40.5 \\
+& CoIncGraph & \textbf{0.14} & \textbf{2.21} & \textbf{15.9} & \textbf{3.17} & \textbf{0.39} & \textbf{6.36} & \textbf{35.3} & \textbf{8.68} & \textbf{1.12} & \textbf{12.2} & \textbf{90.0} & \textbf{30.0} \\
+\hline
+\end{tabular}
+\end{table*}
+
+We use ten consecutive batches of 1K, 10K, and 100K edge updates to evaluate the efficiency of CoIncGraph, as shown in Table~\ref{tab:overall}. CoIncGraph achieves the shortest execution time in 47 of the 48 cases; the only exception is SSSP on OK with 100K updates per batch, where the in-memory SHGraph is faster.
+
+\textbf{Comparison with CPU-based systems.} Benefiting from GPU parallelism and compact incremental computation, CoIncGraph outperforms Ingress in all 48 cases, achieving speedups ranging from 4.2$\times$ to 1979.0$\times$ (geometric mean 127.8$\times$). Note that the reported time of Ingress excludes its topology maintenance, so these speedups are conservative.  % 若后续Ingress计入拓扑维护时间，需删除本句并更新数字
+Although Ingress also confines computation to the affected states through memoization, it revises the memoized states with limited CPU parallelism and memory bandwidth, which cannot match the massive parallelism of the GPU. The speedup is most significant for BFS and SSSP (geometric mean 387.4$\times$ and 384.9$\times$), followed by CC (124.5$\times$). For these algorithms, Ingress maintains path or vertex dependencies on the CPU, and the revision of invalidated results requires multiple rounds of traversal over the host-resident graph. PR achieves a lower speedup (geometric mean 14.4$\times$), as Ingress executes it with memoization-free, delta-based accumulation, which propagates only the changes caused by updates without maintaining any dependency.  % 请核对Ingress中BFS/SSSP/CC实际采用的memoization策略
+Moreover, the advantage of CoIncGraph grows with graph size. On the two small graphs, CoIncGraph achieves a geometric-mean speedup of 104.5$\times$, while on the two billion-scale graphs, it achieves 156.2$\times$, where the larger affected regions expose more parallelism to the GPU.  % 该解释需核实 As the batch size increases from 1K to 100K, the geometric-mean speedup decreases from 260.3$\times$ to 52.5$\times$, since the execution time of CoIncGraph grows with the affected region, whereas that of Ingress increases by only 1.0$\times$--1.7$\times$ and is thus dominated by costs that are insensitive to the number of updates.  % 原因需结合Ingress的阶段时间核实
+
+\textbf{Comparison with GPU in-memory systems.} SHGraph keeps the entire graph and its per-vertex slab hash tables in device memory, and thus runs out of memory on WK, TW, and FS. In contrast, CoIncGraph maintains graph topology in host memory and succeeds in all cases. On OK, which fits in GPU memory, CoIncGraph outperforms SHGraph in 11 of the 12 cases with speedups of up to 32.86$\times$ (geometric mean 5.53$\times$). The advantage is most pronounced for small batches: with 1K updates per batch, CoIncGraph is 9.44$\times$ to 32.86$\times$ faster than SHGraph. The execution time of SHGraph remains nearly constant across batch sizes (e.g., 4.49--4.51\,s for PR), indicating that its cost is dominated by graph-wide processing rather than by the updates themselves, whereas CoIncGraph confines computation to the affected vertices.  % 如SHGraph实际为每批全图重算，可直接写明“recomputes from scratch after each batch”
+As the batch size increases to 100K, the affected region expands, and CoIncGraph has to fetch more uncached adjacency from host memory over PCIe, whose bandwidth is more than an order of magnitude lower than that of the GPU's on-board memory. Consequently, the speedup narrows to 1.06$\times$--4.02$\times$ for BFS, CC, and PR, and SHGraph is 2.38$\times$ faster than CoIncGraph for SSSP. This is expected, as SHGraph represents an in-memory upper bound that avoids CPU--GPU data movement entirely but cannot scale beyond GPU memory capacity.
+
+\textbf{Comparison with CPU--GPU out-of-memory systems.} CoIncGraph outperforms Grapin in all 48 cases, achieving speedups ranging from 1.11$\times$ to 34.30$\times$ (geometric mean 6.50$\times$). Grapin merges the recovery of invalidated vertices into insertion processing, which reactivates all vertices and rebuilds worklists over the entire graph, and its shared-array topology maintenance may relocate unrelated adjacency and refresh their GPU descriptors. As a result, the execution time of Grapin is largely insensitive to the number of updates: increasing the batch size from 1K to 100K (i.e., $100\times$ more updates) raises its execution time by only 1.10$\times$--2.57$\times$. In contrast, CoIncGraph confines topology publication to changed sources (Section~\ref{sec:graph-organization}) and restricts deletion repair and insertion propagation to affected vertices (Section~\ref{sec:incremental-computation}), so its cost follows the affected region rather than the graph size.
+
+\textit{Impact of batch size.} The speedup over Grapin decreases with the batch size, with geometric means of 12.35$\times$, 7.54$\times$, and 2.96$\times$ for 1K, 10K, and 100K updates, respectively. Small batches affect only a small portion of the graph, so the graph-wide work of Grapin dominates its execution time, while CoIncGraph processes only a few affected vertices. Larger batches enlarge the affected region, increasing the incoming edges that the CPU prepares and transfers for deletion repair and the outgoing adjacency traversed during insertion propagation. Nevertheless, CoIncGraph remains faster than Grapin in all 16 cases with 100K updates (1.11$\times$--5.76$\times$).
+
+\textit{Impact of algorithms.} BFS and SSSP achieve the highest speedups (geometric mean 10.39$\times$ and 9.80$\times$), compared with 3.77$\times$ for CC and 4.66$\times$ for PR. For BFS and SSSP, a deleted edge invalidates only the vertices whose shortest paths pass through it, and inserted edges improve only a few destinations, so phase decoupling keeps both deletion repair and insertion propagation compact. In CC, a label is shared by all vertices in a component, so deleting an edge on the dependency path of a label may invalidate a large portion of the component, enlarging the affected set and its incoming edges.  % CC/PR的原因分析需要结合profiling数据再核实（如受影响顶点数|A|与I(A)规模）
+PR is an accumulative algorithm in which each update perturbs the ranks of all reachable downstream vertices, and propagation continues until the residuals fall below the convergence threshold. The affected region therefore spreads over a large fraction of the graph, especially for large batches on TW, where the speedup drops to 1.11$\times$.
+
+\textit{Impact of graph size.} The speedup is higher on the two smaller graphs (geometric mean 13.37$\times$ on OK and 6.65$\times$ on WK) than on the two billion-scale graphs (4.04$\times$ on TW and 4.98$\times$ on FS). On larger graphs, the GPU hot-subgraph cache covers a smaller fraction of the adjacency, so a larger share of edge accesses is served from host memory through zero-copy access. This PCIe-bound access cost is incurred by both systems and thus dilutes the reduction in redundant computation achieved by CoIncGraph.  % 该解释需要结合cache命中率/传输量数据核实
+
+\subsection{Optimization Analysis}
+% 这部分撰写每个优化点的带来的性能提升
+
+\subsection{Scalability and Sensitivity Analysis}
+% 这部分分析系统的可扩展性和一些参数的灵敏度分析实验结果

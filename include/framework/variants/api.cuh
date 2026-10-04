@@ -29,11 +29,23 @@ namespace sepgraph
 
             static constexpr bool kSupportsGpuDeletionRepair = false;
             static constexpr bool kComponentLabels = false;
+            // Multi-source minimum-ID propagation seeds each vertex with its ID.
+            static constexpr bool kVertexSeeds = false;
+            static constexpr bool kRootedDeletionWitness = false;
             static constexpr bool kSignedResidual = false;
             static bool NormalizeUndirectedInput() { return false; }
 
             __host__ __device__ static TWeight DeletionEdgeWeight(index_t, index_t) {
                 return TWeight(1);
+            }
+
+            // Incremental dependency predicate; the default is the SSSP witness rule.
+            __host__ __device__ static bool IsDeletionDependency(
+                    index_t src, index_t dst, TValue source, TValue destination,
+                    uint64_t candidate, index_t parent, bool parent_tight) {
+                return parent == src ||
+                    (source != static_cast<TValue>(UINT32_MAX) &&
+                     candidate == static_cast<uint64_t>(destination) && !parent_tight);
             }
 
             // [ACCUMULATE] [CONTINUE/BREAK]

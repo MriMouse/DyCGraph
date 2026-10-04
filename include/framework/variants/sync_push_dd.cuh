@@ -730,6 +730,7 @@ namespace sepgraph
                             }
                             switch (LB)
                             {
+                                case LoadBalancing::NONE:
                                 case LoadBalancing::COARSE_GRAINED:
                                         groute::dev::CTAWorkSchedulerNew<Payload<TBuffer>, groute::dev::LB_COARSE_GRAINED>::template
                                         schedule(np_local, push_functor,zcflag);
@@ -1448,6 +1449,7 @@ namespace sepgraph
 
                     switch (LB)
                     {
+                        case LoadBalancing::NONE:
                         case LoadBalancing::COARSE_GRAINED:
 
                                 groute::dev::CTAWorkSchedulerNew<Payload<TBuffer>, groute::dev::LB_COARSE_GRAINED>::template

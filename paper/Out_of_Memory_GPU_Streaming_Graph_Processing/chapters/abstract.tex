@@ -1,0 +1,18 @@
+\begin{abstract}
+% 第一句点出流图处理的重要
+% 第二句已有研究存在的问题
+% 我们怎么做，详细地包括哪些优化 （按照3-5章来总结）
+% 实验结果表明...
+Streaming graph processing is essential for applications such as fraud detection and network monitoring, where relationships evolve continuously. When graphs exceed GPU memory, maintaining topology and updating analytical results efficiently requires minimizing redundant computation and CPU--GPU data movement. We present CoIncGraph, a CPU--GPU cooperative system for incremental processing of out-of-memory streaming graphs. First, a heterogeneous source-isolated graph organization exploits topological locality through independently allocated adjacency blocks and a unified change view, limiting data movement and GPU index maintenance to changed sources. Second, CPU--GPU collaborative compact incremental computation improves concurrency by overlapping CPU preparation of affected incoming adjacency with GPU deletion repair, restricting computation and data transfers to affected vertices. Third, workload-specific optimizations complete deletion repair before insertion processing, seed propagation only from vertices improved by inserted edges, and construct compact worklists as improvements propagate, avoiding graph-wide worklist construction and unnecessary adjacency traversal. Extensive experiments show that CoIncGraph outperforms Ingress, SHGraph, and Grapin across CPU-based, GPU in-memory, and CPU--GPU out-of-memory graph processing, respectively.  %最后一句后面还需要加上对应的加速比情况，后面再修改
+% Streaming graph processing is essential for applications such as fraud detection and network monitoring, where relationships evolve continuously. When such graphs exceed GPU memory, the key challenge is to maintain their changing topology and update analysis results while minimizing redundant computation and CPU--GPU data transfers. To address this challenge, we present CoIncGraph, a system for CPU--GPU cooperative incremental graph processing.
+% Specifically, we first introduce an update-friendly graph layout that isolates adjacency storage by source vertex and coordinates topology maintenance through a unified change view, reducing unnecessary data movement and GPU index updates.
+% Then, we develop a CPU-GPU collaborative deletion repair scheme that confines the repair workload to affected vertices, with the CPU preparing their incoming edges and the GPU restoring their results, reducing redundant computation and data transfers.
+% Finally, by completing deletion repair before insertion processing, we initiate insertion propagation only from vertices improved by inserted edges and directly build compact worklists as improvements propagate, avoiding graph-wide worklist construction and unnecessary adjacency traversal.
+% 
+
+% 后面接对应的优化点 （最好分三点）.
+\end{abstract}
+\begin{IEEEkeywords}
+Streaming graph processing, incremental graph computation, CPU--GPU cooperative processing, out-of-core graph processing % 这个关键词后面再看看怎么修改一下
+\end{IEEEkeywords}
+

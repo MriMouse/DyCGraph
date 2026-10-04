@@ -14,6 +14,8 @@ logs/
 run/
 .vscode/
 data/
+!paper/evaluation/data/
+paper/evaluation/raw/
 3-party-project/
 scripts/temp_scripts/
 !scripts/run_i17b_reverse_probe.py
@@ -30,3 +32,16 @@ scripts/temp_scripts/
 !scripts/run_i19_cpu.py
 
 !scripts/run_bfs_mode_screen.py
+
+# Reproducible, isolated motivation experiment tooling.
+!scripts/run_motivation_sssp.py
+!scripts/motivation/
+scripts/motivation/*
+!scripts/motivation/prepare.py
+!scripts/motivation/meter.h
+!scripts/run_motivation_activity.py
+
+# Reproducible road and communication supplementary experiments.
+!scripts/run_road_communication_20261003.py
+!scripts/summarize_road_communication.py
+!scripts/README_road_communication_20261003.md

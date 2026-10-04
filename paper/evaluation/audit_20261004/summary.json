@@ -1,0 +1,19 @@
+{
+  "runs": 192,
+  "performance_rows": 48,
+  "timer_values": 1920,
+  "issues": [
+    "CC_OK_10k_original_r2: batches.json missing (log still audited)"
+  ],
+  "statuses": {
+    "ok": 192
+  },
+  "pr_limited_batches": {
+    "current": 1,
+    "original": 0
+  },
+  "pr_limited_initial": {
+    "current": 12,
+    "original": 12
+  }
+}

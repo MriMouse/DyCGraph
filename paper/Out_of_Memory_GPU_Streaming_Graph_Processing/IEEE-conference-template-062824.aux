@@ -1,0 +1,167 @@
+\relax 
+\citation{2019-GraphBolt}
+\citation{2021-Ingress}
+\citation{2020-SHGraph}
+\citation{2025-Grapin}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{}\protected@file@percent }
+\citation{2013-Ligra}
+\citation{2021-Terrace}
+\citation{2024-Spruce}
+\citation{2024-LSMGraph}
+\citation{2017-GPMA}
+\citation{2018-pcsr}
+\citation{2017-KickStarter}
+\citation{2019-GraphBolt}
+\citation{2020-Subway}
+\citation{2020-EMOGI}
+\citation{2025-Grapin}
+\citation{2025-Grapin}
+\citation{2025-Grapin}
+\@writefile{toc}{\contentsline {section}{\numberline {II}Background and Motivation}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-A}}Background}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-A}1}Streaming Graph Processing}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-A}2}Streaming Graph Representation}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-A}3}Incremental Processing}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {II-A}4}Out-of-Memory CPU--GPU Graph Processing}{2}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-B}}Motivation}{2}{}\protected@file@percent }
+\newlabel{sec:motivation}{{\mbox  {II-B}}{2}{}{}{}}
+\citation{2025-Grapin}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces PMA-based adjacency maintenance and incremental result repair. (a)--(b) An edge update transforms $G_t$ into $G_{t+1}$ and propagates its effect to dependent vertices. (c) In the PMA, local shifts may change the indices of subsequent adjacency entries; insufficient local space triggers expansion, and density violations trigger rebalancing over a larger range. (d) The corresponding vertex results and dependencies are repaired to obtain the state for $G_{t+1}$.}}{3}{}\protected@file@percent }
+\newlabel{fig:increment-compute}{{1}{3}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Per-batch statistics of SSSP (100K-edge batches, averaged over ten batches). Upd.: sources touched by the batch; Desc.: descriptor data transferred to the GPU; Init.\ WL: size of the initial insertion worklist.}}{3}{}\protected@file@percent }
+\newlabel{tab:motivation}{{I}{3}{}{}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {III}design of CoIncGraph}{3}{}\protected@file@percent }
+\newlabel{sec:design}{{III}{3}{}{}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-A}}Heterogeneous Source-Isolated Graph Organization}{3}{}\protected@file@percent }
+\newlabel{sec:graph-organization}{{\mbox  {III-A}}{3}{}{}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces The Overview of CoIncGraph System.}}{4}{}\protected@file@percent }
+\newlabel{fig:1}{{2}{4}{}{}{}}
+\newlabel{sec:source-layout}{{\mbox  {III-A}1}{4}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-A}1}Source-Isolated Adjacency Blocks}{4}{}\protected@file@percent }
+\newlabel{sec:change-view}{{\mbox  {III-A}2}{4}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-A}2}Unified Change View}{4}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Source-Isolated Adjacency Blocks and Unified Change View.}}{4}{}\protected@file@percent }
+\newlabel{fig:view}{{3}{4}{}{}{}}
+\newlabel{sec:view-maintenance}{{\mbox  {III-A}3}{4}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-A}3}Coordinated View Maintenance}{4}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}CPU-GPU Collaborative Compact Computation}{5}{}\protected@file@percent }
+\newlabel{sec:incremental-computation}{{\mbox  {III-B}}{5}{}{}{}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces CPU--GPU cooperative processing of an update batch.}}{5}{}\protected@file@percent }
+\newlabel{alg:process-batch}{{1}{5}{}{}{}}
+\newlabel{ln:group}{{1}{5}{}{}{}}
+\newlabel{ln:inv}{{2}{5}{}{}{}}
+\newlabel{ln:reset}{{3}{5}{}{}{}}
+\newlabel{ln:applydel}{{4}{5}{}{}{}}
+\newlabel{ln:incoming}{{5}{5}{}{}{}}
+\newlabel{ln:repair-begin}{{6}{5}{}{}{}}
+\newlabel{ln:repair-end}{{9}{5}{}{}{}}
+\newlabel{ln:applyins}{{10}{5}{}{}{}}
+\newlabel{ln:publish}{{11}{5}{}{}{}}
+\newlabel{ln:seed}{{12}{5}{}{}{}}
+\newlabel{ln:prop-begin}{{13}{5}{}{}{}}
+\newlabel{ln:commit}{{16}{5}{}{}{}}
+\newlabel{ln:relax}{{18}{5}{}{}{}}
+\newlabel{ln:append}{{19}{5}{}{}{}}
+\newlabel{ln:prop-end}{{20}{5}{}{}{}}
+\newlabel{sec:deletion-repair}{{\mbox  {III-B}1}{5}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}1}Collaborative Deletion Repair}{5}{}\protected@file@percent }
+\newlabel{eq:pull}{{2}{6}{}{}{}}
+\newlabel{sec:insertion-propagation}{{\mbox  {III-B}2}{6}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}2}Collaborative Insertion Propagation}{6}{}\protected@file@percent }
+\citation{OKFS}
+\citation{WK}
+\citation{TW}
+\citation{OKFS}
+\citation{2025-Grapin}
+\citation{2019-GraphBolt}
+\citation{OKFS}
+\citation{WK}
+\citation{TW}
+\citation{OKFS}
+\citation{eu}
+\citation{usa}
+\citation{2020-SHGraph}
+\citation{2021-Ingress}
+\citation{2025-Grapin}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Dataset used for the experiment.}}{7}{}\protected@file@percent }
+\newlabel{tab:datasets}{{II}{7}{}{}{}}
+\newlabel{sec:ordered-propagation}{{\mbox  {III-B}3}{7}{}{}{}}
+\newlabel{sec:workload-cost}{{\mbox  {III-B}3}{7}{}{}{}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-B}3}Ordered Propagation}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Evaluation}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Experiment Setup}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-A}1}Experimental Environment}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-A}2}Datasets}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-A}3}Baselines}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-A}4}Methodology}{7}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Overall Performance}{7}{}\protected@file@percent }
+\newlabel{sec:overall}{{\mbox  {IV-B}}{7}{}{}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Execution time (in seconds) across ten batches of 1K, 10K, and 100K edge updates. OOM indicates running out of GPU memory; the best result in each column is in bold.}}{8}{}\protected@file@percent }
+\newlabel{tab:overall}{{III}{8}{}{}{}}
+\citation{2022-Sortledton}
+\citation{2024-Spruce}
+\citation{2025-DCSR}
+\citation{2025-Bubble}
+\citation{2024-LSMGraph}
+\citation{2021-RisGraph}
+\citation{2017-KickStarter}
+\citation{2019-GraphBolt}
+\citation{2021-DZiG}
+\citation{2021-Tripoline}
+\citation{2023-CommonGraph}
+\citation{2024-IncBoost}
+\citation{2016-Gunrock}
+\citation{2020-Subway}
+\citation{2020-EMOGI}
+\citation{2023-HyTGraph}
+\citation{2024-CGgraph}
+\citation{2017-GPMA}
+\citation{2018-Hornet}
+\citation{2018-faimGraph}
+\citation{2025-GASgraph}
+\citation{2025-Grapin}
+\citation{2025-CGCGraph}
+\citation{2026-POEGA}
+\bibstyle{IEEEtran}
+\bibdata{reference}
+\bibcite{2019-GraphBolt}{1}
+\bibcite{2021-Ingress}{2}
+\bibcite{2020-SHGraph}{3}
+\bibcite{2025-Grapin}{4}
+\bibcite{2013-Ligra}{5}
+\bibcite{2021-Terrace}{6}
+\bibcite{2024-Spruce}{7}
+\bibcite{2024-LSMGraph}{8}
+\bibcite{2017-GPMA}{9}
+\bibcite{2017-KickStarter}{10}
+\bibcite{2020-Subway}{11}
+\bibcite{2020-EMOGI}{12}
+\bibcite{OKFS}{13}
+\bibcite{WK}{14}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Optimization Analysis}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}Scalability and Sensitivity Analysis}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Related Work}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Dynamic Graph Processing on CPUs}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Dynamic Graph Processing on GPUs}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Conclusion}{9}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{References}{9}{}\protected@file@percent }
+\bibcite{TW}{15}
+\bibcite{eu}{16}
+\bibcite{usa}{17}
+\bibcite{2022-Sortledton}{18}
+\bibcite{2025-DCSR}{19}
+\bibcite{2025-Bubble}{20}
+\bibcite{2021-RisGraph}{21}
+\bibcite{2021-DZiG}{22}
+\bibcite{2021-Tripoline}{23}
+\bibcite{2023-CommonGraph}{24}
+\bibcite{2024-IncBoost}{25}
+\bibcite{2016-Gunrock}{26}
+\bibcite{2023-HyTGraph}{27}
+\bibcite{2024-CGgraph}{28}
+\bibcite{2018-Hornet}{29}
+\bibcite{2018-faimGraph}{30}
+\bibcite{2025-GASgraph}{31}
+\bibcite{2025-CGCGraph}{32}
+\bibcite{2026-POEGA}{33}
+\gdef \@abspage@last{10}

@@ -24,6 +24,7 @@
 #include <framework/variants/driver.cuh>
 #include <framework/hybrid_policy.h>
 #include <framework/dynamic_reverse_index.h>
+#include <framework/directed_label_witness.h>
 #include <framework/publication_sources.h>
 #include <framework/dual_domain_event_runtime.h>
 #include <framework/topology_replay.h>
@@ -163,6 +164,25 @@ namespace sepgraph {
                     parents[v] = UINT32_MAX;
                     affected.append(v);
                 }
+            }
+        }
+
+        template<class Edge, class Value>
+        __global__ void MarkCcDeletionCandidates(const Edge* edges, uint32_t start,
+                uint32_t count, const Value* labels, uint8_t* excluded) {
+            for (uint32_t i = TID_1D; i < count; i += TOTAL_THREADS_1D) {
+                const auto edge = edges[start + i];
+                excluded[i] = edge.u == edge.v || labels[edge.u] != labels[edge.v] ||
+                    labels[edge.v] == edge.v;
+            }
+        }
+
+        template<class Value>
+        __global__ void MarkCcWitnessAffected(const index_t* affected, uint32_t count,
+                Value* parents, bool* reset) {
+            for (uint32_t i = TID_1D; i < count; i += TOTAL_THREADS_1D) {
+                parents[affected[i]] = UINT32_MAX;
+                reset[affected[i]] = true;
             }
         }
 
@@ -783,10 +803,7 @@ namespace sepgraph {
             runtime::DynamicReverseIndex m_reverse_index;
             std::vector<uint64_t> m_gpu_repair_incoming_offsets;
             std::vector<index_t> m_gpu_repair_incoming_sources;
-            uint64_t *m_device_gpu_repair_offsets = nullptr;
-            index_t *m_device_gpu_repair_sources = nullptr;
-            size_t m_device_gpu_repair_offset_capacity = 0;
-            size_t m_device_gpu_repair_source_capacity = 0;
+            runtime::RepairTopologyStorage m_gpu_repair_topology;
             groute::Queue<index_t> m_device_affected_vertices;
             std::vector<index_t> m_affected_vertices;
             unsigned int *m_device_gpu_repair_changed = nullptr;
@@ -1146,7 +1163,7 @@ namespace sepgraph {
                 GROUTE_CUDA_CHECK(cudaGetDeviceProperties(&m_dev_props, dev_id));
                 m_groute_context = std::unique_ptr<utils::traversal::Context<Algo>>
                 (new utils::traversal::Context<Algo>(1, AppImplDeviceObject::kComponentLabels ||
-                    AppImplDeviceObject::kSignedResidual,
+                    AppImplDeviceObject::kVertexSeeds || AppImplDeviceObject::kSignedResidual,
                     AppImplDeviceObject::NormalizeUndirectedInput()));
 
                 //create stream /*CODE by ax range 118 to 121*/
@@ -1159,14 +1176,6 @@ namespace sepgraph {
     }
 
     ~Engine() {
-        if (m_device_gpu_repair_offsets != nullptr) {
-            cudaFree(m_device_gpu_repair_offsets);
-            m_device_gpu_repair_offsets = nullptr;
-        }
-        if (m_device_gpu_repair_sources != nullptr) {
-            cudaFree(m_device_gpu_repair_sources);
-            m_device_gpu_repair_sources = nullptr;
-        }
         if (m_device_gpu_repair_changed != nullptr) {
             cudaFree(m_device_gpu_repair_changed);
             m_device_gpu_repair_changed = nullptr;
@@ -3864,26 +3873,6 @@ namespace sepgraph {
                     static_cast<unsigned long long>(metadata_device_bytes));
             }
 
-            void EnsureGpuAffectedRepairCapacity(size_t affected_count,
-                                                  size_t source_count) {
-                if (affected_count > m_device_gpu_repair_offset_capacity) {
-                    if (m_device_gpu_repair_offsets != nullptr)
-                        GROUTE_CUDA_CHECK(cudaFree(m_device_gpu_repair_offsets));
-                    GROUTE_CUDA_CHECK(cudaMalloc(
-                        reinterpret_cast<void **>(&m_device_gpu_repair_offsets),
-                        sizeof(uint64_t) * (affected_count + 1)));
-                    m_device_gpu_repair_offset_capacity = affected_count;
-                }
-                if (source_count > m_device_gpu_repair_source_capacity) {
-                    if (m_device_gpu_repair_sources != nullptr)
-                        GROUTE_CUDA_CHECK(cudaFree(m_device_gpu_repair_sources));
-                    GROUTE_CUDA_CHECK(cudaMalloc(
-                        reinterpret_cast<void **>(&m_device_gpu_repair_sources),
-                        sizeof(index_t) * source_count));
-                    m_device_gpu_repair_source_capacity = source_count;
-                }
-            }
-
             uint64_t GatherGpuRepairBoundaryEvents(
                     const std::vector<index_t> &sources,
                     RepairBoundaryEventKind kind,
@@ -4221,28 +4210,26 @@ namespace sepgraph {
                     sw_capture.stop(); capture_before_ms=sw_capture.ms();
                 }
 
+                const size_t topology_budget = runtime::RepairTopologyStorage::Budget(
+                    m_gpu_repair_topology.DeviceBytes());
+                runtime::RepairTopologyStorage::Lease topology_lease{m_gpu_repair_topology};
                 Stopwatch sw_allocate(true);
-                EnsureGpuAffectedRepairCapacity(m_affected_vertices.size(),
-                                                m_gpu_repair_incoming_sources.size());
+                m_gpu_repair_topology.Bind(m_gpu_repair_incoming_offsets,
+                                          m_gpu_repair_incoming_sources, topology_budget);
                 sw_allocate.stop();
 
                 Stopwatch sw_h2d(true);
                 {
-                cgcomm::Scope comm_scope(cgcomm::Category::Incoming);
-                GROUTE_CUDA_CHECK(cudaMemcpy(
-                    m_device_gpu_repair_offsets,
-                    m_gpu_repair_incoming_offsets.data(),
-                    sizeof(uint64_t) * m_gpu_repair_incoming_offsets.size(),
-                    cudaMemcpyHostToDevice));
-                if (!m_gpu_repair_incoming_sources.empty()) {
-                    GROUTE_CUDA_CHECK(cudaMemcpy(
-                        m_device_gpu_repair_sources,
-                        m_gpu_repair_incoming_sources.data(),
-                        sizeof(index_t) * m_gpu_repair_incoming_sources.size(),
-                        cudaMemcpyHostToDevice));
-                }
+                    cgcomm::Scope comm_scope(cgcomm::Category::Incoming);
+                    m_gpu_repair_topology.Upload(m_gpu_repair_incoming_offsets,
+                                                m_gpu_repair_incoming_sources);
                 }
                 sw_h2d.stop();
+                LOG("[B2-REPAIR-STORAGE][batch %u] budget_bytes=%llu device_bytes=%llu mapped_bytes=%llu h2d_bytes=%llu\n",
+                    batch, static_cast<unsigned long long>(topology_budget),
+                    static_cast<unsigned long long>(m_gpu_repair_topology.DeviceBytes()),
+                    static_cast<unsigned long long>(m_gpu_repair_topology.MappedBytes()),
+                    static_cast<unsigned long long>(m_gpu_repair_topology.TransferBytes()));
 
                 GraphDatum &graph_datum = *m_graph_datum;
                 dim3 grid_dims, block_dims;
@@ -4259,7 +4246,8 @@ namespace sepgraph {
                     const TValue infinity = std::numeric_limits<TValue>::max();
                     for (const index_t vertex : m_affected_vertices) {
                         if (m_node_cpu_owner[vertex]) {
-                            const TValue seed = AppImplDeviceObject::kComponentLabels ?
+                            const TValue seed = (AppImplDeviceObject::kComponentLabels ||
+                                AppImplDeviceObject::kVertexSeeds) ?
                                 static_cast<TValue>(vertex) : infinity;
                             m_cpu_node_values[vertex] = seed;
                             m_cpu_node_buffers[vertex] = seed;
@@ -4312,9 +4300,10 @@ namespace sepgraph {
                     const auto metrics=i17_ordered::Run<AppImplDeviceObject>(
                         graph_datum.nnodes,m_affected_vertices,m_gpu_repair_incoming_offsets,
                         m_gpu_repair_incoming_sources,m_device_affected_vertices.GetDeviceDataPtr(),
-                        m_device_gpu_repair_offsets,m_device_gpu_repair_sources,
+                        m_gpu_repair_topology.Offsets(),m_gpu_repair_topology.Sources(),
                         graph_datum.GetValueDeviceObject(),graph_datum.GetBufferDeviceObject(),
-                        graph_datum.GetParentDeviceObject());
+                        graph_datum.GetParentDeviceObject(),
+                        topology_budget - m_gpu_repair_topology.DeviceBytes());
                     iterations=metrics.iterations;
                     LOG("[I17-ORDERED][batch %u] prepare_ms=%.3f closure_ms=%.3f publish_ms=%.3f internal_scans=%llu queue_peak=%llu extra_device_bytes=%llu iterations=%u\n",
                         batch,metrics.prepare_ms,metrics.closure_ms,metrics.publish_ms,
@@ -4329,8 +4318,8 @@ namespace sepgraph {
                                 *m_app_inst,
                                 m_device_affected_vertices.GetDeviceDataPtr(),
                                 static_cast<uint32_t>(m_affected_vertices.size()),
-                                m_device_gpu_repair_offsets,
-                                m_device_gpu_repair_sources,
+                                m_gpu_repair_topology.Offsets(),
+                                m_gpu_repair_topology.Sources(),
                                 graph_datum.GetValueDeviceObject(),
                                 graph_datum.GetBufferDeviceObject(),
                                 graph_datum.GetParentDeviceObject(),
@@ -4405,8 +4394,8 @@ namespace sepgraph {
                                 *m_app_inst,
                                 m_device_affected_vertices.GetDeviceDataPtr(),
                                 static_cast<uint32_t>(m_affected_vertices.size()),
-                                m_device_gpu_repair_offsets,
-                                m_device_gpu_repair_sources,
+                                m_gpu_repair_topology.Offsets(),
+                                m_gpu_repair_topology.Sources(),
                                 graph_datum.GetValueDeviceObject(),
                                 graph_datum.GetBufferDeviceObject(),
                                 graph_datum.GetParentDeviceObject(),
@@ -4550,8 +4539,8 @@ namespace sepgraph {
                                     *m_app_inst,
                                     m_device_affected_vertices.GetDeviceDataPtr(),
                                     static_cast<uint32_t>(m_affected_vertices.size()),
-                                    m_device_gpu_repair_offsets,
-                                    m_device_gpu_repair_sources,
+                                    m_gpu_repair_topology.Offsets(),
+                                    m_gpu_repair_topology.Sources(),
                                     graph_datum.GetValueDeviceObject(),
                                     graph_datum.GetBufferDeviceObject(),
                                     graph_datum.GetParentDeviceObject(),
@@ -4711,12 +4700,8 @@ namespace sepgraph {
                     }
                 }
 
-                const uint64_t h2d_bytes =
-                    sizeof(uint64_t) * m_gpu_repair_incoming_offsets.size() +
-                    sizeof(index_t) * m_gpu_repair_incoming_sources.size();
-                const uint64_t device_bytes =
-                    sizeof(uint64_t) * (m_device_gpu_repair_offset_capacity + 1) +
-                    sizeof(index_t) * m_device_gpu_repair_source_capacity +
+                const uint64_t h2d_bytes = m_gpu_repair_topology.TransferBytes();
+                const uint64_t device_bytes = m_gpu_repair_topology.DeviceBytes() +
                     sizeof(unsigned int);
                 LOG("[B2-GPU-REPAIR][batch %u] affected=%llu incoming_edges=%llu base_edges_scanned=%llu delta_records_scanned=%llu merge_output_sources=%llu topology_ms=%.3f allocation_ms=%.3f h2d_bytes=%llu h2d_ms=%.3f iterations=%u closure_ms=%.3f device_bytes=%llu\n",
                     batch,
@@ -4732,6 +4717,95 @@ namespace sepgraph {
                     iterations,
                     sw_closure.ms(),
                     static_cast<unsigned long long>(device_bytes));
+            }
+
+            // Only suppress a seed when its old label has a surviving rooted
+            // witness after the entire deletion batch has committed.
+            bool CertifyCcDeletionSeeds(index_t start, index_t size, index_t batch,
+                                       thrust::device_vector<uint8_t>& device_certified) {
+                if constexpr (AppImplDeviceObject::kRootedDeletionWitness) {
+                    Stopwatch timer(true);
+                    device_certified.resize(size);
+                    dim3 grid, block;
+                    KernelSizing(grid, block, size);
+                    MarkCcDeletionCandidates<<<grid, block, 0, m_stream->cuda_stream>>>(
+                        del_edges_d, start, size, m_graph_datum->GetValueDeviceObject(),
+                        thrust::raw_pointer_cast(device_certified.data()));
+                    std::vector<uint8_t> certified(size);
+                    GROUTE_CUDA_CHECK(cudaMemcpyAsync(certified.data(),
+                        thrust::raw_pointer_cast(device_certified.data()), size,
+                        cudaMemcpyDeviceToHost, m_stream->cuda_stream));
+                    m_stream->Sync();
+                    const uint32_t candidates = std::count(certified.begin(), certified.end(), uint8_t{0});
+                    std::vector<uint32_t> labels;
+                    if (candidates != 0) {
+                        labels.resize(m_graph_datum->nnodes);
+                        GROUTE_CUDA_CHECK(cudaMemcpy(labels.data(),
+                            m_graph_datum->GetValueDeviceObject(), labels.size() * sizeof(uint32_t),
+                            cudaMemcpyDeviceToHost));
+                    }
+                    runtime::DirectedLabelWitness witness(labels,
+                        std::max<uint64_t>(1000000, uint64_t(candidates) * 4096),
+                        std::max<uint64_t>(100000, uint64_t(candidates) * 128));
+                    auto outgoing = [&](uint32_t source, auto visit) {
+                        const auto& row = m_chunk_store->Descriptor(source);
+                        if (row.degree == 0) return;
+                        const auto* destinations = m_chunk_store->SlabData(row.slab_id) + row.index;
+                        for (uint32_t i = 0; i < row.degree; ++i)
+                            if (!visit(destinations[i])) break;
+                    };
+                    std::vector<uint32_t> proof_targets;
+                    for (index_t i = 0; i < size; ++i)
+                        if (!certified[i]) proof_targets.push_back(del_edges_h[start + i].v);
+                    const char* forward_env = std::getenv("CG_CC_FORWARD_WITNESS");
+                    if (!(forward_env && forward_env[0] == '0'))
+                        witness.SeedRoots(proof_targets, outgoing);
+                    uint32_t proven = 0;
+                    std::vector<uint32_t> affected;
+                    for (index_t i = 0; i < size; ++i) {
+                        if (certified[i]) continue;
+                        if (witness.Prove(del_edges_h[start + i].v, m_reverse_index)) {
+                            certified[i] = 1;
+                            ++proven;
+                        } else {
+                            affected.push_back(del_edges_h[start + i].v);
+                        }
+                    }
+                    uint64_t forward_edges = 0;
+                    const bool closed = witness.ExpandAffected(affected, m_reverse_index,
+                        outgoing, forward_edges);
+                    if (closed && !affected.empty()) {
+                        GROUTE_CUDA_CHECK(cudaMemcpy(m_device_affected_vertices.GetDeviceDataPtr(),
+                            affected.data(), affected.size() * sizeof(index_t), cudaMemcpyHostToDevice));
+                        m_device_affected_vertices.SetLength(*m_stream, affected.size());
+                        KernelSizing(grid, block, affected.size());
+                        MarkCcWitnessAffected<<<grid, block, 0, m_stream->cuda_stream>>>(
+                            m_device_affected_vertices.GetDeviceDataPtr(), affected.size(),
+                            m_graph_datum->GetParentDeviceObject(), m_graph_datum->m_node_reset_datum);
+                        m_stream->Sync();
+                    }
+                    if (!closed && proven != 0) {
+                        GROUTE_CUDA_CHECK(cudaMemcpy(thrust::raw_pointer_cast(device_certified.data()),
+                            certified.data(), size, cudaMemcpyHostToDevice));
+                    }
+                    timer.stop();
+                    LOG("[CC-FORWARD-WITNESS][batch %u] vertices=%llu edges=%llu certified=%llu\n",
+                        batch, (unsigned long long)witness.SeedVertices(),
+                        (unsigned long long)witness.SeedEdges(),
+                        (unsigned long long)witness.SeedCertified());
+                    LOG("[CC-WITNESS-SCRATCH][batch %u] reset_entries=%llu avoided_bucket_slots=%llu\n",
+                        batch, (unsigned long long)witness.ResetEntries(),
+                        (unsigned long long)witness.AvoidedBucketSlots());
+                    LOG("[CC-WITNESS-FRONTIER][batch %u] closed=%u affected=%llu forward_edges=%llu\n",
+                        batch, closed ? 1U : 0U, (unsigned long long)affected.size(),
+                        (unsigned long long)forward_edges);
+                    LOG("[CC-ROOTED-WITNESS][batch %u] candidates=%u certified=%u fallback=%u searched_vertices=%llu searched_edges=%llu state_d2h_bytes=%llu total_ms=%.3f\n",
+                        batch, candidates, proven, candidates - proven,
+                        (unsigned long long)witness.Vertices(), (unsigned long long)witness.Edges(),
+                        (unsigned long long)(labels.size() * sizeof(uint32_t)), timer.ms());
+                    return closed;
+                }
+                return false;
             }
 
             void update_tree_del(std::pair<index_t,index_t> &local_begin,index_t &NumOfSnapShots){
@@ -4766,6 +4840,21 @@ namespace sepgraph {
                 GROUTE_CUDA_CHECK(cudaMemcpy(this->work_size_d, &work_size[0], 2 * sizeof(uint32_t),cudaMemcpyHostToDevice));
                 KernelSizing(grid_dims, block_dims, size);
                 Stopwatch sw_del(true);
+                // CC must validate witnesses against the final topology of this
+                // deletion phase, including parallel-edge multiplicities.
+                const char* witness_env = std::getenv("CG_CC_ROOTED_WITNESS");
+                const bool certify_cc = AppImplDeviceObject::kRootedDeletionWitness &&
+                    !(witness_env && witness_env[0] == '0');
+                double early_delete_ms = 0;
+                thrust::device_vector<uint8_t> certified_seeds;
+                bool cc_witness_closed = false;
+                if (certify_cc) {
+                    Stopwatch physical(true);
+                    del_edge_pr(local_begin, NumOfSnapShots);
+                    physical.stop();
+                    early_delete_ms = physical.ms();
+                    cc_witness_closed = CertifyCcDeletionSeeds(start, size, NumOfSnapShots, certified_seeds);
+                }
                 Stopwatch sw_reset_seed(true);
                 if constexpr (AppImplDeviceObject::kComponentLabels) {
                     MarkDeletedComponents<<<grid_dims, block_dims, 0, stream_s.cuda_stream>>>(
@@ -4776,7 +4865,7 @@ namespace sepgraph {
                         graph_datum.nnodes, graph_datum.GetValueDeviceObject(),
                         graph_datum.GetBufferDeviceObject(), graph_datum.GetParentDeviceObject(),
                         graph_datum.m_node_reset_datum, m_device_affected_vertices.DeviceObject());
-                } else {
+                } else if (!cc_witness_closed) {
                     kernel::reset_del_edges<<<grid_dims, block_dims, 0, stream_s.cuda_stream>>>(
                         app_inst,
                         graph_datum.GetParentDeviceObject(),
@@ -4785,7 +4874,9 @@ namespace sepgraph {
                         this->del_edges_d,
                         this->work_size_d,
                         graph_datum.m_node_reset_datum,
-                        m_device_affected_vertices.DeviceObject());
+                        m_device_affected_vertices.DeviceObject(),
+                        certified_seeds.empty() ? nullptr :
+                            thrust::raw_pointer_cast(certified_seeds.data()));
                 }
                 stream_s.Sync();
                 sw_reset_seed.stop();
@@ -4796,7 +4887,7 @@ namespace sepgraph {
                 uint32_t frontier_begin = 0;
                 uint32_t frontier_end = m_device_affected_vertices.GetCount(stream_s);
                 uint32_t invalidation_rounds = 0;
-                while (!AppImplDeviceObject::kComponentLabels && frontier_begin < frontier_end) {
+                while (!cc_witness_closed && !AppImplDeviceObject::kComponentLabels && frontier_begin < frontier_end) {
                     const uint32_t frontier_count = frontier_end - frontier_begin;
                     RunSyncPushDDB_del(
                         app_inst,
@@ -4834,8 +4925,9 @@ namespace sepgraph {
                 const bool cc_union = UseCcUnionRepair();
                 if (!cc_union) CollectDeletionAffectedVertices(NumOfSnapShots);
                 Stopwatch sw_physical_delete(true);
-                del_edge_pr(local_begin, NumOfSnapShots);
+                if (!certify_cc) del_edge_pr(local_begin, NumOfSnapShots);
                 sw_physical_delete.stop();
+                const double physical_delete_ms = early_delete_ms + sw_physical_delete.ms();
                 Stopwatch sw_repair(true);
                 if (cc_union) {
                     RunCcUnionRepair(NumOfSnapShots, frontier_end);
@@ -4846,14 +4938,14 @@ namespace sepgraph {
                 sw_del.stop();
                 const double attributed_ms =
                     sw_reset_seed.ms() + sw_invalidation.ms() +
-                    sw_physical_delete.ms() + sw_repair.ms();
+                    physical_delete_ms + sw_repair.ms();
                 LOG("[P0-DELETE-ATTR][batch %u] repair_executor=%s affected=%u invalidation_rounds=%u reset_seed_ms=%.3f initial_rebuild_ms=0.000 invalidation_ms=%.3f pma_delete_ms=%.3f repair_wall_ms=%.3f residual_ms=%.3f total_ms=%.3f\n",
                     NumOfSnapShots,"gpu",
                     frontier_end,
                     invalidation_rounds,
                     sw_reset_seed.ms(),
                     sw_invalidation.ms(),
-                    sw_physical_delete.ms(),
+                    physical_delete_ms,
                     sw_repair.ms(),
                     sw_del.ms() - attributed_ms,
                     sw_del.ms());
