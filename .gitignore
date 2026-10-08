@@ -1,6 +1,8 @@
 build/
 scripts/*
 !scripts/prepare_paper_data.py
+!scripts/prepare_tw_ratios.py
+!scripts/README_tw_ratios.md
 !scripts/paper_data_stream.cpp
 !scripts/PaperUkEdges.java
 !scripts/start_paper_data.sh
@@ -45,3 +47,9 @@ scripts/motivation/*
 !scripts/run_road_communication_20261003.py
 !scripts/summarize_road_communication.py
 !scripts/README_road_communication_20261003.md
+
+paper/
+
+!scripts/rerun_road_original_converged.py
+!scripts/run_road_then_communication.py
+!scripts/run_current_road_mode_off_20261006.py

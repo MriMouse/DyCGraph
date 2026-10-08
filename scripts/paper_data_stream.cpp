@@ -29,20 +29,27 @@ int main(int argc,char**argv){try{
  if(argc<2)throw std::runtime_error("missing command");
  std::string cmd=argv[1];
  if(cmd=="count"){if(argc!=4)throw std::runtime_error("count path mode");Reader r(argv[2],argv[3]);Edge e;U n=0;while(r.next(e))++n;std::cout<<n<<"\n";return 0;}
- if(argc!=9)throw std::runtime_error("generate source mode picks outdir edges seed scale");
+ if(argc!=9&&argc!=10)throw std::runtime_error("generate source mode picks outdir edges seed scale [insertion_percent]");
  std::string source=argv[2],mode=argv[3],out=argv[5];U total=std::stoull(argv[6]),seed=std::stoull(argv[7]);int scale=std::stoi(argv[8]);
+ int percent=argc==10?std::stoi(argv[9]):50;
+ if(percent<0||percent>100)throw std::runtime_error("insertion_percent outside [0,100]");
  std::ifstream pf(argv[4],std::ios::binary|std::ios::ate);if(!pf)throw std::runtime_error("missing picks");auto sz=pf.tellg();if(sz%sizeof(Pick))throw std::runtime_error("bad picks file");pf.seekg(0);std::vector<Pick> picks((size_t)sz/sizeof(Pick));pf.read((char*)picks.data(),sz);if(!std::is_sorted(picks.begin(),picks.end(),[](auto&a,auto&b){return a.index<b.index;}))throw std::runtime_error("unsorted picks");
- constexpr int ns=3;const int each[ns]={500,5000,50000};std::vector<Edge> ins(500000),del(500000);std::vector<Writer*> outs;for(auto s:{"1k","10k","100k"})outs.push_back(new Writer(out+"/input_"+s+".txt.part"));
+ constexpr int ns=3;const int batch[ns]={1000,10000,100000};int adds[ns],dels[ns];for(int j=0;j<ns;++j){adds[j]=batch[j]*percent/100;dels[j]=batch[j]-adds[j];}
+ std::vector<Edge> ins(adds[2]*10),del(dels[2]*10);
+ if(picks.size()!=ins.size()+del.size())throw std::runtime_error("pick count mismatch");
+ std::vector<bool> ins_seen(ins.size()),del_seen(del.size());
+ for(size_t i=0;i<picks.size();++i){auto&p=picks[i];if(p.index>=total||(i&&p.index==picks[i-1].index)||p.kind>1||p.rank>=(p.kind==0?ins.size():del.size()))throw std::runtime_error("invalid pick index, kind or rank");auto&seen=p.kind==0?ins_seen:del_seen;if(seen[p.rank])throw std::runtime_error("duplicate pick rank");seen[p.rank]=true;}
+ std::vector<Writer*> outs;for(auto s:{"1k","10k","100k"})outs.push_back(new Writer(out+"/input_"+s+".txt.part"));
  // Dense sorted remapping for sparse-ID TW/FS; the bitset avoids a 4 GiB ID array.
  std::vector<U> bits,prefix; if(mode=="bin"||mode=="friendster"){
   bits.resize((1000000000ULL+63)/64);Reader r(source.c_str(),mode=="friendster"?"text":mode);Edge e;while(r.next(e)){if(e.u>=1000000000u||e.v>=1000000000u)throw std::runtime_error("sparse ID >= 1e9");bits[e.u>>6]|=1ULL<<(e.u&63);bits[e.v>>6]|=1ULL<<(e.v&63);}if(r.seen!=total)throw std::runtime_error("source edge count changed in map pass");prefix.resize(bits.size()+1);for(size_t i=0;i<bits.size();++i)prefix[i+1]=prefix[i]+__builtin_popcountll(bits[i]);std::cerr<<"dense vertices="<<prefix.back()<<"\n";
  }
  auto mapped=[&](uint32_t x){return bits.empty()?x:(uint32_t)(prefix[x>>6]+__builtin_popcountll(bits[x>>6]&((1ULL<<(x&63))-1)));};
- auto handle=[&](U i,Edge e,size_t&pos){e.u=mapped(e.u);e.v=mapped(e.v);int insrank=500000;while(pos<picks.size()&&picks[pos].index==i){auto&p=picks[pos++];if(p.kind==0){ins[p.rank]=e;insrank=p.rank;}else del[p.rank]=e;}for(int j=0;j<ns;++j)if(insrank>=each[j]*10)outs[j]->edge(e);if((i+1)%100000000==0)std::cerr<<"processed="<<(i+1)<<"/"<<total<<"\n";};
+ auto handle=[&](U i,Edge e,size_t&pos){e.u=mapped(e.u);e.v=mapped(e.v);int insrank=adds[2]*10;while(pos<picks.size()&&picks[pos].index==i){auto&p=picks[pos++];if(p.kind==0){ins[p.rank]=e;insrank=p.rank;}else del[p.rank]=e;}for(int j=0;j<ns;++j)if(insrank>=adds[j]*10)outs[j]->edge(e);if((i+1)%100000000==0)std::cerr<<"processed="<<(i+1)<<"/"<<total<<"\n";};
  size_t pos=0;if(mode=="rmat"){Rmat r(seed,scale);for(U i=0;i<total;++i){Edge e;r.next(e);handle(i,e,pos);}}else{Reader r(source.c_str(),mode=="friendster"?"text":mode);Edge e;for(U i=0;i<total;++i){if(!r.next(e))throw std::runtime_error("source shorter than expected");handle(i,e,pos);}if(r.next(e))throw std::runtime_error("source longer than expected");}
  if(pos!=picks.size())throw std::runtime_error("unmatched picks");
  for(auto*w:outs){w->close();delete w;}
  // Update operations are shuffled within each batch with a deterministic local RNG.
- for(int j=0;j<ns;++j){int per=each[j];std::string suffix=j==0?"1k":j==1?"10k":"100k";Writer update(out+"/update_"+suffix+".txt.part");U state=seed+uint64_t(j)*137;std::vector<int> order(2*per);for(int b=0;b<10;++b){for(int q=0;q<2*per;++q)order[q]=q;for(int q=2*per-1;q>0;--q)std::swap(order[q],order[rng(state)%(q+1)]);for(int q:order){bool add=q<per;Edge e=add?ins[b*per+q]:del[b*per+q-per];if(fprintf(update.f,"%c %u %u 1\n",add?'a':'d',e.u,e.v)<0)throw std::runtime_error("update write failed");}}update.close();}
+ for(int j=0;j<ns;++j){int per=batch[j],add_count=adds[j],del_count=dels[j];std::string suffix=j==0?"1k":j==1?"10k":"100k";Writer update(out+"/update_"+suffix+".txt.part");U state=seed+uint64_t(j)*137;std::vector<int> order(per);for(int b=0;b<10;++b){for(int q=0;q<per;++q)order[q]=q;for(int q=per-1;q>0;--q)std::swap(order[q],order[rng(state)%(q+1)]);for(int q:order){bool add=q<add_count;Edge e=add?ins[b*add_count+q]:del[b*del_count+q-add_count];if(fprintf(update.f,"%c %u %u 1\n",add?'a':'d',e.u,e.v)<0)throw std::runtime_error("update write failed");}}update.close();}
  std::cerr<<"completed source_edges="<<total<<"\n";return 0;
  }catch(const std::exception&e){std::cerr<<"ERROR: "<<e.what()<<"\n";return 1;}}
