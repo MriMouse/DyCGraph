@@ -60,24 +60,24 @@ Out-of-memory streaming graph processing typically stores graph topology in host
 
 \begin{table}[!htbp]
 \centering
-\caption{Per-batch statistics of SSSP (100K-edge batches, averaged over ten batches). Upd.: sources updated by the batch; Desc.: descriptor data transferred to the GPU; Init.\ WL: size of the initial insertion worklist.}
+\caption{Per-batch statistics of SSSP (100K-edge batches). Desc.: explicit descriptor-publication H2D payload per batch; Init.\ WL: size of the initial insertion worklist.}
 \label{tab:motivation}
 \footnotesize
 \setlength{\tabcolsep}{4pt}
-\begin{tabular}{llrrr}
+\begin{tabular}{llrr}
 \hline
-Graph & System & Upd. & Desc. (MB) & Init.\ WL \\
+Graph & System & Desc. (MB) & Init.\ WL \\
 \hline
-TW & Grapin & 94,869 & 841.3 & 52,579,682 \\
- & CoIncGraph & 94,869 & 2.3 & 1,126 \\
+TW & Grapin & 841.3 & 52,579,682 \\
+   & CoIncGraph & 2.3 & 1,126 \\
 \hline
-FS & Grapin & 99,188 & 1,049.7 & 65,608,366 \\
- & CoIncGraph & 99,188 & 2.4 & 1,684 \\
+FS & Grapin & 1,049.7 & 65,608,366 \\
+   & CoIncGraph & 2.4 & 1,684 \\
 \hline
 \end{tabular}
 \end{table}
 
-\textbf{Graph maintenance amplifies local updates.} Shared-array layouts, such as PMA and CSR, store each source's adjacency contiguously for coalesced GPU access, but insertions may shift, rebalance, or expand regions containing unchanged sources. Because the update batch alone does not identify these relocations, refreshing only updated sources' descriptors risks stale pointers. Existing designs therefore reload all $|V|$ vertex descriptors after each batch, transferring 841\,MB on TW and 1,050\,MB on FS (16 bytes per vertex), although fewer than 0.2\% of sources change (Table~\ref{tab:motivation}). CoIncGraph reduces this volume to about 2\,MB by publishing only changed-source descriptors. Cache maintenance incurs similar overhead: updates invalidate cached adjacency, triggering eviction, compaction, and reloading even when the hot-vertex set remains largely unchanged. Maintenance thus extends beyond changed sources, motivating a graph organization that confines relocation and view maintenance to updated sources.
+\textbf{Graph maintenance amplifies local updates.} Shared-array layouts, such as PMA and CSR, store each source's adjacency contiguously for coalesced GPU access, but insertions may shift, rebalance, or expand regions containing unchanged sources. Because the update batch alone does not identify these relocations, refreshing only updated sources' descriptors risks stale pointers. Existing designs reload all |V| vertex descriptors, causing 841 MB of explicit descriptor publication per batch, in addition to zero-copy adjacency traffic (Table~\ref{tab:motivation}). CoIncGraph reduces this volume to about 2\,MB by publishing only changed-source descriptors. Cache maintenance incurs similar overhead: updates invalidate cached adjacency, triggering eviction, compaction, and reloading even when the hot-vertex set remains largely unchanged. Maintenance thus extends beyond changed sources, motivating a graph organization that confines relocation and view maintenance to updated sources.
 
 \textbf{Incremental computation loses update locality.} Repairing an invalidated vertex $v$ requires examining its remaining incoming edges, such as $(x,v)$. However, an unaffected predecessor $x$ remains inactive, and outgoing-edge traversal cannot locate it. Grapin therefore merges deletion repair into insertion processing, reactivating all vertices and scanning vertex states each round to rebuild worklists~\cite{2025-Grapin}. Its initial insertion worklist contains all 52.6M vertices on TW and 65.6M on FS. In contrast, CoIncGraph starts with only the approximately 1.1K and 1.7K destinations improved by inserted edges, respectively (Table~\ref{tab:motivation}). The CPU can supply the incoming adjacency needed to repair invalidated vertices, allowing deletion repair to converge within the affected region before insertions are applied. Insertion propagation can then start only from improved destinations. This motivates CPU--GPU cooperation to decouple deletion repair from insertion propagation and maintain compact worklists throughout. Sections~\ref{sec:graph-organization} and~\ref{sec:incremental-computation} present the corresponding designs.
 

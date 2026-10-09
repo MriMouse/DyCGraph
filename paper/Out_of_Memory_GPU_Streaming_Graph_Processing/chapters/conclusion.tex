@@ -19,6 +19,11 @@ updates without impeding traversal, while incremental execution must handle irre
 GPU-resident dynamic graph systems primarily address the update and traversal tradeoff. GPMA supports parallel batches of edge updates using packed memory arrays~\cite{2017-GPMA}. Hornet and faimGraph develop dynamic GPU graph structures~\cite{2018-Hornet, 2018-faimGraph}, while GASgraph uses a SubHPMA-based representation for streaming graph
 processing~\cite{2025-GASgraph}. Their reliance on GPU-resident graph data limits the graph sizes they can accommodate. For graphs exceeding GPU memory, Grapin combines GPU incremental computation with hot-subgraph caching to reduce accesses to host-resident data~\cite{2025-Grapin}. CGCGraph co-executes concurrent snapshot analyses by processing shared graph data on the GPU and unshared data on the CPU~\cite{2025-CGCGraph}. POEGA uses proxy graphs to guide out-of-memory refinement and processes multiple snapshots concurrently~\cite{2026-POEGA}. CoIncGraph isolates adjacency storage by source to confine GPU view maintenance to changed sources, and lets the CPU supply the incoming adjacency of affected vertices to restrict incremental computation to the affected region.
 
+\section{Limitations}
+CoIncGraph relies on update locality, so its gains diminish when the affected region expands, as illustrated by PR's 0.80$\times$--1.11$\times$ speedups over Grapin under varying insertion/deletion ratios on TW (Fig.~\ref{fig:sensitivity}(a)) and the 1.1$\times$--5.8$\times$ speedups across social-network workloads at 100K updates per batch in Table~\ref{tab:overall}.
+When the graph fits in device memory, GPU-resident systems such as SHGraph can be faster for large batches by avoiding PCIe accesses to host-resident adjacency.
+Source-isolated adjacency blocks and the reverse index also require additional host memory for spare block capacity and incoming-adjacency storage.
+
 % 这个上面是否要写related work，到时候依据篇幅来定吧，看Background章节写了一些Related work，所以这块暂时不安排也是可以的
 \section{Conclusion}
 % 暂时整了一个初稿，后面再根据结果等做进一步的优化
