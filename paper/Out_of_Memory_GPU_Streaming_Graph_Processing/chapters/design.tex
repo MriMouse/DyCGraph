@@ -7,7 +7,8 @@ Figure~\ref{fig:1} presents an overview of CoIncGraph, a CPU--GPU cooperative sy
 
 % We present a CPU--GPU cooperative system for out-of-memory streaming graph processing (Fig.~\ref{fig:1}). Section~\ref{sec:graph-organization}introduces a heterogeneous graph organization that confines adjacency changes and corresponding updates on the GPU and elsewhere to modified source vertices. A unified change view coordinates outgoing adjacency, the reverse index, and GPU views, reducing redundant maintenance across these structures. Building on this organization, Section~\ref{sec:incremental-computation} develops two-phase incremental computation: deletion repair followed by insertion propagation. Compact work lists identify affected vertices, guiding CPU preparation of incoming edges for GPU repair and GPU traversal from vertices whose results improve. This cooperation restricts data preparation and graph traversal to the affected computation and its dependencies, reducing redundant computation and CPU--GPU communication.
 
-\begin{figure}[t]
+% \begin{figure}[t]
+\begin{figure}[!htbp]
 \centering
 \includegraphics[width=\columnwidth]{figures/Overview.pdf}
 \caption{The Overview of CoIncGraph System.}
@@ -46,16 +47,16 @@ This organizational approach ensures that the adjacency relationships of a sourc
 
 Source isolation bounds where adjacency moves, but each batch must still be reflected in several graph views: the host outgoing adjacency for traversal, a host reverse index that provides incoming adjacency for deletion repair, and the GPU descriptors and cached adjacency used by computation. Deriving the changes of each view independently from the update requests would repeat the same validation, and a deletion request that matches no existing edge could even make the views inconsistent. We instead resolve the requests once against the outgoing adjacency and record the outcome in a \textit{unified change view}, which consists of effective edge-change records and changed-source lists generated in each update phase. The reverse index consumes the edge-change records, while GPU descriptor and cache maintenance consume the changed-source lists.
 
-The CPU groups requests by source and determines their effects against the graph state at the start of each phase. The deletion operation removes existing edges by compacting the affected list. The insertion operation first determines whether the current block requires expansion before performing the addition. Grouping reduces repeated movement within lists, complementing source isolation across lists and allowing outgoing-adjacency updates for different sources to proceed in parallel. Preparation records the number of edges actually removed or added for each source--destination pair and identifies changed sources. Unsuccessful deletions therefore produce no change records.
+The CPU groups requests by source and resolves their effects against the graph state at the start of each phase. Deletions compact affected adjacency lists, while insertions expand blocks as needed before appending edges. Grouping reduces repeated movement within lists, complements source isolation across lists, and enables parallel updates to different sources. Preparation records the number of edges actually removed or added per source--destination pair and identifies changed sources; unsuccessful deletions generate no change records. For example, if $u$ has neighbors $[a,a,b]$ and receives three deletion requests for $(u,a)$, only the two existing copies are removed, leaving $[b]$ and emitting $(u,a,-2)$ for reverse-index maintenance. The unmatched request requires no view maintenance. Subsequently, inserting $(w,c)$ and $(w,d)$ expands $w$'s block and emits $(w,c,+1)$ and $(w,d,+1)$. Throughout these updates, $v$'s outgoing-adjacency block remains unchanged, illustrating source isolation (Fig.~\ref{fig:view}).
 
 %\textbf{Large-batch preparation.} For small batches, each maintenance stage (block allocation, adjacency mutation, and reverse-index preparation) builds its own compact copy of the per-source plan and effective records, which costs little and keeps accesses sequential. With millions of updates per batch, however, these copies grow with the batch, and repeated preparation, copying, and sorting become a major CPU cost. CoIncGraph therefore switches to a large-batch mode when a batch contains at least one million updates. In this mode, the CPU keeps a single per-source plan indexed by changed sources, which is shared by change-record generation, block allocation, adjacency mutation, and block reclamation; the effective records are moved, rather than copied, into reverse-index preparation; and since both phases emit changed sources in source order, the two lists are merged linearly for publication instead of being sorted again. This mode changes only how preparation results are stored and shared, not the effective changes they describe.
 
-For example, suppose $u$ has neighbors $[a,a,b]$ and receives three deletion requests for $(u,a)$. Deletion removes the two existing copies, produces $[b]$, and emits $(u,a,-2)$ for reverse-index maintenance, while the unmatched third deletion request triggers no maintenance operation in any view. Then, the edges $(w,c)$ and $(w,d)$ are inserted, triggering an expansion and emitting $(w,c,+1)$ and $(w,b,+1)$. Consequently, vertex $v$ remains unaffected by any operations involving other vertices throughout this entire phase, as illustrated in Fig.~\ref{fig:view}.
 
-For large batches with millions of updates, however, building a separate copy of these plans and records for every maintenance stage makes repeated preparation, copying, and sorting a dominant CPU cost. We therefore adopt \textbf{shared batch preparation}, in which a single per-source plan is shared by change-record generation, block allocation, and adjacency mutation. The effective records are handed over to reverse-index maintenance without copying. Since both phases emit changed sources in source order, the two lists are merged linearly for publication rather than sorted again. This optimization changes only how preparation results are stored and reused, not the effective changes they describe.
+For large batches with millions of updates, however, building a separate copy of these plans and records for every maintenance stage makes repeated preparation, copying, and sorting a dominant CPU cost. We therefore adopt shared batch preparation, in which a single per-source plan is shared by change-record generation, block allocation, and adjacency mutation. The effective records are handed over to reverse-index maintenance without copying. Since both phases emit changed sources in source order, the two lists are merged linearly for publication rather than sorted again. This optimization changes only how preparation results are stored and reused, not the effective changes they describe.
 
 
-\begin{figure}[t]
+% \begin{figure}[t]
+\begin{figure}[!htbp]
 \centering
 \includegraphics[width=\columnwidth]{figures/view.pdf}
 \caption{Source-Isolated Adjacency Blocks and Unified Change View.}
@@ -143,36 +144,54 @@ We describe the process using SSSP with positive edge weights (BFS uses unit wei
 \end{algorithmic}
 \end{algorithm}
 
-\textbf{Step 1: Dependency invalidation (Lines~\ref{ln:inv}--\ref{ln:reset}).} Following dependency-memoization, a deletion invalidates the results of all vertices whose dependencies pass through the deleted edge, and these vertices must be reset before repair. Collecting them by scanning vertex marks across all graph partitions would examine the entire graph in every round, although the invalidated region is typically small. We instead build a compact worklist directly as vertices are marked.
+% \textbf{Step 1: Dependency invalidation (Lines~\ref{ln:inv}--\ref{ln:reset}).} Following dependency-memoization, a deletion invalidates the results of all vertices whose dependencies pass through the deleted edge, and these vertices must be reset before repair. Collecting them by scanning vertex marks across all graph partitions would examine the entire graph in every round, although the invalidated region is typically small. We instead build a compact worklist directly as vertices are marked.
 
-The GPU initializes an empty worklist $L_{\mathrm{del}}$ and examines the deleted edges in parallel. For each deleted edge $(u,v)$, it marks $v$ if the current result of $v$ depends on that edge, and only the thread that first marks $v$ atomically reserves a slot and appends $v$ to $L_{\mathrm{del}}$. Each subsequent round scans, in $G_t$, the outgoing edges of the vertices appended in the preceding round and appends newly marked dependents in the same way, yielding a breadth-first traversal of dependencies. When a round appends no vertex, $L_{\mathrm{del}}$ holds exactly the affected vertices, denoted by $A$: each appears once in consecutive slots, and unaffected vertices occupy no slot. The GPU resets the stored and tentative results of $A$ to $\infty$ and transfers their IDs to the CPU. $A$ thus serves as the interface between the two processors: it determines exactly which incoming adjacency the CPU prepares for repair.
+% The GPU initializes an empty worklist $L_{\mathrm{del}}$ and examines the deleted edges in parallel. For each deleted edge $(u,v)$, it marks $v$ if the current result of $v$ depends on that edge, and only the thread that first marks $v$ atomically reserves a slot and appends $v$ to $L_{\mathrm{del}}$. Each subsequent round scans, in $G_t$, the outgoing edges of the vertices appended in the preceding round and appends newly marked dependents in the same way, yielding a breadth-first traversal of dependencies. When a round appends no vertex, $L_{\mathrm{del}}$ holds exactly the affected vertices, denoted by $A$: each appears once in consecutive slots, and unaffected vertices occupy no slot. The GPU resets the stored and tentative results of $A$ to $\infty$ and transfers their IDs to the CPU. $A$ thus serves as the interface between the two processors: it determines exactly which incoming adjacency the CPU prepares for repair.
 
-\textbf{Step 2: Preparing incoming adjacency (Lines~\ref{ln:applydel}--\ref{ln:incoming}).} An affected vertex may regain its result through an unaffected predecessor whose result has not changed. For example, after deleting $(u,v)$, the remaining edge $(x,v)$ may restore $v$ even though $x$ is inactive. Repair therefore requires the remaining incoming adjacency of the vertices in $A$:
+\textbf{Step 1: Dependency invalidation (Lines~\ref{ln:inv}--\ref{ln:reset}).} Following dependency memoization, deletions invalidate vertices whose results depend on deleted edges; these results must be reset before repair. To avoid graph-wide scans of vertex marks, the GPU builds a compact worklist $L_{\mathrm{del}}$ as invalidation propagates. It first examines deleted edges $(u,v)$ in parallel and marks $v$ if its result depends on $(u,v)$. Only the thread that first marks $v$ atomically reserves a slot and appends it to $L_{\mathrm{del}}$. Each subsequent round traverses outgoing edges in $G_t$ from vertices appended in the previous round, marking and appending their dependents in the same manner. This breadth-first traversal terminates when no new vertex is appended, leaving exactly the affected set $A$ in contiguous slots, with no duplicates. The GPU resets the stored and tentative results of $A$ to $\infty$ and transfers their IDs to the CPU, which prepares only their incoming adjacency for repair.
 
+\textbf{Step 2: Preparing incoming adjacency (Lines~\ref{ln:applydel}--\ref{ln:incoming}).} An affected vertex may recover through an unaffected, inactive predecessor: after deleting $(u,v)$, for example, the remaining edge $(x,v)$ may restore $v$. Repair therefore requires the remaining incoming adjacency of $A$:
 \begin{equation}
 I(A)=\{(u,v)\in E(G_{t+1}^{-E})\mid v\in A\}.
-%\tag{5.1}
 \end{equation}
+Given $A$, the CPU retrieves predecessors from the reverse index (Section~\ref{sec:view-maintenance}), already updated with the batch's effective deletions. It merges each destination's base list and delta records in source order, retaining sources with positive multiplicity. This restricts predecessor discovery to $A$'s reverse-index entries, without scanning outgoing adjacency.
 
-The GPU supplies only the IDs in $A$, and the CPU obtains their predecessors from the reverse index (Section~\ref{sec:view-maintenance}), which already reflects the effective deletions of the batch. For each $v\in A$, the CPU merges the base list and the delta records of $v$ in source order and retains sources with positive multiplicity. Predecessor discovery is thus confined to the reverse-index of $A$, without scanning the outgoing adjacency of any source.
+For large $A$, a persistent worker pool processes fixed-size tiles of consecutive destinations, dynamically assigned through an atomic counter to mitigate in-degree imbalance. Each worker merges its tile's lists into a private buffer and records their lengths $\ell_i$. An exclusive prefix sum, $o_i=\sum_{k<i}\ell_k$, assigns each destination $a_i$ a disjoint range $[o_i,o_{i+1})$, enabling parallel copies into the final array without atomic appends or locks. Each list is merged once and stored contiguously in the order of $A$. The CPU transfers the offsets and source IDs to the GPU, where vertex results remain. For $M_A$ incoming-adjacency entries, the representation requires $O(|A|+M_A)$ space; construction work is proportional to $|A|$ plus the base and delta records examined. Thus, preparation and transfer costs depend on the affected region rather than the entire graph.
 
-When $A$ is large, the CPU splits it into fixed-size tiles of consecutive destinations and processes them with a persistent pool of worker threads. Workers claim tiles dynamically through an atomic counter, one tile at a time, so that tiles containing high in-degree destinations do not stall the other workers. Each worker merges the incoming adjacency of its tile into a private buffer and records the length $\ell_i$ of each list. After all tiles are merged, an exclusive prefix sum $o_i=\sum_{k<i}\ell_k$ gives each destination $a_i$ a disjoint output range $[o_i,o_{i+1})$, so workers copy their buffers into the final array in parallel without atomic appends or locks, while preserving the order of $A$. Each destination's records are therefore merged only once.
+% \textbf{Step 2: Preparing incoming adjacency (Lines~\ref{ln:applydel}--\ref{ln:incoming}).} An affected vertex may regain its result through an unaffected predecessor whose result has not changed. For example, after deleting $(u,v)$, the remaining edge $(x,v)$ may restore $v$ even though $x$ is inactive. Repair therefore requires the remaining incoming adjacency of the vertices in $A$:
 
-The result stores the incoming adjacency of each destination contiguously, with offsets delimiting the lists in the order of $A$. The CPU transfers these offsets and source IDs to the GPU, while vertex results remain on the GPU. With $M_A$ incoming-adjacency entries, this representation occupies $O(|A|+M_A)$ space, and its construction work is proportional to $|A|$ plus the base and delta records examined for these destinations. \textit{Consequently, the data prepared by the CPU and transferred for repair is determined by the affected region rather than by the graph size.}
+% \begin{equation}
+% I(A)=\{(u,v)\in E(G_{t+1}^{-E})\mid v\in A\}.
+% %\tag{5.1}
+% \end{equation}
 
-\textbf{Step 3: Repairing vertex results (Lines~\ref{ln:repair-begin}--\ref{ln:repair-end}).} Using the prepared incoming edges, the GPU repeatedly improves the result of each $v\in A$ with candidates from its predecessors. For SSSP, this pull-based update is:
+% The GPU supplies only the IDs in $A$, and the CPU obtains their predecessors from the reverse index (Section~\ref{sec:view-maintenance}), which already reflects the effective deletions of the batch. For each $v\in A$, the CPU merges the base list and the delta records of $v$ in source order and retains sources with positive multiplicity. Predecessor discovery is thus confined to the reverse-index of $A$, without scanning the outgoing adjacency of any source.
 
+% When $A$ is large, the CPU splits it into fixed-size tiles of consecutive destinations and processes them with a persistent pool of worker threads. Workers claim tiles dynamically through an atomic counter, one tile at a time, so that tiles containing high in-degree destinations do not stall the other workers. Each worker merges the incoming adjacency of its tile into a private buffer and records the length $\ell_i$ of each list. After all tiles are merged, an exclusive prefix sum $o_i=\sum_{k<i}\ell_k$ gives each destination $a_i$ a disjoint output range $[o_i,o_{i+1})$, so workers copy their buffers into the final array in parallel without atomic appends or locks, while preserving the order of $A$. Each destination's records are therefore merged only once.
+
+% The result stores the incoming adjacency of each destination contiguously, with offsets delimiting the lists in the order of $A$. The CPU transfers these offsets and source IDs to the GPU, while vertex results remain on the GPU. With $M_A$ incoming-adjacency entries, this representation occupies $O(|A|+M_A)$ space, and its construction work is proportional to $|A|$ plus the base and delta records examined for these destinations. \textit{Consequently, the data prepared by the CPU and transferred for repair is determined by the affected region rather than by the graph size.}
+
+% \textbf{Step 3: Repairing vertex results (Lines~\ref{ln:repair-begin}--\ref{ln:repair-end}).} Using the prepared incoming edges, the GPU repeatedly improves the result of each $v\in A$ with candidates from its predecessors. For SSSP, this pull-based update is:
+
+% \begin{equation}
+% d(v)\leftarrow\min\left\{d(v),
+% \min_{(u,v)\in I(A)}[d(u)+w(u,v)]\right\}.
+% %\tag{5.2}
+% \label{eq:pull}
+% \end{equation}
+
+% A warp cooperatively scans the incoming adjacency of each affected vertex, and improved results of affected vertices serve as candidates for their affected successors in later rounds. Vertices without any remaining path keep the result $\infty$.
+
+% After step 3, all results are correct for $G_{t+1}^{-E}$, while repair has examined only $A$ and $I(A)$. This stable state is the precondition of the compact insertion propagation in Section~\ref{sec:insertion-propagation}: since no invalidated result remains, the inserted edges are the only source of further changes.
+\textbf{Step 3: Repairing vertex results (Lines~\ref{ln:repair-begin}--\ref{ln:repair-end}).} Using the prepared incoming adjacency, the GPU iteratively updates each $v\in A$ from its predecessors until convergence. For SSSP, the pull-based update is:
 \begin{equation}
 d(v)\leftarrow\min\left\{d(v),
 \min_{(u,v)\in I(A)}[d(u)+w(u,v)]\right\}.
-%\tag{5.2}
 \label{eq:pull}
 \end{equation}
+A warp cooperatively scans each affected vertex's incoming adjacency, allowing improved results to propagate to affected successors in subsequent rounds; unreachable vertices remain at $\infty$. Upon convergence, all results are correct for $G_{t+1}^{-E}$, with repair confined to $A$ and $I(A)$. This establishes the precondition for compact insertion propagation (Section~\ref{sec:insertion-propagation}): no invalidated results remain, so only inserted edges can initiate further changes.
 
-A warp cooperatively scans the incoming adjacency of each affected vertex, and improved results of affected vertices serve as candidates for their affected successors in later rounds. Vertices without any remaining path keep the result $\infty$.
-
-After step 3, all results are correct for $G_{t+1}^{-E}$, while repair has examined only $A$ and $I(A)$. This stable state is the precondition of the compact insertion propagation in Section~\ref{sec:insertion-propagation}: since no invalidated result remains, the inserted edges are the only source of further changes.
-
+% 这个Compact Inseration Propagation部分，感觉缺少一个具体思想的阐述，上来就接步骤，需要优化一下
 \subsubsection{Compact Insertion Propagation}
 \label{sec:insertion-propagation}
 
@@ -185,13 +204,11 @@ After step 3, all results are correct for $G_{t+1}^{-E}$, while repair has exami
 With compact worklists, later rounds often contain only a few active vertices, so per-round host coordination, including kernel launches, worklist exchange, and convergence checks, can outweigh the useful work. We therefore execute insertion propagation within a single cooperative GPU kernel. The GPU maintains the current and next worklists, uses grid-wide barriers to complete pending writes before exchanging them (Line~\ref{ln:prop-end}), and terminates when the next worklist is empty; the CPU only waits for the kernel to finish. This removes host orchestration and repeated kernel launches between insertion rounds.
 
 Let $X_k$ be the vertices whose results improve and whose outgoing edges are examined in round $k$. The edge work is
-
 \begin{equation}
 W_{\mathrm{expand}}=
 \sum_k\sum_{u\in X_k}\deg^+_{G_{t+1}^{+E}}(u).
 %\tag{5.3}
 \end{equation}
-
 Vertices without improvements never read their adjacency, which reduces both edge processing and requests to host memory. Repeated improvements of the same vertex may still cause repeated reads, which ordered propagation reduces (Section~\ref{sec:ordered-propagation}).
 
 
